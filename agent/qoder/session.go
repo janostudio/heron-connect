@@ -351,6 +351,10 @@ func (qs *qoderSession) Close() error {
 	return nil
 }
 
+func (qs *qoderSession) CancelTurn() {
+	slog.Debug("agent: CancelTurn not supported for this session type")
+}
+
 // ── helpers ──────────────────────────────────────────────────
 
 // extractToolPreview parses the JSON input of a tool call and returns a short preview string.

@@ -130,6 +130,8 @@ const (
 	MsgToolResultFmtFailed       MsgKey = "tool_result_fmt_failed"
 	MsgExecutionStopped          MsgKey = "execution_stopped"
 	MsgNoExecution               MsgKey = "no_execution"
+	MsgTurnCancelled             MsgKey = "turn_cancelled"
+	MsgNoTurnInProgress          MsgKey = "no_turn_in_progress"
 	MsgPreviousProcessing        MsgKey = "previous_processing"
 	MsgQueueFull                 MsgKey = "queue_full"
 	MsgMessageQueued             MsgKey = "message_queued"
@@ -651,6 +653,20 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "実行中のタスクはありません。",
 		LangSpanish:            "No hay ejecución en progreso.",
 	},
+	MsgTurnCancelled: {
+		LangEnglish:            "🛑 Current turn cancelled. You can send a new message.",
+		LangChinese:            "🛑 当前轮次已取消，可以继续发送新消息。",
+		LangTraditionalChinese: "🛑 當前輪次已取消，可以繼續發送新訊息。",
+		LangJapanese:           "🛑 現在のターンをキャンセルしました。新しいメッセージを送信できます。",
+		LangSpanish:            "🛑 Turno actual cancelado. Puede enviar un nuevo mensaje.",
+	},
+	MsgNoTurnInProgress: {
+		LangEnglish:            "No turn in progress.",
+		LangChinese:            "没有正在进行的轮次。",
+		LangTraditionalChinese: "沒有正在進行的輪次。",
+		LangJapanese:           "進行中のターンはありません。",
+		LangSpanish:            "No hay turno en progreso.",
+	},
 	MsgPreviousProcessing: {
 		LangEnglish:            "⏳ Previous request still processing. Use `/ps <message>` to send a P.S. to the running task.",
 		LangChinese:            "⏳ 上一个请求仍在处理中。使用 `/ps <消息>` 可向正在执行的任务追加补充信息。",
@@ -911,6 +927,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/shell [--timeout <sec>] <command>\n  Run a shell command and return the output (! prefix shortcut: !cmd)\n\n" +
 			"/show <ref>\n  View a file, directory, or code snippet by reference\n\n" +
 			"/dir [path|reset]\n  Show, switch, or reset agent working directory\n\n" +
+			"/cancel\n  Cancel current turn (session stays alive)\n\n" +
 			"/stop\n  Stop current execution\n\n" +
 			"/cron [add|list|del|enable|disable]\n  Manage scheduled tasks\n\n" +
 			"/heartbeat [status|pause|resume|run|interval]\n  Manage heartbeat\n\n" +
@@ -954,6 +971,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/shell [--timeout <秒>] <命令>\n  执行 Shell 命令并返回结果（快捷方式：!命令）\n\n" +
 			"/show <引用>\n  按引用查看文件、目录或代码片段\n\n" +
 			"/dir [路径|reset]\n  查看、切换或重置 Agent 工作目录\n\n" +
+			"/cancel\n  取消当前轮次（会话保持存活）\n\n" +
 			"/stop\n  停止当前执行\n\n" +
 			"/cron [add|list|del|enable|disable]\n  管理定时任务\n\n" +
 			"/heartbeat [status|pause|resume|run|interval]\n  管理心跳\n\n" +
@@ -996,6 +1014,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/tts [always|voice_only]\n  查看/切換語音合成模式\n\n" +
 			"/shell [--timeout <秒>] <命令>\n  執行 Shell 命令並返回結果（快捷方式：!命令）\n\n" +
 			"/dir [路徑|reset]\n  查看、切換或重置 Agent 工作目錄\n\n" +
+			"/cancel\n  取消當前輪次（工作階段保持存活）\n\n" +
 			"/stop\n  停止當前執行\n\n" +
 			"/cron [add|list|del|enable|disable]\n  管理定時任務\n\n" +
 			"/heartbeat [status|pause|resume|run|interval]\n  管理心跳\n\n" +
@@ -1037,6 +1056,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/tts [always|voice_only]\n  音声合成モードの表示/切り替え\n\n" +
 			"/shell [--timeout <秒>] <コマンド>\n  シェルコマンドを実行して結果を返す（ショートカット：!コマンド）\n\n" +
 			"/dir [パス|reset]\n  エージェントの作業ディレクトリを表示/切り替え/リセット\n\n" +
+			"/cancel\n  現在のターンをキャンセル（セッション維持）\n\n" +
 			"/stop\n  現在の実行を停止\n\n" +
 			"/cron [add|list|del|enable|disable]\n  スケジュールタスク管理\n\n" +
 			"/heartbeat [status|pause|resume|run|interval]\n  ハートビート管理\n\n" +
@@ -1078,6 +1098,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/tts [always|voice_only]\n  Ver/cambiar modo de síntesis de voz\n\n" +
 			"/shell [--timeout <seg>] <comando>\n  Ejecutar un comando shell y devolver la salida (atajo: !comando)\n\n" +
 			"/dir [ruta|reset]\n  Ver, cambiar o restablecer el directorio de trabajo del agente\n\n" +
+			"/cancel\n  Cancelar turno actual (sesión sigue activa)\n\n" +
 			"/stop\n  Detener ejecución actual\n\n" +
 			"/cron [add|list|del|enable|disable]\n  Gestionar tareas programadas\n\n" +
 			"/heartbeat [status|pause|resume|run|interval]\n  Gestionar heartbeat\n\n" +
@@ -1202,6 +1223,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del] — Command aliases\n" +
 			"/skills — List agent skills\n" +
 			"/compress — Compress context\n" +
+			"/cancel — Cancel current turn (session stays alive)\n" +
 			"/stop — Stop current execution",
 		LangChinese: "**工具与自动化**\n" +
 			"/shell <命令> — 执行 Shell 命令（!快捷方式）\n" +
@@ -1212,6 +1234,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del] — 命令别名\n" +
 			"/skills — 列出 Agent Skills\n" +
 			"/compress — 压缩上下文\n" +
+			"/cancel — 取消当前轮次（会话保持存活）\n" +
 			"/stop — 停止当前执行",
 		LangTraditionalChinese: "**工具與自動化**\n" +
 			"/shell <命令> — 執行 Shell 命令（!快捷方式）\n" +
@@ -1222,6 +1245,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del] — 命令別名\n" +
 			"/skills — 列出 Agent Skills\n" +
 			"/compress — 壓縮上下文\n" +
+			"/cancel — 取消當前輪次（工作階段保持存活）\n" +
 			"/stop — 停止當前執行",
 		LangJapanese: "**ツール・自動化**\n" +
 			"/shell <コマンド> — シェルコマンド実行（!ショートカット）\n" +
@@ -1232,6 +1256,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del] — コマンドエイリアス\n" +
 			"/skills — エージェントスキル一覧\n" +
 			"/compress — コンテキスト圧縮\n" +
+			"/cancel — 現在のターンをキャンセル（セッション維持）\n" +
 			"/stop — 現在の実行を停止",
 		LangSpanish: "**Herramientas y automatización**\n" +
 			"/shell <comando> — Ejecutar comando shell (! atajo)\n" +
@@ -1242,6 +1267,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del] — Alias de comandos\n" +
 			"/skills — Listar skills del agente\n" +
 			"/compress — Comprimir contexto\n" +
+			"/cancel — Cancelar turno actual (sesión sigue activa)\n" +
 			"/stop — Detener ejecución actual",
 	},
 	MsgHelpSystemSection: {

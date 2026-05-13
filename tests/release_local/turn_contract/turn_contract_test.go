@@ -132,6 +132,7 @@ func (s *turnSession) Close() error {
 	close(s.events)
 	return nil
 }
+func (s *turnSession) CancelTurn() {}
 
 func (s *turnSession) releaseFirstResult(event core.Event) {
 	s.mu.Lock()

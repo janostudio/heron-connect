@@ -488,6 +488,10 @@ func (gs *geminiSession) Close() error {
 	return nil
 }
 
+func (gs *geminiSession) CancelTurn() {
+	slog.Debug("agent: CancelTurn not supported for this session type")
+}
+
 // formatToolParams extracts a human-readable summary from tool parameters.
 func formatToolParams(toolName string, params map[string]any) string {
 	if params == nil {

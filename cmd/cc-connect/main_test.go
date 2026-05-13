@@ -44,6 +44,7 @@ func (s *stubMainAgentSession) Send(string, []core.ImageAttachment, []core.FileA
 func (s *stubMainAgentSession) RespondPermission(string, core.PermissionResult) error { return nil }
 func (s *stubMainAgentSession) Events() <-chan core.Event                             { return nil }
 func (s *stubMainAgentSession) Close() error                                          { return nil }
+func (s *stubMainAgentSession) CancelTurn()                                           {}
 func (s *stubMainAgentSession) CurrentSessionID() string                              { return "" }
 func (s *stubMainAgentSession) Alive() bool                                           { return true }
 

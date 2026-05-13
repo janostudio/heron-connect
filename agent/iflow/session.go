@@ -903,3 +903,7 @@ func (s *iflowSession) Close() error {
 	close(s.events)
 	return nil
 }
+
+func (s *iflowSession) CancelTurn() {
+	slog.Debug("agent: CancelTurn not supported for this session type")
+}

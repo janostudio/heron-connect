@@ -103,6 +103,8 @@ func (s *integrationRoutingSession) Close() error {
 	return nil
 }
 
+func (s *integrationRoutingSession) CancelTurn() {}
+
 type integrationPlatform struct {
 	mu           sync.Mutex
 	name         string

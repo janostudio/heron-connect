@@ -877,6 +877,10 @@ func (cs *codexSession) Close() error {
 	}
 }
 
+func (cs *codexSession) CancelTurn() {
+	slog.Debug("agent: CancelTurn not supported for this session type")
+}
+
 func (cs *codexSession) addCmd(cmd *exec.Cmd) {
 	cs.cmdMu.Lock()
 	defer cs.cmdMu.Unlock()

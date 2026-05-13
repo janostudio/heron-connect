@@ -4801,6 +4801,8 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 		e.cmdHeartbeat(p, msg, args)
 	case "compress":
 		e.cmdCompress(p, msg)
+	case "cancel":
+		e.cmdCancel(p, msg)
 	case "stop":
 		e.cmdStop(p, msg)
 	case "help":
@@ -7219,8 +7221,9 @@ func helpCardGroups() []helpCardGroup {
 				{command: "/commands", action: "nav:/commands"},
 				{command: "/alias", action: "nav:/alias"},
 				{command: "/skills", action: "nav:/skills"},
-				{command: "/compress", action: "cmd:/compress"},
-				{command: "/stop", action: "act:/stop"},
+			{command: "/compress", action: "cmd:/compress"},
+			{command: "/cancel", action: "act:/cancel"},
+			{command: "/stop", action: "act:/stop"},
 				{command: "/ps", action: "cmd:/ps"},
 			},
 		},
@@ -7936,6 +7939,28 @@ func (e *Engine) cmdStop(p Platform, msg *Message) {
 		return
 	}
 	e.reply(p, msg.ReplyCtx, e.i18n.T(MsgExecutionStopped))
+}
+
+func (e *Engine) cmdCancel(p Platform, msg *Message) {
+	iKey := e.interactiveKeyForSessionKey(msg.SessionKey)
+	e.interactiveMu.Lock()
+	state, ok := e.interactiveStates[iKey]
+	if !ok || state == nil {
+		e.interactiveMu.Unlock()
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgNoTurnInProgress))
+		return
+	}
+	state.mu.Lock()
+	agentSession := state.agentSession
+	state.mu.Unlock()
+	e.interactiveMu.Unlock()
+
+	if agentSession == nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgNoTurnInProgress))
+		return
+	}
+	agentSession.CancelTurn()
+	e.reply(p, msg.ReplyCtx, e.i18n.T(MsgTurnCancelled))
 }
 
 func (e *Engine) stopInteractiveSession(sessionKey string, quietPlatform Platform, quietReplyCtx any) bool {
@@ -9307,6 +9332,8 @@ func (e *Engine) handleCardNav(action string, sessionKey string) *Card {
 			return e.renderListCardSafe(sessionKey, 1)
 		}
 		return e.renderDeleteModeCard(sessionKey)
+	case "/cancel":
+		return e.renderStatusCard(sessionKey, extractUserID(sessionKey))
 	case "/stop":
 		return e.renderStatusCard(sessionKey, extractUserID(sessionKey))
 	case "/upgrade":
@@ -9574,6 +9601,20 @@ func (e *Engine) executeCardAction(cmd, args, sessionKey string) {
 		if errMsg != "" {
 			slog.Debug("dir card action failed", "message", errMsg)
 		}
+
+	case "/cancel":
+		iKey := e.interactiveKeyForSessionKey(sessionKey)
+		e.interactiveMu.Lock()
+		st, stOk := e.interactiveStates[iKey]
+		if stOk && st != nil {
+			st.mu.Lock()
+			as := st.agentSession
+			st.mu.Unlock()
+			if as != nil {
+				as.CancelTurn()
+			}
+		}
+		e.interactiveMu.Unlock()
 
 	case "/stop":
 		sessionKey = e.interactiveKeyForSessionKey(sessionKey)

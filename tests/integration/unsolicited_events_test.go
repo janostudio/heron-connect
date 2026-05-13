@@ -80,6 +80,8 @@ func (s *persistentEventsSession) Close() error {
 	return nil
 }
 
+func (s *persistentEventsSession) CancelTurn() {}
+
 // emit pushes an event into the channel.
 func (s *persistentEventsSession) emit(ev core.Event) {
 	s.events <- ev

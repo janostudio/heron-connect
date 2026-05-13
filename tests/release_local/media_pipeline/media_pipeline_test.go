@@ -116,6 +116,7 @@ func (s *recordingSession) Close() error {
 	close(s.events)
 	return nil
 }
+func (s *recordingSession) CancelTurn() {}
 
 func (s *recordingSession) releaseFirstResult(content string) {
 	s.releaseFirstEvent(core.Event{Type: core.EventResult, Content: content, Done: true})

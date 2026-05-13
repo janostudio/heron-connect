@@ -755,6 +755,10 @@ func (s *appServerSession) Close() error {
 	return nil
 }
 
+func (s *appServerSession) CancelTurn() {
+	slog.Debug("agent: CancelTurn not supported for this session type")
+}
+
 func (s *appServerSession) readLoop(r io.Reader) {
 	defer s.wg.Done()
 	scanner := bufio.NewScanner(r)

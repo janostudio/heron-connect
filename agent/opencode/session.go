@@ -491,6 +491,10 @@ func (s *opencodeSession) Close() error {
 	return nil
 }
 
+func (s *opencodeSession) CancelTurn() {
+	slog.Debug("agent: CancelTurn not supported for this session type")
+}
+
 func truncate(s string, maxRunes int) string {
 	if utf8.RuneCountInString(s) <= maxRunes {
 		return s

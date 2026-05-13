@@ -150,6 +150,8 @@ func (s *FakeAgentSession) Close() error {
 	return nil
 }
 
+func (s *FakeAgentSession) CancelTurn() {}
+
 // GetPrompts returns all prompts sent to this session (for verification).
 func (s *FakeAgentSession) GetPrompts() []string {
 	s.mu.RLock()

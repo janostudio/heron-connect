@@ -471,6 +471,10 @@ func (cs *cursorSession) Close() error {
 	return nil
 }
 
+func (cs *cursorSession) CancelTurn() {
+	slog.Debug("agent: CancelTurn not supported for this session type")
+}
+
 func truncateStr(s string, maxRunes int) string {
 	if utf8.RuneCountInString(s) <= maxRunes {
 		return s

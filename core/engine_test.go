@@ -34,6 +34,7 @@ func (s *stubAgentSession) Events() <-chan Event                                
 func (s *stubAgentSession) CurrentSessionID() string                                     { return "stub-session" }
 func (s *stubAgentSession) Alive() bool                                                  { return true }
 func (s *stubAgentSession) Close() error                                                 { return nil }
+func (s *stubAgentSession) CancelTurn()                                                   {}
 
 type recordingAgentSession struct {
 	stubAgentSession
@@ -194,6 +195,7 @@ func (s *resultAgentSession) Events() <-chan Event                              
 func (s *resultAgentSession) CurrentSessionID() string                             { return "result-session" }
 func (s *resultAgentSession) Alive() bool                                          { return true }
 func (s *resultAgentSession) Close() error                                         { return nil }
+func (s *resultAgentSession) CancelTurn()                                          {}
 
 type stubLifecyclePlatform struct {
 	stubPlatformEngine
@@ -5549,6 +5551,8 @@ func (s *controllableAgentSession) Close() error {
 	}
 	return nil
 }
+
+func (s *controllableAgentSession) CancelTurn() {}
 
 // controllableAgent lets tests control which session is returned by StartSession.
 type controllableAgent struct {
@@ -12272,6 +12276,7 @@ func (s *codexLikeSession) CurrentSessionID() string {
 }
 func (s *codexLikeSession) Alive() bool  { return s.alive }
 func (s *codexLikeSession) Close() error { s.alive = false; return nil }
+func (s *codexLikeSession) CancelTurn() {}
 
 // TestSessionName_CodexLikeFlow does an end-to-end test simulating real codex
 // behavior: CurrentSessionID()="" initially, thread ID only available after Send().
@@ -12379,6 +12384,7 @@ func (s *claudeCodeLikeSession) CurrentSessionID() string {
 }
 func (s *claudeCodeLikeSession) Alive() bool  { return s.alive }
 func (s *claudeCodeLikeSession) Close() error { s.alive = false; return nil }
+func (s *claudeCodeLikeSession) CancelTurn() {}
 
 // TestSessionName_ClaudeCodeLikeFlow tests the claudecode/gemini/cursor pattern:
 // CurrentSessionID()="" initially, but an early EventText carries SessionID.
@@ -12439,6 +12445,7 @@ func (s *acpLikeSession) Events() <-chan Event                                 {
 func (s *acpLikeSession) CurrentSessionID() string                             { return s.threadID }
 func (s *acpLikeSession) Alive() bool                                          { return s.alive }
 func (s *acpLikeSession) Close() error                                         { s.alive = false; return nil }
+func (s *acpLikeSession) CancelTurn()                                          {}
 
 // TestSessionName_ACPLikeFlow tests ACP pattern: CurrentSessionID() is non-empty
 // immediately at creation, so name mapping happens in startOrResumeSession.

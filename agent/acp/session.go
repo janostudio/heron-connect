@@ -705,6 +705,22 @@ func (s *acpSession) Alive() bool {
 	return s.alive.Load()
 }
 
+// CancelTurn sends a session/cancel notification to abort the current
+// in-progress turn. The session remains alive and can accept the next prompt.
+func (s *acpSession) CancelTurn() {
+	if !s.alive.Load() {
+		return
+	}
+	sid := s.currentACPSessionID()
+	if sid == "" {
+		return
+	}
+	_ = s.tr.notify("session/cancel", map[string]any{
+		"sessionId": sid,
+	})
+	slog.Info("acp: sent session/cancel (cancel turn)", "session_id", sid)
+}
+
 func (s *acpSession) Close() error {
 	if !s.alive.Load() {
 		return nil

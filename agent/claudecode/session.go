@@ -739,6 +739,10 @@ func (cs *claudeSession) Close() error {
 	return nil
 }
 
+func (cs *claudeSession) CancelTurn() {
+	slog.Debug("agent: CancelTurn not supported for this session type")
+}
+
 // shellJoinArgs joins args into a single string, quoting any arg that
 // contains whitespace so that a shell-style splitter (like my_cli's
 // splitCommandLine) preserves each arg as one token.

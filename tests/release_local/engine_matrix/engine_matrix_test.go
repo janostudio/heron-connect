@@ -139,6 +139,7 @@ func (s *matrixSession) Close() error {
 	close(s.events)
 	return nil
 }
+func (s *matrixSession) CancelTurn() {}
 
 type matrixPlatform struct {
 	mu    sync.Mutex

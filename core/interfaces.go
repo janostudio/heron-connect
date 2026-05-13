@@ -296,6 +296,9 @@ type AgentSession interface {
 	Alive() bool
 	// Close terminates the session and its underlying process.
 	Close() error
+	// CancelTurn cancels the current in-progress turn without closing the session.
+	// The session remains alive and can accept subsequent prompts.
+	CancelTurn()
 }
 
 // PermissionResult represents the user's decision on a permission request.

@@ -71,6 +71,10 @@ func (m *MockAgentSession) Close() error {
 	return args.Error(0)
 }
 
+func (m *MockAgentSession) CancelTurn() {
+	m.Called()
+}
+
 // MockAgentWithProviders is a mock agent that also implements ProviderSwitcher.
 type MockAgentWithProviders struct {
 	*MockAgent

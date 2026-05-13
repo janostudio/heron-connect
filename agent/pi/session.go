@@ -404,6 +404,10 @@ func (s *piSession) Close() error {
 	return nil
 }
 
+func (s *piSession) CancelTurn() {
+	slog.Debug("agent: CancelTurn not supported for this session type")
+}
+
 // cleanAttachments removes files from the attachments directory to avoid
 // accumulating files across turns.
 func cleanAttachments(workDir string) {
