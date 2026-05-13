@@ -2,6 +2,10 @@ APP        := cc-connect
 MODULE     := github.com/chenhg5/cc-connect
 CMD        := ./cmd/cc-connect
 DIST       := dist
+LOCAL_NPM_ROOT ?= $(shell npm root -g 2>/dev/null)
+LOCAL_CC_CONNECT_DIR ?= $(LOCAL_NPM_ROOT)/cc-connect
+LOCAL_CC_CONNECT_BIN ?= $(LOCAL_CC_CONNECT_DIR)/bin/$(APP)
+LOCAL_BUILD_VERSION ?= $(shell node -p "require('./npm/package.json').version" 2>/dev/null || echo dev)
 
 VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT     := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -65,7 +69,7 @@ endif
 _BUILD_TAGS := $(strip $(_EXCLUDE_TAGS))
 _TAGS_FLAG  := $(if $(_BUILD_TAGS),-tags '$(_BUILD_TAGS)',)
 
-.PHONY: build run clean test test-fast test-full test-smoke test-e2e test-release test-release-local test-performance pre-test lint release release-all web
+.PHONY: build build-local build-noweb run clean test test-fast test-full test-smoke test-e2e test-release test-release-local test-performance pre-test lint release release-all web
 
 web:
 	@if [ ! -d web/node_modules ]; then cd web && npm install; fi
@@ -73,6 +77,30 @@ web:
 
 build: web
 	go build $(_TAGS_FLAG) -ldflags "$(LDFLAGS)" -o $(APP) $(CMD)
+
+# Build a local-development binary and replace the global npm wrapper files
+# plus the real executable. This avoids run.js force-reinstalling an official
+# release when the repo build version differs from the published npm package.
+build-local: web
+	@if [ -z "$(LOCAL_NPM_ROOT)" ]; then \
+		echo "npm root -g failed; set LOCAL_CC_CONNECT_BIN manually."; \
+		exit 1; \
+	fi
+	@if [ ! -d "$(LOCAL_CC_CONNECT_DIR)" ]; then \
+		echo "Global npm package not found: $(LOCAL_CC_CONNECT_DIR)"; \
+		echo "Install with: npm install -g cc-connect"; \
+		echo "Or run: make build-local LOCAL_CC_CONNECT_BIN=/your/path/cc-connect"; \
+		exit 1; \
+	fi
+	go build $(_TAGS_FLAG) -ldflags "-s -w -X main.version=$(LOCAL_BUILD_VERSION) -X main.commit=$(COMMIT) -X main.buildTime=$(BUILD_TIME)" -o $(APP) $(CMD)
+	install -m 644 npm/package.json "$(LOCAL_CC_CONNECT_DIR)/package.json"
+	install -m 755 npm/run.js "$(LOCAL_CC_CONNECT_DIR)/run.js"
+	install -m 755 npm/install.js "$(LOCAL_CC_CONNECT_DIR)/install.js"
+	install -m 644 npm/README.md "$(LOCAL_CC_CONNECT_DIR)/README.md"
+	@mkdir -p "$(dir $(LOCAL_CC_CONNECT_BIN))"
+	install -m 755 $(APP) "$(LOCAL_CC_CONNECT_BIN)"
+	@echo "Updated local npm wrapper files in: $(LOCAL_CC_CONNECT_DIR)"
+	@echo "Updated local npm binary: $(LOCAL_CC_CONNECT_BIN)"
 
 build-noweb:
 	go build $(_TAGS_FLAG) -tags 'no_web' -ldflags "$(LDFLAGS)" -o $(APP) $(CMD)
