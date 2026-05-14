@@ -7947,6 +7947,7 @@ func (e *Engine) cmdCancel(p Platform, msg *Message) {
 	state, ok := e.interactiveStates[iKey]
 	if !ok || state == nil {
 		e.interactiveMu.Unlock()
+		slog.Info("cancel: no interactive session", "session_key", msg.SessionKey)
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgNoTurnInProgress))
 		return
 	}
@@ -7956,9 +7957,12 @@ func (e *Engine) cmdCancel(p Platform, msg *Message) {
 	e.interactiveMu.Unlock()
 
 	if agentSession == nil {
+		slog.Info("cancel: no agent session", "session_key", msg.SessionKey)
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgNoTurnInProgress))
 		return
 	}
+	sid := agentSession.CurrentSessionID()
+	slog.Info("cancel: sending CancelTurn", "session_key", msg.SessionKey, "agent_session_id", sid)
 	agentSession.CancelTurn()
 	e.reply(p, msg.ReplyCtx, e.i18n.T(MsgTurnCancelled))
 }
@@ -9611,8 +9615,13 @@ func (e *Engine) executeCardAction(cmd, args, sessionKey string) {
 			as := st.agentSession
 			st.mu.Unlock()
 			if as != nil {
+				slog.Info("cancel: sending CancelTurn (card action)", "session_key", sessionKey, "agent_session_id", as.CurrentSessionID())
 				as.CancelTurn()
+			} else {
+				slog.Info("cancel: no agent session (card action)", "session_key", sessionKey)
 			}
+		} else {
+			slog.Info("cancel: no interactive session (card action)", "session_key", sessionKey)
 		}
 		e.interactiveMu.Unlock()
 
