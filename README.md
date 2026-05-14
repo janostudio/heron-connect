@@ -138,95 +138,11 @@ make test-fast
 make test-release-local
 ```
 
-## 怎么替换本地已经安装的 cc-connect
+## 本地安装与替换
 
-先确认你当前系统里 `cc-connect` 命令来自哪里：
+关于本地构建后如何覆盖 npm 全局安装、为什么需要同时替换包装层文件，以及 `make build-local` 的行为说明，见：
 
-```bash
-which cc-connect
-```
-
-然后根据安装方式替换。
-
-### 场景 1：你本来就是手动安装到 PATH
-
-例如输出是 `/usr/local/bin/cc-connect` 或 `/opt/homebrew/bin/cc-connect`，可以直接用你刚构建出来的二进制覆盖：
-
-```bash
-sudo install -m 755 ./cc-connect "$(which cc-connect)"
-```
-
-替换后验证：
-
-```bash
-cc-connect --version
-```
-
-推荐直接使用：
-
-```bash
-make build-local
-```
-
-这个目标现在会覆盖两类内容：
-
-1. npm 包目录里的包装层文件：`package.json`、`run.js`、`install.js`、`README.md`
-2. 真正执行的二进制：`$(npm root -g)/cc-connect/bin/cc-connect`
-
-这样做的原因是，单独替换二进制还不够。npm 全局命令实际先经过包装脚本，而包装脚本会读取 npm 包版本；如果仓库构建出来的版本号和已发布 npm 版本不一致，它会误判为“过期”，然后尝试重新下载安装官方版本。
-
-`make build-local` 会把本地 npm 包元数据和二进制一起替换，避免这个回退行为。
-
-注意，`which cc-connect` 显示的通常是 npm 放到 PATH 里的入口脚本，例如你当前的：
-
-```bash
-/Users/jahweijiang/.nvm/versions/node/v24.11.0/bin/cc-connect
-```
-
-这个路径本身是一个软链接，实际指向全局 npm 包目录里的 `run.js`；真正需要覆盖的是该包目录中的包装文件和 `bin/cc-connect`。
-
-### 场景 2：你之前是通过 npm 全局安装
-
-`npm install -g cc-connect` 实际上会在全局包目录里放一个包装脚本，真正执行的二进制通常在全局 `node_modules/cc-connect/bin/cc-connect`。
-
-可以这样替换：
-
-```bash
-NPM_CC_DIR="$(npm root -g)/cc-connect"
-sudo mkdir -p "$NPM_CC_DIR/bin"
-sudo install -m 755 ./cc-connect "$NPM_CC_DIR/bin/cc-connect"
-```
-
-然后检查：
-
-```bash
-cc-connect --version
-```
-
-如果你不想继续保留 npm 包装层，更直接的做法是先卸载 npm 全局包，再把你自己编译的二进制放到 PATH：
-
-```bash
-npm uninstall -g cc-connect
-sudo install -m 755 ./cc-connect /usr/local/bin/cc-connect
-```
-
-### 场景 3：你想临时优先使用当前仓库里编出来的版本
-
-不替换系统文件，直接在当前 shell 里把仓库根目录放到 PATH 前面：
-
-```bash
-export PATH="$PWD:$PATH"
-cc-connect --version
-```
-
-这种方式适合临时调试，不会改动系统安装。
-
-## 替换前后的注意事项
-
-- 如果 `cc-connect` 正在运行，先停掉旧进程再替换，避免覆盖后仍在跑旧版本
-- 如果你用的是守护进程或系统服务，替换二进制后需要重启对应服务
-- 替换完成后优先执行 `cc-connect --version` 和一遍最小启动验证
-
+- [docs/local-dev-install.md](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/docs/local-dev-install.md)
 ## 精简构建
 
 仓库支持按 Agent 或平台裁剪编译，示例：
@@ -250,3 +166,4 @@ make build EXCLUDE=discord,dingtalk,qq,qqbot,line
 ## 许可证
 
 仓库和 npm 包当前都声明为 MIT，npm 元数据见 [npm/package.json](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/npm/package.json)。
+

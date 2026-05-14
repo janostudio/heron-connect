@@ -5,7 +5,6 @@ DIST       := dist
 LOCAL_NPM_ROOT ?= $(shell npm root -g 2>/dev/null)
 LOCAL_CC_CONNECT_DIR ?= $(LOCAL_NPM_ROOT)/cc-connect
 LOCAL_CC_CONNECT_BIN ?= $(LOCAL_CC_CONNECT_DIR)/bin/$(APP)
-LOCAL_BUILD_VERSION ?= $(shell node -p "require('./npm/package.json').version" 2>/dev/null || echo dev)
 
 VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT     := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -79,8 +78,8 @@ build: web
 	go build $(_TAGS_FLAG) -ldflags "$(LDFLAGS)" -o $(APP) $(CMD)
 
 # Build a local-development binary and replace the global npm wrapper files
-# plus the real executable. This avoids run.js force-reinstalling an official
-# release when the repo build version differs from the published npm package.
+# plus the real executable. Each invocation bumps the installed local version
+# suffix (for example: 1.3.3-beta.2.1 -> 1.3.3-beta.2.2).
 build-local: web
 	@if [ -z "$(LOCAL_NPM_ROOT)" ]; then \
 		echo "npm root -g failed; set LOCAL_CC_CONNECT_BIN manually."; \
@@ -92,15 +91,19 @@ build-local: web
 		echo "Or run: make build-local LOCAL_CC_CONNECT_BIN=/your/path/cc-connect"; \
 		exit 1; \
 	fi
-	go build $(_TAGS_FLAG) -ldflags "-s -w -X main.version=$(LOCAL_BUILD_VERSION) -X main.commit=$(COMMIT) -X main.buildTime=$(BUILD_TIME)" -o $(APP) $(CMD)
-	install -m 644 npm/package.json "$(LOCAL_CC_CONNECT_DIR)/package.json"
-	install -m 755 npm/run.js "$(LOCAL_CC_CONNECT_DIR)/run.js"
-	install -m 755 npm/install.js "$(LOCAL_CC_CONNECT_DIR)/install.js"
-	install -m 644 npm/README.md "$(LOCAL_CC_CONNECT_DIR)/README.md"
-	@mkdir -p "$(dir $(LOCAL_CC_CONNECT_BIN))"
-	install -m 755 $(APP) "$(LOCAL_CC_CONNECT_BIN)"
-	@echo "Updated local npm wrapper files in: $(LOCAL_CC_CONNECT_DIR)"
-	@echo "Updated local npm binary: $(LOCAL_CC_CONNECT_BIN)"
+	@set -e; \
+		LOCAL_VERSION=$$(node npm/local-version.js next ./npm/package.json "$(LOCAL_CC_CONNECT_DIR)/package.json"); \
+		echo "Building local npm version $$LOCAL_VERSION"; \
+		go build $(_TAGS_FLAG) -ldflags "-s -w -X main.version=$$LOCAL_VERSION -X main.commit=$(COMMIT) -X main.buildTime=$(BUILD_TIME)" -o $(APP) $(CMD); \
+		node npm/local-version.js write-package ./npm/package.json "$(LOCAL_CC_CONNECT_DIR)/package.json" "$$LOCAL_VERSION"; \
+		install -m 755 npm/run.js "$(LOCAL_CC_CONNECT_DIR)/run.js"; \
+		install -m 755 npm/install.js "$(LOCAL_CC_CONNECT_DIR)/install.js"; \
+		install -m 644 npm/README.md "$(LOCAL_CC_CONNECT_DIR)/README.md"; \
+		mkdir -p "$(dir $(LOCAL_CC_CONNECT_BIN))"; \
+		install -m 755 $(APP) "$(LOCAL_CC_CONNECT_BIN)"; \
+		echo "Updated local npm wrapper files in: $(LOCAL_CC_CONNECT_DIR)"; \
+		echo "Updated local npm binary: $(LOCAL_CC_CONNECT_BIN)"; \
+		echo "Local npm version is now $$LOCAL_VERSION"
 
 build-noweb:
 	go build $(_TAGS_FLAG) -tags 'no_web' -ldflags "$(LDFLAGS)" -o $(APP) $(CMD)
