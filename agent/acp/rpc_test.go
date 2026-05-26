@@ -2,10 +2,12 @@ package acp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 )
 
@@ -63,5 +65,21 @@ func TestJSONIDKey(t *testing.T) {
 	}
 	if !isJSONRPCIDNullOrAbsent(json.RawMessage(nil)) {
 		t.Fatalf("absent id")
+	}
+}
+
+func TestTruncateACPLogBody(t *testing.T) {
+	short := []byte(`{"jsonrpc":"2.0"}`)
+	if got := truncateACPLogBody(short); got != string(short) {
+		t.Fatalf("short body = %q, want unchanged", got)
+	}
+
+	long := bytes.Repeat([]byte("a"), acpLogBodyLimit+10)
+	got := truncateACPLogBody(long)
+	if len(got) <= acpLogBodyLimit {
+		t.Fatalf("truncated body len = %d, want > %d with suffix", len(got), acpLogBodyLimit)
+	}
+	if !strings.HasSuffix(got, "...<truncated>") {
+		t.Fatalf("truncated body suffix missing: %q", got)
 	}
 }

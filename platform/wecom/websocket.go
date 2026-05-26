@@ -19,6 +19,7 @@ const (
 	wsPingInterval  = 30 * time.Second
 	wsMaxBackoff    = 30 * time.Second
 	wsMaxMissedPong = 2
+	wecomLogBodyMax = 4000
 )
 
 // WSPlatform implements core.Platform using the WeChat Work WebSocket long-connection
@@ -577,6 +578,12 @@ func (p *WSPlatform) UpdateMessage(ctx context.Context, previewHandle any, conte
 }
 
 func (p *WSPlatform) sendStreamFrameAndWaitAck(ctx context.Context, rc wsReplyContext, content string, finish bool) error {
+	slog.Info("wecom-ws: stream enqueue",
+		"user", rc.userID,
+		"stream_id", rc.streamID,
+		"finish", finish,
+		"content", truncateWecomLogBody(content),
+	)
 	key, state, err := p.streamStateFor(rc)
 	if err != nil {
 		return err
@@ -620,6 +627,7 @@ func (p *WSPlatform) enqueueLatestStreamSend(ctx context.Context, key string, st
 		state.heldTool = strings.TrimSpace(content)
 		state.completed = false
 		state.mu.Unlock()
+		slog.Info("wecom-ws: stream hold tool-only", "key", key, "content", truncateWecomLogBody(content))
 		return nil
 	}
 	if pending := state.pending; pending != nil {
@@ -715,6 +723,7 @@ func (p *WSPlatform) runStreamQueue(key string, state *wsStreamState, rc wsReply
 			state.mu.Unlock()
 
 			if lastAckedMatches {
+				slog.Info("wecom-ws: stream skip duplicate", "key", key, "finish", req.finish, "content", truncateWecomLogBody(rendered))
 				req.done <- nil
 				close(req.done)
 				continue
@@ -745,10 +754,12 @@ func (p *WSPlatform) runStreamQueue(key string, state *wsStreamState, rc wsReply
 		} else {
 			rendered = state.aggregator.ingest(req.content)
 		}
+		slog.Info("wecom-ws: stream aggregate", "key", key, "finish", req.finish, "content", truncateWecomLogBody(rendered))
 		lastAckedMatches := !req.finish && state.lastAcked == rendered
 		state.mu.Unlock()
 
 		if lastAckedMatches {
+			slog.Info("wecom-ws: stream skip duplicate", "key", key, "finish", req.finish, "content", truncateWecomLogBody(rendered))
 			req.done <- nil
 			close(req.done)
 			continue
@@ -794,8 +805,16 @@ func (p *WSPlatform) buildStreamFrame(rc wsReplyContext, content string, finish 
 			},
 		},
 	}
-	slog.Debug("wecom-ws: stream frame prepared", "user", rc.userID, "stream_id", streamID, "finish", finish, "len", len(content))
+	slog.Info("wecom-ws: stream frame prepared", "user", rc.userID, "stream_id", streamID, "finish", finish, "content", truncateWecomLogBody(content))
 	return rc.reqID, frame, nil
+}
+
+func truncateWecomLogBody(content string) string {
+	content = strings.TrimSpace(content)
+	if len(content) <= wecomLogBodyMax {
+		return content
+	}
+	return content[:wecomLogBodyMax] + "...<truncated>"
 }
 
 // Send sends a proactive message via aibot_send_msg (markdown format).

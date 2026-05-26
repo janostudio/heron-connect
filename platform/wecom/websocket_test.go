@@ -750,6 +750,22 @@ func TestSendStreamFrameAndWaitAck_FinishFlushesHeldTool(t *testing.T) {
 	}
 }
 
+func TestTruncateWecomLogBody(t *testing.T) {
+	short := "hello"
+	if got := truncateWecomLogBody(short); got != short {
+		t.Fatalf("short content = %q, want unchanged", got)
+	}
+
+	long := strings.Repeat("a", wecomLogBodyMax+10)
+	got := truncateWecomLogBody(long)
+	if !strings.HasSuffix(got, "...<truncated>") {
+		t.Fatalf("missing truncated suffix: %q", got)
+	}
+	if len(got) <= wecomLogBodyMax {
+		t.Fatalf("truncated content len = %d, want > %d", len(got), wecomLogBodyMax)
+	}
+}
+
 func captureWSFrames(dst *[]map[string]any) func(any) error {
 	return func(v any) error {
 		b, err := json.Marshal(v)

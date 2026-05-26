@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 )
 
+const acpLogBodyLimit = 4000
+
 type rpcOutcome struct {
 	result json.RawMessage
 	err    *rpcErrPayload
@@ -90,6 +92,8 @@ func (t *transport) readLine() ([]byte, error) {
 }
 
 func (t *transport) dispatchLine(line []byte) {
+	slog.Info("acp: recv", "body", truncateACPLogBody(line))
+
 	var env struct {
 		JSONRPC string          `json:"jsonrpc"`
 		ID      json.RawMessage `json:"id"`
@@ -213,9 +217,20 @@ func (t *transport) notify(method string, params any) error {
 }
 
 func (t *transport) writeJSON(v any) error {
+	if b, err := json.Marshal(v); err == nil {
+		slog.Info("acp: send", "body", truncateACPLogBody(b))
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.enc.Encode(v)
+}
+
+func truncateACPLogBody(raw []byte) string {
+	line := string(bytes.TrimSpace(raw))
+	if len(line) <= acpLogBodyLimit {
+		return line
+	}
+	return line[:acpLogBodyLimit] + "...<truncated>"
 }
 
 type rpcResponseMsg struct {
