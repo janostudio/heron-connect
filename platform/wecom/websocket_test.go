@@ -218,6 +218,93 @@ func TestHandleMsgCallback_StripsBotMention(t *testing.T) {
 	}
 }
 
+func TestWSPreviewStartAndUpdate_ReuseSameStreamID(t *testing.T) {
+	var frames []map[string]any
+	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
+	rctx := wsReplyContext{reqID: "req_123", chatID: "chat_1", userID: "user_1"}
+
+	handleAny, err := p.SendPreviewStart(context.Background(), rctx, "partial")
+	if err != nil {
+		t.Fatalf("SendPreviewStart failed: %v", err)
+	}
+	handle, ok := handleAny.(*wsPreviewHandle)
+	if !ok {
+		t.Fatalf("preview handle type = %T", handleAny)
+	}
+	if handle.replyCtx.streamID == "" {
+		t.Fatal("expected preview handle to capture streamID")
+	}
+
+	if err := p.UpdateMessage(context.Background(), handle, "partial 2"); err != nil {
+		t.Fatalf("UpdateMessage failed: %v", err)
+	}
+
+	if len(frames) != 2 {
+		t.Fatalf("captured frames = %d, want 2", len(frames))
+	}
+
+	firstStream := frames[0]["body"].(map[string]any)["stream"].(map[string]any)
+	secondStream := frames[1]["body"].(map[string]any)["stream"].(map[string]any)
+	if firstStream["id"] != secondStream["id"] {
+		t.Fatalf("stream ids differ: %v vs %v", firstStream["id"], secondStream["id"])
+	}
+	if firstStream["finish"] != false || secondStream["finish"] != false {
+		t.Fatalf("expected non-final preview frames, got %+v and %+v", firstStream, secondStream)
+	}
+	if firstStream["content"] != "partial" || secondStream["content"] != "partial 2" {
+		t.Fatalf("unexpected content: %+v %+v", firstStream, secondStream)
+	}
+	if frames[0]["headers"].(map[string]any)["req_id"] != "req_123" || frames[1]["headers"].(map[string]any)["req_id"] != "req_123" {
+		t.Fatalf("expected req_id req_123, got %+v %+v", frames[0]["headers"], frames[1]["headers"])
+	}
+}
+
+func TestReply_SendsFinalStreamFrame(t *testing.T) {
+	var frames []map[string]any
+	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
+	rctx := wsReplyContext{reqID: "req_final", userID: "user_1"}
+	if err := p.Reply(context.Background(), rctx, "final answer"); err != nil {
+		t.Fatalf("Reply failed: %v", err)
+	}
+
+	if len(frames) != 1 {
+		t.Fatalf("captured frames = %d, want 1", len(frames))
+	}
+	frame := frames[0]
+	stream := frame["body"].(map[string]any)["stream"].(map[string]any)
+	if stream["finish"] != true {
+		t.Fatalf("expected finish=true, got %+v", stream)
+	}
+	if stream["content"] != "final answer" {
+		t.Fatalf("unexpected content: %+v", stream)
+	}
+}
+
+func TestUpdateMessage_InvalidHandle(t *testing.T) {
+	p := &WSPlatform{}
+	if err := p.UpdateMessage(context.Background(), "bad-handle", "x"); err == nil {
+		t.Fatal("expected invalid handle error")
+	}
+	if err := p.UpdateMessage(context.Background(), &wsPreviewHandle{}, "x"); err == nil {
+		t.Fatal("expected missing stream id error")
+	}
+}
+
+func captureWSFrames(dst *[]map[string]any) func(any) error {
+	return func(v any) error {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		var frame map[string]any
+		if err := json.Unmarshal(b, &frame); err != nil {
+			return err
+		}
+		*dst = append(*dst, frame)
+		return nil
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ReconstructReplyCtx
 // ---------------------------------------------------------------------------

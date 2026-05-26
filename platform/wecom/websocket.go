@@ -28,6 +28,7 @@ type WSPlatform struct {
 	secret      string
 	allowFrom   string
 	conn        *websocket.Conn
+	writeJSONFn func(any) error
 	handler     core.MessageHandler
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -46,6 +47,11 @@ type wsReplyContext struct {
 	chatID   string // chatid for aibot_send_msg
 	chatType string // chattype: "single" or "group"
 	userID   string // from.userid
+	streamID string // stream id for aibot_respond_msg full-replacement updates
+}
+
+type wsPreviewHandle struct {
+	replyCtx wsReplyContext
 }
 
 // --- WebSocket protocol frame types (matching official SDK) ---
@@ -448,7 +454,48 @@ func (p *WSPlatform) Reply(ctx context.Context, rctx any, content string) error 
 		return nil
 	}
 
-	streamID := p.generateReqID("stream")
+	if err := p.sendStreamFrame(ctx, rc, content, true); err != nil {
+		slog.Error("wecom-ws: reply failed", "user", rc.userID, "error", err)
+		return err
+	}
+	slog.Debug("wecom-ws: reply sent", "user", rc.userID, "len", len(content))
+	return nil
+}
+
+func (p *WSPlatform) SendPreviewStart(ctx context.Context, rctx any, content string) (any, error) {
+	rc, ok := rctx.(wsReplyContext)
+	if !ok {
+		return nil, fmt.Errorf("wecom-ws: invalid reply context type %T", rctx)
+	}
+	if rc.reqID == "" {
+		return nil, core.ErrNotSupported
+	}
+	rc.streamID = p.generateReqID("stream")
+	if err := p.sendStreamFrame(ctx, rc, content, false); err != nil {
+		return nil, err
+	}
+	return &wsPreviewHandle{replyCtx: rc}, nil
+}
+
+func (p *WSPlatform) UpdateMessage(ctx context.Context, previewHandle any, content string) error {
+	h, ok := previewHandle.(*wsPreviewHandle)
+	if !ok {
+		return fmt.Errorf("wecom-ws: invalid preview handle type %T", previewHandle)
+	}
+	if h.replyCtx.streamID == "" {
+		return fmt.Errorf("wecom-ws: preview handle missing stream id")
+	}
+	return p.sendStreamFrame(ctx, h.replyCtx, content, false)
+}
+
+func (p *WSPlatform) sendStreamFrame(ctx context.Context, rc wsReplyContext, content string, finish bool) error {
+	if rc.reqID == "" {
+		return fmt.Errorf("wecom-ws: reqID is empty, cannot send stream reply")
+	}
+	streamID := rc.streamID
+	if streamID == "" {
+		streamID = p.generateReqID("stream")
+	}
 	frame := map[string]any{
 		"cmd":     "aibot_respond_msg",
 		"headers": map[string]string{"req_id": rc.reqID},
@@ -456,16 +503,15 @@ func (p *WSPlatform) Reply(ctx context.Context, rctx any, content string) error 
 			"msgtype": "stream",
 			"stream": map[string]any{
 				"id":      streamID,
-				"finish":  true,
+				"finish":  finish,
 				"content": content,
 			},
 		},
 	}
 	if err := p.writeJSON(frame); err != nil {
-		slog.Error("wecom-ws: reply failed", "user", rc.userID, "error", err)
 		return err
 	}
-	slog.Debug("wecom-ws: reply sent", "user", rc.userID, "len", len(content))
+	slog.Debug("wecom-ws: stream frame sent", "user", rc.userID, "stream_id", streamID, "finish", finish, "len", len(content))
 	return nil
 }
 
@@ -536,6 +582,9 @@ func (p *WSPlatform) Stop() error {
 
 // writeJSON sends a JSON message over the WebSocket connection with mutex protection.
 func (p *WSPlatform) writeJSON(v any) error {
+	if p.writeJSONFn != nil {
+		return p.writeJSONFn(v)
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.conn == nil {
