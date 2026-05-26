@@ -101,6 +101,10 @@ func mapToolCallUpdate(sessionID string, update json.RawMessage) []core.Event {
 		Title      string `json:"title"`
 		ToolCallID string `json:"toolCallId"`
 		Status     string `json:"status"`
+		RawOutput  struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"rawOutput"`
 		Content    []struct {
 			Type    string `json:"type"`
 			Content struct {
@@ -120,6 +124,9 @@ func mapToolCallUpdate(sessionID string, update json.RawMessage) []core.Event {
 		toolLabel = "tool"
 	}
 	body := extractToolCallContentText(u.Content)
+	if body == "" {
+		body = strings.TrimSpace(u.RawOutput.Text)
+	}
 	st := strings.ToLower(strings.TrimSpace(u.Status))
 
 	switch {
@@ -133,6 +140,8 @@ func mapToolCallUpdate(sessionID string, update json.RawMessage) []core.Event {
 		return []core.Event{{
 			Type:      core.EventToolResult,
 			ToolName:  toolLabel,
+			ToolResult: truncateRunes(body, 800),
+			ToolStatus: st,
 			Content:   truncateRunes(body, 800),
 			SessionID: sessionID,
 		}}
@@ -148,6 +157,8 @@ func mapToolCallUpdate(sessionID string, update json.RawMessage) []core.Event {
 			return []core.Event{{
 				Type:      core.EventToolResult,
 				ToolName:  toolLabel,
+				ToolResult: truncateRunes(body, 800),
+				ToolStatus: st,
 				Content:   truncateRunes(body, 800),
 				SessionID: sessionID,
 			}}

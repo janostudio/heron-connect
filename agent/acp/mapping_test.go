@@ -59,6 +59,38 @@ func TestMapSessionUpdate_toolCallUpdate_completed(t *testing.T) {
 	}
 }
 
+func TestMapSessionUpdate_toolCallUpdate_completedRawOutputFallback(t *testing.T) {
+	params := json.RawMessage(`{
+		"sessionId": "s1",
+		"update": {
+			"sessionUpdate": "tool_call_update",
+			"toolCallId": "c1",
+			"title": "Bash",
+			"status": "completed",
+			"rawOutput": {
+				"type": "text",
+				"text": "Command: wc -m file\nStdout: 365 file\nExit Code: 0"
+			}
+		}
+	}`)
+	evs := mapSessionUpdate("", params)
+	if len(evs) != 1 {
+		t.Fatalf("got %+v", evs)
+	}
+	if evs[0].Type != core.EventToolResult {
+		t.Fatalf("type = %s, want %s", evs[0].Type, core.EventToolResult)
+	}
+	if evs[0].ToolResult == "" {
+		t.Fatalf("ToolResult should be populated from rawOutput, got %+v", evs[0])
+	}
+	if evs[0].ToolStatus != "completed" {
+		t.Fatalf("ToolStatus = %q, want completed", evs[0].ToolStatus)
+	}
+	if evs[0].Content == "" {
+		t.Fatalf("Content should also be populated, got %+v", evs[0])
+	}
+}
+
 func TestMapSessionUpdate_reasoningChunk(t *testing.T) {
 	params := json.RawMessage(`{
 		"sessionId": "s1",
