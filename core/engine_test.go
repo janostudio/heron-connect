@@ -3011,6 +3011,27 @@ func TestGetOrCreateInteractiveStateWith_ACPNewSessionDoesNotReuseStaleCurrentID
 	e.closeAgentSessionWithTimeout(key, state.agentSession)
 }
 
+func TestGetOrCreateInteractiveStateWith_ACPResumeRefreshesPersistedSessionID(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	sess := &acpLikeSession{threadID: "fresh-acp-session", events: make(chan Event, 4)}
+	agent := &resultAgent{session: sess}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+	key := "test:user-resume-refresh"
+	session := e.sessions.GetOrCreateActive(key)
+	session.SetAgentSessionID("stale-acp-session", agent.Name())
+
+	state := e.getOrCreateInteractiveStateWith(key, p, "ctx", session, e.sessions, agent, "")
+	if state == nil || state.agentSession == nil {
+		t.Fatal("expected interactive state with agent session")
+	}
+	if got := session.GetAgentSessionID(); got != "fresh-acp-session" {
+		t.Fatalf("session agent id = %q, want fresh-acp-session", got)
+	}
+	state.markStopped()
+	e.closeAgentSessionWithTimeout(key, state.agentSession)
+}
+
 func TestConfigItems_ThinkingMessagesToggle(t *testing.T) {
 	e := newTestEngine()
 	items := e.configItems()
