@@ -175,6 +175,29 @@ func (sp *streamPreview) appendText(text string) {
 	sp.flushLocked(displayText)
 }
 
+// appendTextNow adds new text content and immediately flushes the preview,
+// bypassing normal throttling. Use this for high-signal progress events such as
+// tool start/result so they are visible before the turn completes.
+func (sp *streamPreview) appendTextNow(text string) {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	if sp.degraded || !sp.cfg.Enabled {
+		return
+	}
+
+	sp.fullText += text
+
+	displayText := sp.fullText
+	maxChars := sp.cfg.MaxChars
+	if maxChars > 0 && len([]rune(displayText)) > maxChars {
+		displayText = string([]rune(displayText)[:maxChars]) + "…"
+	}
+
+	sp.cancelTimerLocked()
+	sp.flushLocked(displayText)
+}
+
 func (sp *streamPreview) scheduleFlushLocked(delay time.Duration) {
 	if sp.timer != nil {
 		return // already scheduled

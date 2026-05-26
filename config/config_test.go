@@ -211,6 +211,7 @@ func TestEffectiveDisplayQuiet(t *testing.T) {
 	tru, fal := true, false
 	compact := DisplayModeCompact
 	quiet := DisplayModeQuiet
+	stream := DisplayModeStream
 	tests := []struct {
 		name     string
 		cfg      Config
@@ -271,6 +272,14 @@ func TestEffectiveDisplayQuiet(t *testing.T) {
 			wantTool: false,
 		},
 		{
+			name:     "explicit mode stream",
+			cfg:      Config{Display: DisplayConfig{Mode: &stream}},
+			proj:     ProjectConfig{},
+			wantMode: "stream",
+			wantTM:   false,
+			wantTool: true,
+		},
+		{
 			name:     "project mode overrides global mode",
 			cfg:      Config{Display: DisplayConfig{Mode: &quiet}},
 			proj:     ProjectConfig{Display: &DisplayConfig{Mode: &compact}},
@@ -285,6 +294,16 @@ func TestEffectiveDisplayQuiet(t *testing.T) {
 			wantMode: "compact",
 			wantTM:   false,
 			wantTool: false,
+		},
+		{
+			name: "explicit mode stream with thinking override",
+			cfg: Config{
+				Display: DisplayConfig{Mode: &stream, ThinkingMessages: &tru},
+			},
+			proj:     ProjectConfig{},
+			wantMode: "stream",
+			wantTM:   true,
+			wantTool: true,
 		},
 		{
 			name: "explicit mode quiet with thinking override",
@@ -441,7 +460,7 @@ func TestValidateProjectDisplayConfig(t *testing.T) {
 		{
 			name:    "invalid project display mode",
 			display: &DisplayConfig{Mode: &mode},
-			wantErr: `projects[0].display.mode must be "full", "compact", or "quiet"`,
+			wantErr: `projects[0].display.mode must be "full", "compact", "quiet", or "stream"`,
 		},
 		{
 			name:    "invalid project card mode",

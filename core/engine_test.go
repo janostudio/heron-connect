@@ -1531,6 +1531,55 @@ func TestProcessInteractiveEvents_CardProgressUsesCardTemplate(t *testing.T) {
 	}
 }
 
+func TestProcessInteractiveEvents_StreamModeMergesToolProgressIntoPreview(t *testing.T) {
+	p := &mockKeepPreviewPlatform{}
+	p.n = "wecom"
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetDisplayConfig(DisplayCfg{Mode: displayModeStream, ThinkingMessages: false, ThinkingMaxLen: 300, ToolMaxLen: 500, ToolMessages: true})
+	e.SetStreamPreviewCfg(StreamPreviewCfg{Enabled: true, IntervalMs: 1, MinDeltaChars: 1, MaxChars: 4000})
+	sessionKey := "wecom:user-stream"
+	session := e.sessions.GetOrCreateActive(sessionKey)
+	agentSession := newControllableSession("s-stream")
+	state := &interactiveState{
+		agentSession: agentSession,
+		platform:     p,
+		replyCtx:     "ctx-stream",
+	}
+	e.interactiveStates[sessionKey] = state
+
+	agentSession.events <- Event{Type: EventText, Content: "我查一下知识库的修复历史。"}
+	agentSession.events <- Event{Type: EventToolUse, ToolName: "Bash", ToolInput: "cd /Users/j && pwd"}
+	agentSession.events <- Event{Type: EventToolResult, ToolName: "Bash", ToolResult: "/Users/j"}
+	agentSession.events <- Event{Type: EventResult, Content: "结论如下", Done: true}
+
+	e.processInteractiveEvents(state, session, e.sessions, sessionKey, "m-stream", time.Now(), nil, nil, state.replyCtx)
+
+	if got := p.getSent(); len(got) != 0 {
+		t.Fatalf("sent text = %#v, want no standalone sends", got)
+	}
+
+	p.mu.Lock()
+	previewMsgs := append([]string(nil), p.messages...)
+	p.mu.Unlock()
+	if len(previewMsgs) < 3 {
+		t.Fatalf("preview messages = %#v, want streamed start + tool updates + final update", previewMsgs)
+	}
+	joined := strings.Join(previewMsgs, "\n")
+	if !strings.Contains(joined, "Tool #1") || !strings.Contains(joined, "Bash") {
+		t.Fatalf("preview messages should contain tool use, got %#v", previewMsgs)
+	}
+	if !strings.Contains(joined, "/Users/j") {
+		t.Fatalf("preview messages should contain tool result, got %#v", previewMsgs)
+	}
+	if strings.Contains(joined, "Thinking") {
+		t.Fatalf("preview messages should not contain thinking, got %#v", previewMsgs)
+	}
+	finalMsg := previewMsgs[len(previewMsgs)-1]
+	if !strings.Contains(finalMsg, "结论如下") || !strings.Contains(finalMsg, "Tool #1") || !strings.Contains(finalMsg, "/Users/j") {
+		t.Fatalf("final preview message = %#v, want merged text + tool progress + final answer", previewMsgs)
+	}
+}
+
 func TestProcessInteractiveEvents_FinalReplyUsesWorkspaceForReferenceRendering(t *testing.T) {
 	p := &stubPlatformEngine{n: "feishu"}
 	a := &namedStubModelModeAgent{name: "codex"}
@@ -4627,11 +4676,22 @@ func TestCmdQuiet_TogglesDisplay(t *testing.T) {
 		t.Fatalf("sent = %q, want compact mode message", p.sent)
 	}
 
-	// 3rd /quiet: compact → full
+	// 3rd /quiet: compact → stream
+	p.sent = nil
+	e.cmdQuiet(p, msg, nil)
+	if e.display.Mode != displayModeStream || e.display.ThinkingMessages || !e.display.ToolMessages {
+		t.Fatalf("after 3rd /quiet: Mode=%q, TM=%v, Tool=%v, want stream/false/true",
+			e.display.Mode, e.display.ThinkingMessages, e.display.ToolMessages)
+	}
+	if len(p.sent) != 1 || !strings.Contains(p.sent[0], "Stream mode ON") {
+		t.Fatalf("sent = %q, want stream mode message", p.sent)
+	}
+
+	// 4th /quiet: stream → full
 	p.sent = nil
 	e.cmdQuiet(p, msg, nil)
 	if e.display.Mode != "full" || !e.display.ThinkingMessages || !e.display.ToolMessages {
-		t.Fatalf("after 3rd /quiet: Mode=%q, TM=%v, Tool=%v, want full/true/true",
+		t.Fatalf("after 4th /quiet: Mode=%q, TM=%v, Tool=%v, want full/true/true",
 			e.display.Mode, e.display.ThinkingMessages, e.display.ToolMessages)
 	}
 	if len(p.sent) != 1 || !strings.Contains(p.sent[0], "Quiet mode OFF") {
@@ -4643,6 +4703,12 @@ func TestCmdQuiet_TogglesDisplay(t *testing.T) {
 	e.cmdQuiet(p, msg, []string{"compact"})
 	if e.display.Mode != "compact" {
 		t.Fatalf("after /quiet compact: Mode=%q, want compact", e.display.Mode)
+	}
+	p.sent = nil
+	e.cmdQuiet(p, msg, []string{"stream"})
+	if e.display.Mode != displayModeStream || e.display.ThinkingMessages || !e.display.ToolMessages {
+		t.Fatalf("after /quiet stream: Mode=%q, TM=%v, Tool=%v, want stream/false/true",
+			e.display.Mode, e.display.ThinkingMessages, e.display.ToolMessages)
 	}
 }
 

@@ -171,11 +171,12 @@ const (
 	DisplayModeFull    = "full"    // show thinking + tool messages as separate messages (default)
 	DisplayModeCompact = "compact" // hide thinking/tool, each text segment is a separate card
 	DisplayModeQuiet   = "quiet"   // hide thinking/tool, all text appends to one card
+	DisplayModeStream  = "stream"  // hide thinking, keep tool progress in one updatable message
 )
 
 // DisplayConfig controls how intermediate messages (thinking, tool output) are shown.
 type DisplayConfig struct {
-	Mode             *string `toml:"mode"`              // "full" (default), "compact", or "quiet"
+	Mode             *string `toml:"mode"`              // "full" (default), "compact", "quiet", or "stream"
 	CardMode         *string `toml:"card_mode"`         // "legacy" (default) or "rich" (Card 2.0 Feishu)
 	ThinkingMessages *bool   `toml:"thinking_messages"` // whether thinking messages are shown; default true
 	ThinkingMaxLen   *int    `toml:"thinking_max_len"`  // max chars for thinking messages; 0 = no truncation; default 300
@@ -657,6 +658,8 @@ func EffectiveDisplay(cfg *Config, proj *ProjectConfig) (mode string, thinkingMe
 	switch mode {
 	case DisplayModeCompact, DisplayModeQuiet:
 		thinkingDefault, toolDefault = false, false
+	case DisplayModeStream:
+		thinkingDefault, toolDefault = false, true
 	}
 
 	pickBool := func(projVal, globalVal *bool, dflt bool) bool {
@@ -801,9 +804,9 @@ func validateDisplayConfig(prefix string, display *DisplayConfig) error {
 	}
 	if display.Mode != nil {
 		switch *display.Mode {
-		case DisplayModeFull, DisplayModeCompact, DisplayModeQuiet:
+		case DisplayModeFull, DisplayModeCompact, DisplayModeQuiet, DisplayModeStream:
 		default:
-			return fmt.Errorf("config: %s.mode must be \"full\", \"compact\", or \"quiet\"", prefix)
+			return fmt.Errorf("config: %s.mode must be \"full\", \"compact\", \"quiet\", or \"stream\"", prefix)
 		}
 	}
 	if display.CardMode != nil {

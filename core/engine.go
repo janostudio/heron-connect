@@ -141,13 +141,20 @@ var RestartCh = make(chan RestartRequest, 1)
 // DisplayCfg controls how intermediate messages are surfaced.
 // A value of -1 means "use default", 0 means "no truncation".
 type DisplayCfg struct {
-	Mode             string // "full" (default), "compact", or "quiet" — thinking/tool visibility
+	Mode             string // "full" (default), "compact", "quiet", or "stream" — thinking/tool visibility
 	CardMode         string // "legacy" (default) or "rich" (Card 2.0 Feishu)
 	ThinkingMessages bool
 	ThinkingMaxLen   int // max runes for thinking preview; 0 = no truncation
 	ToolMaxLen       int // max runes for tool use preview; 0 = no truncation
 	ToolMessages     bool
 }
+
+const (
+	displayModeFull    = "full"
+	displayModeCompact = "compact"
+	displayModeQuiet   = "quiet"
+	displayModeStream  = "stream"
+)
 
 // InstantReplyCfg controls the immediate confirmation reply sent when a message
 // is received, before the agent starts processing.
@@ -3596,10 +3603,10 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				break
 			}
 			// When thinking messages are hidden, behavior depends on display mode:
-			//   quiet:   append separator to keep all text in one card
-			//   compact: freeze+detach to split text into separate cards
+			//   quiet/stream: append separator to keep all text in one preview
+			//   compact:      freeze+detach to split text into separate cards
 			if !e.display.ThinkingMessages && len(textParts) > segmentStart {
-				if e.display.Mode == "quiet" {
+				if e.display.Mode == displayModeQuiet || e.display.Mode == displayModeStream {
 					if sp.canPreview() && sp.appendSeparator("\n\n") {
 						textParts = append(textParts, "\n\n")
 					}
@@ -3654,6 +3661,23 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 
 		case EventToolUse:
 			toolCount++
+			toolInput := event.ToolInput
+			var formattedInput string
+			if toolInput == "" {
+				formattedInput = ""
+			} else if strings.Contains(toolInput, "```") {
+				formattedInput = toolInput
+			} else if strings.Contains(toolInput, "\n") || utf8.RuneCountInString(toolInput) > 200 {
+				lang := toolCodeLang(event.ToolName, toolInput)
+				formattedInput = fmt.Sprintf("```%s\n%s\n```", lang, toolInput)
+			} else {
+				switch event.ToolName {
+				case "shell", "run_shell_command", "Bash":
+					formattedInput = fmt.Sprintf("```bash\n%s\n```", toolInput)
+				default:
+					formattedInput = fmt.Sprintf("`%s`", toolInput)
+				}
+			}
 			if hasRichCard {
 				// When tool messages are suppressed, skip card updates on tool events.
 				if !e.display.ToolMessages {
@@ -3682,11 +3706,24 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				}
 				break
 			}
+			if e.display.Mode == displayModeStream && e.display.ToolMessages {
+				toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, event.ToolName, formattedInput)
+				prefix := ""
+				if len(textParts) > 0 {
+					textParts = append(textParts, "\n\n")
+					prefix = "\n\n"
+				}
+				textParts = append(textParts, toolMsg)
+				if sp.canPreview() {
+					sp.appendTextNow(prefix + toolMsg)
+				}
+				continue
+			}
 			// When tool messages are hidden, behavior depends on display mode:
-			//   quiet:   append separator to keep all text in one card
-			//   compact: freeze+detach to split text into separate cards
+			//   quiet/stream: append separator to keep all text in one preview
+			//   compact:      freeze+detach to split text into separate cards
 			if !e.display.ToolMessages && len(textParts) > segmentStart {
-				if e.display.Mode == "quiet" {
+				if e.display.Mode == displayModeQuiet || e.display.Mode == displayModeStream {
 					if sp.canPreview() && sp.appendSeparator("\n\n") {
 						textParts = append(textParts, "\n\n")
 					}
@@ -3709,23 +3746,6 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			if e.display.ToolMessages {
 				// --- StreamingCard path ---
 				if streamCard != nil && !streamCard.Failed() {
-					toolInput := event.ToolInput
-					var formattedInput string
-					if toolInput == "" {
-						formattedInput = ""
-					} else if strings.Contains(toolInput, "```") {
-						formattedInput = toolInput
-					} else if strings.Contains(toolInput, "\n") || utf8.RuneCountInString(toolInput) > 200 {
-						lang := toolCodeLang(event.ToolName, toolInput)
-						formattedInput = fmt.Sprintf("```%s\n%s\n```", lang, toolInput)
-					} else {
-						switch event.ToolName {
-						case "shell", "run_shell_command", "Bash":
-							formattedInput = fmt.Sprintf("```bash\n%s\n```", toolInput)
-						default:
-							formattedInput = fmt.Sprintf("`%s`", toolInput)
-						}
-					}
 					cardToolCalls = append(cardToolCalls, cardToolEntry{
 						Index: toolCount,
 						Name:  event.ToolName,
@@ -3752,23 +3772,6 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				sp.freeze()
 				if previewActive {
 					sp.detachPreview() // keep frozen preview visible as permanent message
-				}
-				toolInput := event.ToolInput
-				var formattedInput string
-				if toolInput == "" {
-					formattedInput = ""
-				} else if strings.Contains(toolInput, "```") {
-					formattedInput = toolInput
-				} else if strings.Contains(toolInput, "\n") || utf8.RuneCountInString(toolInput) > 200 {
-					lang := toolCodeLang(event.ToolName, toolInput)
-					formattedInput = fmt.Sprintf("```%s\n%s\n```", lang, toolInput)
-				} else {
-					switch event.ToolName {
-					case "shell", "run_shell_command", "Bash":
-						formattedInput = fmt.Sprintf("```bash\n%s\n```", toolInput)
-					default:
-						formattedInput = fmt.Sprintf("`%s`", toolInput)
-					}
 				}
 				toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, event.ToolName, formattedInput)
 				if !cp.AppendEvent(ProgressEntryToolUse, toolInput, event.ToolName, toolMsg) {
@@ -3809,6 +3812,18 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						break
 					}
 					resultMsg := e.formatToolResultEventFallback(event.ToolName, result, event.ToolStatus, event.ToolExitCode, event.ToolSuccess)
+					if e.display.Mode == displayModeStream {
+						prefix := ""
+						if len(textParts) > 0 {
+							textParts = append(textParts, "\n\n")
+							prefix = "\n\n"
+						}
+						textParts = append(textParts, resultMsg)
+						if sp.canPreview() {
+							sp.appendTextNow(prefix + resultMsg)
+						}
+						break
+					}
 					entry := ProgressCardEntry{
 						Kind:     ProgressEntryToolResult,
 						Tool:     event.ToolName,
@@ -4085,6 +4100,10 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				}
 			}
 			fullResponse = cleanResponse
+			deliverResponse := fullResponse
+			if e.display.Mode == displayModeStream && !isSilent {
+				deliverResponse = mergeStreamDisplayContent(strings.Join(textParts, ""), event.Content, fullResponse)
+			}
 
 			turnDuration := time.Since(turnStart)
 			slog.Info("turn complete",
@@ -4115,7 +4134,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				if err := streamCard.Finalize(e.ctx, finalContent); err != nil {
 					slog.Error("streaming card finalize failed, sending fallback", "error", err)
 					// Fallback: send the response as a normal message
-					for _, chunk := range splitMessage(fullResponse, maxPlatformMessageLen) {
+					for _, chunk := range splitMessage(deliverResponse, maxPlatformMessageLen) {
 						if err := sendWorkspaceWithError(p, replyCtx, chunk); err != nil {
 							return
 						}
@@ -4169,7 +4188,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						return
 					}
 				}
-			} else if toolCount > 0 && segmentStart > 0 {
+			} else if toolCount > 0 && segmentStart > 0 && e.display.Mode != displayModeStream {
 				// When tool calls happened and prior text was already surfaced in segments,
 				// only send the unsent remainder. When tool progress is hidden, tool events don't surface
 				// side-channel messages and segmentStart stays 0, so keep normal finalize flow.
@@ -4187,12 +4206,12 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				}
 			} else if suppressDuplicate {
 				sp.discard()
-				slog.Debug("EventResult: suppressed duplicate side-channel text", "response_len", len(fullResponse))
-			} else if sp.finish(fullResponse) {
-				slog.Debug("EventResult: finalized stream preview in-place", "response_len", len(fullResponse))
+				slog.Debug("EventResult: suppressed duplicate side-channel text", "response_len", len(deliverResponse))
+			} else if sp.finish(deliverResponse) {
+				slog.Debug("EventResult: finalized stream preview in-place", "response_len", len(deliverResponse))
 			} else {
-				slog.Debug("EventResult: sending via p.Send (preview inactive or failed)", "response_len", len(fullResponse), "chunks", len(splitMessage(fullResponse, maxPlatformMessageLen)))
-				for _, chunk := range splitMessage(fullResponse, maxPlatformMessageLen) {
+				slog.Debug("EventResult: sending via p.Send (preview inactive or failed)", "response_len", len(deliverResponse), "chunks", len(splitMessage(deliverResponse, maxPlatformMessageLen)))
+				for _, chunk := range splitMessage(deliverResponse, maxPlatformMessageLen) {
 					if err := sendWorkspaceWithError(p, replyCtx, chunk); err != nil {
 						return
 					}
@@ -5676,6 +5695,37 @@ func appendFinalMetadataToSegment(segment, fullResponse string) string {
 		return segment
 	}
 	return segment + metadata
+}
+
+func mergeStreamDisplayContent(streamContent, lastAssistantSegment, finalResponse string) string {
+	streamContent = strings.TrimRight(streamContent, "\n ")
+	finalResponse = strings.TrimSpace(finalResponse)
+	if streamContent == "" {
+		return finalResponse
+	}
+	if finalResponse == "" {
+		return streamContent
+	}
+
+	lastAssistantSegment = strings.TrimSpace(lastAssistantSegment)
+	if lastAssistantSegment != "" {
+		trimmedStream := strings.TrimSpace(streamContent)
+		if strings.HasSuffix(trimmedStream, lastAssistantSegment) {
+			suffixIdx := strings.LastIndex(streamContent, lastAssistantSegment)
+			if suffixIdx >= 0 {
+				prefix := strings.TrimRight(streamContent[:suffixIdx], "\n ")
+				if prefix == "" {
+					return finalResponse
+				}
+				return prefix + "\n\n" + finalResponse
+			}
+		}
+	}
+
+	if strings.TrimSpace(streamContent) == finalResponse {
+		return streamContent
+	}
+	return streamContent + "\n\n" + finalResponse
 }
 
 func (e *Engine) cmdShow(p Platform, msg *Message, args []string) {
@@ -7854,34 +7904,39 @@ func (e *Engine) applyLiveModeChange(sessionKey, mode string) bool {
 }
 
 func (e *Engine) cmdQuiet(p Platform, msg *Message, args []string) {
-	// /quiet [full|compact|quiet]
-	// Without argument: cycle full → quiet → compact → full.
+	// /quiet [full|compact|quiet|stream]
+	// Without argument: cycle full → quiet → compact → stream → full.
 	// With argument: set mode directly.
 	var newMode string
 	if len(args) > 0 {
 		switch strings.ToLower(args[0]) {
-		case "full", "compact", "quiet":
+		case displayModeFull, displayModeCompact, displayModeQuiet, displayModeStream:
 			newMode = strings.ToLower(args[0])
 		default:
-			e.reply(p, msg.ReplyCtx, "Usage: /quiet [full|compact|quiet]")
+			e.reply(p, msg.ReplyCtx, "Usage: /quiet [full|compact|quiet|stream]")
 			return
 		}
 	} else {
 		switch e.display.Mode {
-		case "full", "":
-			newMode = "quiet"
-		case "quiet":
-			newMode = "compact"
-		default: // "compact" or unknown
-			newMode = "full"
+		case displayModeFull, "":
+			newMode = displayModeQuiet
+		case displayModeQuiet:
+			newMode = displayModeCompact
+		case displayModeCompact:
+			newMode = displayModeStream
+		default:
+			newMode = displayModeFull
 		}
 	}
 
 	e.display.Mode = newMode
 	switch newMode {
-	case "compact", "quiet":
+	case displayModeCompact, displayModeQuiet:
 		e.display.ThinkingMessages = false
 		e.display.ToolMessages = false
+	case displayModeStream:
+		e.display.ThinkingMessages = false
+		e.display.ToolMessages = true
 	default:
 		e.display.ThinkingMessages = true
 		e.display.ToolMessages = true
@@ -7896,10 +7951,12 @@ func (e *Engine) cmdQuiet(p Platform, msg *Message, args []string) {
 	}
 
 	switch newMode {
-	case "quiet":
+	case displayModeQuiet:
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgQuietOn))
-	case "compact":
+	case displayModeCompact:
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgDisplayModeCompact))
+	case displayModeStream:
+		e.reply(p, msg.ReplyCtx, "Stream mode ON: thinking hidden, tool progress merged into one live message.")
 	default:
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgQuietOff))
 	}
@@ -11853,26 +11910,30 @@ func (e *Engine) configItems() []configItem {
 	return []configItem{
 		{
 			key:    "mode",
-			desc:   "Display mode: full, compact, quiet",
-			descZh: "显示模式: full, compact, quiet",
+			desc:   "Display mode: full, compact, quiet, stream",
+			descZh: "显示模式: full, compact, quiet, stream",
 			getFunc: func() string {
 				if e.display.Mode == "" {
-					return "full"
+					return displayModeFull
 				}
 				return e.display.Mode
 			},
 			setFunc: func(v string) error {
 				switch v {
-				case "full":
-					e.display.Mode = "full"
+				case displayModeFull:
+					e.display.Mode = displayModeFull
 					e.display.ThinkingMessages = true
 					e.display.ToolMessages = true
-				case "compact", "quiet":
+				case displayModeCompact, displayModeQuiet:
 					e.display.Mode = v
 					e.display.ThinkingMessages = false
 					e.display.ToolMessages = false
+				case displayModeStream:
+					e.display.Mode = v
+					e.display.ThinkingMessages = false
+					e.display.ToolMessages = true
 				default:
-					return fmt.Errorf("must be full, compact, or quiet")
+					return fmt.Errorf("must be full, compact, quiet, or stream")
 				}
 				if e.displaySaveFunc != nil {
 					tm := e.display.ThinkingMessages
