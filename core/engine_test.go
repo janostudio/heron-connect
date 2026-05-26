@@ -1580,6 +1580,48 @@ func TestProcessInteractiveEvents_StreamModeMergesToolProgressIntoPreview(t *tes
 	}
 }
 
+func TestProcessInteractiveEvents_StreamModeToolHoldKeepsToolProgressInFinalReply(t *testing.T) {
+	p := &mockKeepPreviewPlatform{mode: "tool_hold"}
+	p.n = "wecom"
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetDisplayConfig(DisplayCfg{Mode: displayModeStream, ThinkingMessages: false, ThinkingMaxLen: 300, ToolMaxLen: 500, ToolMessages: true})
+	e.SetStreamPreviewCfg(StreamPreviewCfg{Enabled: true, IntervalMs: 1, MinDeltaChars: 1, MaxChars: 4000})
+	sessionKey := "wecom:user-stream-tool-hold"
+	session := e.sessions.GetOrCreateActive(sessionKey)
+	agentSession := newControllableSession("s-stream-tool-hold")
+	state := &interactiveState{
+		agentSession: agentSession,
+		platform:     p,
+		replyCtx:     "ctx-stream-tool-hold",
+	}
+	e.interactiveStates[sessionKey] = state
+
+	agentSession.events <- Event{Type: EventText, Content: "我先定位问题。"}
+	agentSession.events <- Event{Type: EventToolUse, ToolName: "Bash", ToolInput: "wc -m /tmp/agent.json"}
+	agentSession.events <- Event{Type: EventToolResult, ToolName: "Bash", ToolResult: "42 /tmp/agent.json"}
+	agentSession.events <- Event{Type: EventResult, Content: "问题已经确认。", Done: true}
+
+	e.processInteractiveEvents(state, session, e.sessions, sessionKey, "m-stream-tool-hold", time.Now(), nil, nil, state.replyCtx)
+
+	if got := p.getSent(); len(got) != 0 {
+		t.Fatalf("sent text = %#v, want no standalone sends", got)
+	}
+
+	p.mu.Lock()
+	previewMsgs := append([]string(nil), p.messages...)
+	p.mu.Unlock()
+	if len(previewMsgs) < 2 {
+		t.Fatalf("preview messages = %#v, want start + final update", previewMsgs)
+	}
+	if strings.Contains(strings.Join(previewMsgs[:len(previewMsgs)-1], "\n"), "Tool #1") {
+		t.Fatalf("intermediate preview should not expose held tool messages, got %#v", previewMsgs)
+	}
+	finalMsg := previewMsgs[len(previewMsgs)-1]
+	if !strings.Contains(finalMsg, "问题已经确认。") || !strings.Contains(finalMsg, "Tool #1") || !strings.Contains(finalMsg, "42 /tmp/agent.json") {
+		t.Fatalf("final preview message = %#v, want final reply to include held tool progress", previewMsgs)
+	}
+}
+
 func TestProcessInteractiveEvents_FinalReplyUsesWorkspaceForReferenceRendering(t *testing.T) {
 	p := &stubPlatformEngine{n: "feishu"}
 	a := &namedStubModelModeAgent{name: "codex"}

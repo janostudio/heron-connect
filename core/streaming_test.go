@@ -189,10 +189,18 @@ func (m *mockCleanerPlatform) DeletePreviewMessage(_ context.Context, handle any
 
 type mockKeepPreviewPlatform struct {
 	mockCleanerPlatform
+	mode string
 }
 
 func (m *mockKeepPreviewPlatform) KeepPreviewOnFinish() bool {
 	return true
+}
+
+func (m *mockKeepPreviewPlatform) StreamPreviewMode() string {
+	if strings.TrimSpace(m.mode) == "" {
+		return ""
+	}
+	return m.mode
 }
 
 func TestStreamPreview_FreezeDeletesOnFinish(t *testing.T) {

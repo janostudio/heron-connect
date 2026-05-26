@@ -3715,6 +3715,11 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				break
 			}
 			if streamPreviewToolHold {
+				toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, event.ToolName, formattedInput)
+				if len(textParts) > 0 {
+					textParts = append(textParts, "\n\n")
+				}
+				textParts = append(textParts, toolMsg)
 				continue
 			}
 			if e.display.Mode == displayModeStream && e.display.ToolMessages {
@@ -3824,6 +3829,10 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					}
 					resultMsg := e.formatToolResultEventFallback(event.ToolName, result, event.ToolStatus, event.ToolExitCode, event.ToolSuccess)
 					if streamPreviewToolHold {
+						if len(textParts) > 0 {
+							textParts = append(textParts, "\n\n")
+						}
+						textParts = append(textParts, resultMsg)
 						continue
 					}
 					if e.display.Mode == displayModeStream {

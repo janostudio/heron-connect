@@ -681,6 +681,75 @@ func TestSendStreamFrameAndWaitAck_TextStillStreamsWhileToolIsHeld(t *testing.T)
 	}
 }
 
+func TestSendStreamFrameAndWaitAck_FinishFlushesHeldTool(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		frames []map[string]any
+	)
+	p := &WSPlatform{writeJSONFn: func(v any) error {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		var frame map[string]any
+		if err := json.Unmarshal(b, &frame); err != nil {
+			return err
+		}
+		mu.Lock()
+		frames = append(frames, frame)
+		mu.Unlock()
+		return nil
+	}}
+	rc := wsReplyContext{reqID: "req_finish_hold", userID: "user_1", streamID: "stream_fixed"}
+
+	tool := "🔧 **工具 #1: Bash**\n---\n`wc -m /tmp/agent.json`"
+	text := "问题已经确认。"
+
+	doneTool := make(chan error, 1)
+	go func() { doneTool <- p.sendStreamFrameAndWaitAck(context.Background(), rc, tool, false) }()
+	if err := <-doneTool; err != nil {
+		t.Fatalf("tool send failed: %v", err)
+	}
+
+	mu.Lock()
+	if len(frames) != 0 {
+		mu.Unlock()
+		t.Fatalf("frames after held tool = %d, want 0", len(frames))
+	}
+	mu.Unlock()
+
+	doneFinish := make(chan error, 1)
+	go func() { doneFinish <- p.sendStreamFrameAndWaitAck(context.Background(), rc, text, true) }()
+	for {
+		if _, ok := p.pendingAcks.Load("req_finish_hold"); ok {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if v, ok := p.pendingAcks.LoadAndDelete("req_finish_hold"); ok {
+		v.(chan error) <- nil
+	} else {
+		t.Fatal("missing finish pending ack")
+	}
+	if err := <-doneFinish; err != nil {
+		t.Fatalf("finish send failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(frames) != 1 {
+		t.Fatalf("frames = %d, want 1", len(frames))
+	}
+	stream := frames[0]["body"].(map[string]any)["stream"].(map[string]any)
+	if stream["finish"] != true {
+		t.Fatalf("finish flag = %v, want true", stream["finish"])
+	}
+	want := tool + "\n\n" + text
+	if stream["content"] != want {
+		t.Fatalf("finish content = %v, want %q", stream["content"], want)
+	}
+}
+
 func captureWSFrames(dst *[]map[string]any) func(any) error {
 	return func(v any) error {
 		b, err := json.Marshal(v)
