@@ -51,6 +51,7 @@ type streamPreview struct {
 	timerStop chan struct{} // closed when preview ends
 
 	pendingStatus CardStatus // last status set via setStatus(); applied on recovery
+	mode          string
 }
 
 // ToolStepKind identifies the kind of progress row shown in rich cards.
@@ -110,7 +111,7 @@ type PreviewFinishPreference interface {
 }
 
 func newStreamPreview(cfg StreamPreviewCfg, p Platform, replyCtx any, ctx context.Context, transform func(string) string) *streamPreview {
-	return &streamPreview{
+	sp := &streamPreview{
 		cfg:       cfg,
 		platform:  p,
 		replyCtx:  replyCtx,
@@ -118,6 +119,17 @@ func newStreamPreview(cfg StreamPreviewCfg, p Platform, replyCtx any, ctx contex
 		transform: transform,
 		timerStop: make(chan struct{}),
 	}
+	if mp, ok := p.(StreamPreviewModeProvider); ok {
+		sp.mode = strings.ToLower(strings.TrimSpace(mp.StreamPreviewMode()))
+	}
+	return sp
+}
+
+func (sp *streamPreview) previewMode() string {
+	if sp.mode == "" {
+		return "default"
+	}
+	return sp.mode
 }
 
 // canPreview returns true if the platform supports message updating and is not disabled.

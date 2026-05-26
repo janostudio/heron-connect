@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.3.4 (2026-05-25)
+
+Personal fork release for `@qinghuangniao/cc-connect-qhn`.
+
+### Notes
+- This is an unofficial personal fork intended for personal practice, experimentation, and self-use.
+- Fork base: upstream `cc-connect` release `v1.3.3-beta.2`.
+- Local fork import reference in this repository: commit `c099ce699e44d74a9f2018244375a4ff410cd7eb`.
+
+## v1.3.5 (2026-05-26)
+
+Personal fork packaging fix for `@qinghuangniao/cc-connect-qhn`.
+
+### Notes
+- Fix npm installer release asset lookup so global install downloads from the fork release repository.
+- Intended to resolve `npm install -g @qinghuangniao/cc-connect-qhn` failing with GitHub release asset `404`.
+
 ## v1.3.3-beta.2 (2026-05-09)
 
 Beta release with Slack Assistant API, DingTalk improvements, MAX platform webhook mode, and numerous platform fixes. No breaking changes.

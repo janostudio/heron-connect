@@ -322,6 +322,55 @@ func newTestSession(t *testing.T, cb sessionCallbacks) (*acpSession, *io.PipeWri
 	return s, wResp, rReq
 }
 
+func TestACPSession_SendEmitsResultEvenAfterSessionUpdates(t *testing.T) {
+	s, wResp, rReq := newTestSession(t, nil)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sc := bufio.NewScanner(rReq)
+		for sc.Scan() {
+			var req struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			if err := json.Unmarshal(sc.Bytes(), &req); err != nil {
+				continue
+			}
+			if req.Method != "session/prompt" {
+				continue
+			}
+			_, _ = fmt.Fprintf(wResp, `{"jsonrpc":"2.0","id":%s,"result":{}}`+"\n", req.ID)
+			return
+		}
+	}()
+
+	go func() {
+		s.onNotification("session/update", json.RawMessage(`{
+			"sessionId":"test-session-id",
+			"update":{"sessionUpdate":"tool_call_update","toolCallId":"c1","title":"Glob","status":"in_progress","content":[{"type":"content","content":{"type":"text","text":"partial"}}]}
+		}`))
+	}()
+
+	if err := s.Send("hello", nil, nil); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	<-done
+
+	seenResult := false
+	deadline := time.After(1 * time.Second)
+	for !seenResult {
+		select {
+		case ev := <-s.events:
+			if ev.Type == core.EventResult {
+				seenResult = true
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for EventResult")
+		}
+	}
+}
+
 func TestSession_SetLiveMode_success(t *testing.T) {
 	cb := &fakeCallbacks{}
 	s, wResp, rReq := newTestSession(t, cb)

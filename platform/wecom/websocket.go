@@ -33,13 +33,98 @@ type WSPlatform struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	mu          sync.Mutex // protects conn writes
+	streamMu    sync.Mutex // protects streamStates
+	streamState map[string]*wsStreamState
 	dedup       core.MessageDedup
 	reqSeq      atomic.Int64 // monotonic counter for generating unique req_id
 	missedPong  atomic.Int32 // consecutive heartbeat acks not received
 	pendingAcks sync.Map     // req_id -> chan error, for sequential send with ack waiting
 }
 
+type wsStreamState struct {
+	mu         sync.Mutex
+	running    bool
+	pending    *wsStreamSend
+	lastAcked  string
+	aggregator wsContentAggregator
+	heldTool   string
+	completed  bool
+}
+
+type wsStreamSend struct {
+	content string
+	finish  bool
+	done    chan error
+}
+
+type wsContentAggregator struct {
+	plainSegments  []string
+	pendingTool    string
+	hasPendingTool bool
+}
+
 const wsAckTimeout = 5 * time.Second
+
+const wecomToolBlockPrefix = "🔧 **"
+
+func (a *wsContentAggregator) reset() {
+	a.plainSegments = nil
+	a.pendingTool = ""
+	a.hasPendingTool = false
+}
+
+func (a *wsContentAggregator) ingest(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return a.render()
+	}
+	if strings.HasPrefix(trimmed, wecomToolBlockPrefix) {
+		a.pendingTool = trimmed
+		a.hasPendingTool = true
+		return a.render()
+	}
+	if a.hasPendingTool {
+		a.plainSegments = append(a.plainSegments, a.pendingTool)
+		a.pendingTool = ""
+		a.hasPendingTool = false
+	}
+	a.plainSegments = append(a.plainSegments, trimmed)
+	return a.render()
+}
+
+func (a *wsContentAggregator) finalize(content string) string {
+	if strings.TrimSpace(content) != "" {
+		_ = a.ingest(content)
+	}
+	if a.hasPendingTool {
+		a.plainSegments = append(a.plainSegments, a.pendingTool)
+		a.pendingTool = ""
+		a.hasPendingTool = false
+	}
+	out := a.render()
+	a.reset()
+	return out
+}
+
+func (a *wsContentAggregator) render() string {
+	parts := make([]string, 0, len(a.plainSegments))
+	for _, seg := range a.plainSegments {
+		seg = strings.TrimSpace(seg)
+		if seg != "" {
+			parts = append(parts, seg)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func (a *wsContentAggregator) shouldHoldOnlyTool(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	return trimmed != "" && strings.HasPrefix(trimmed, wecomToolBlockPrefix)
+}
+
+func shouldAggregateWecomStream(content string) bool {
+	return strings.Contains(content, "\n\n") || strings.HasPrefix(strings.TrimSpace(content), wecomToolBlockPrefix)
+}
 
 // wsReplyContext holds the context needed to reply to a specific message.
 type wsReplyContext struct {
@@ -121,9 +206,10 @@ func newWebSocket(opts map[string]any) (core.Platform, error) {
 	allowFrom, _ := opts["allow_from"].(string)
 
 	return &WSPlatform{
-		botID:     botID,
-		secret:    secret,
-		allowFrom: allowFrom,
+		botID:       botID,
+		secret:      secret,
+		allowFrom:   allowFrom,
+		streamState: make(map[string]*wsStreamState),
 	}, nil
 }
 
@@ -134,6 +220,8 @@ func (p *WSPlatform) generateReqID(prefix string) string {
 }
 
 func (p *WSPlatform) Name() string { return "wecom" }
+
+func (p *WSPlatform) StreamPreviewMode() string { return "tool_hold" }
 
 func (p *WSPlatform) Start(handler core.MessageHandler) error {
 	p.handler = handler
@@ -454,7 +542,7 @@ func (p *WSPlatform) Reply(ctx context.Context, rctx any, content string) error 
 		return nil
 	}
 
-	if err := p.sendStreamFrame(ctx, rc, content, true); err != nil {
+	if err := p.sendStreamFrameAndWaitAck(ctx, rc, content, true); err != nil {
 		slog.Error("wecom-ws: reply failed", "user", rc.userID, "error", err)
 		return err
 	}
@@ -471,7 +559,7 @@ func (p *WSPlatform) SendPreviewStart(ctx context.Context, rctx any, content str
 		return nil, core.ErrNotSupported
 	}
 	rc.streamID = p.generateReqID("stream")
-	if err := p.sendStreamFrame(ctx, rc, content, false); err != nil {
+	if err := p.sendStreamFrameAndWaitAck(ctx, rc, content, false); err != nil {
 		return nil, err
 	}
 	return &wsPreviewHandle{replyCtx: rc}, nil
@@ -485,12 +573,210 @@ func (p *WSPlatform) UpdateMessage(ctx context.Context, previewHandle any, conte
 	if h.replyCtx.streamID == "" {
 		return fmt.Errorf("wecom-ws: preview handle missing stream id")
 	}
-	return p.sendStreamFrame(ctx, h.replyCtx, content, false)
+	return p.sendStreamFrameAndWaitAck(ctx, h.replyCtx, content, false)
 }
 
-func (p *WSPlatform) sendStreamFrame(ctx context.Context, rc wsReplyContext, content string, finish bool) error {
+func (p *WSPlatform) sendStreamFrameAndWaitAck(ctx context.Context, rc wsReplyContext, content string, finish bool) error {
+	key, state, err := p.streamStateFor(rc)
+	if err != nil {
+		return err
+	}
+	return p.enqueueLatestStreamSend(ctx, key, state, rc, content, finish)
+}
+
+func (p *WSPlatform) streamStateFor(rc wsReplyContext) (string, *wsStreamState, error) {
 	if rc.reqID == "" {
-		return fmt.Errorf("wecom-ws: reqID is empty, cannot send stream reply")
+		return "", nil, fmt.Errorf("wecom-ws: reqID is empty, cannot send stream reply")
+	}
+	streamID := rc.streamID
+	if streamID == "" {
+		streamID = "reply"
+	}
+	key := rc.reqID + ":" + streamID
+
+	p.streamMu.Lock()
+	defer p.streamMu.Unlock()
+	if p.streamState == nil {
+		p.streamState = make(map[string]*wsStreamState)
+	}
+	state := p.streamState[key]
+	if state == nil {
+		state = &wsStreamState{}
+		p.streamState[key] = state
+	}
+	return key, state, nil
+}
+
+func (p *WSPlatform) enqueueLatestStreamSend(ctx context.Context, key string, state *wsStreamState, rc wsReplyContext, content string, finish bool) error {
+	req := &wsStreamSend{content: content, finish: finish, done: make(chan error, 1)}
+	var superseded *wsStreamSend
+
+	state.mu.Lock()
+	if !finish && state.lastAcked == content {
+		state.mu.Unlock()
+		return nil
+	}
+	if !finish && shouldAggregateWecomStream(content) && state.aggregator.shouldHoldOnlyTool(content) {
+		state.heldTool = strings.TrimSpace(content)
+		state.completed = false
+		state.mu.Unlock()
+		return nil
+	}
+	if pending := state.pending; pending != nil {
+		if finish || !pending.finish {
+			superseded = pending
+			state.pending = req
+		} else {
+			// A terminal finish frame is already queued; later non-finish updates are obsolete.
+			state.mu.Unlock()
+			return nil
+		}
+		state.mu.Unlock()
+		if superseded != nil {
+			superseded.done <- nil
+			close(superseded.done)
+		}
+		select {
+		case err := <-req.done:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	state.pending = req
+	state.completed = false
+	if state.running {
+		state.mu.Unlock()
+		select {
+		case err := <-req.done:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	state.running = true
+	state.mu.Unlock()
+
+	go p.runStreamQueue(key, state, rc)
+
+	select {
+	case err := <-req.done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (p *WSPlatform) runStreamQueue(key string, state *wsStreamState, rc wsReplyContext) {
+	for {
+		state.mu.Lock()
+		req := state.pending
+		state.pending = nil
+		state.mu.Unlock()
+
+		if req == nil {
+			state.mu.Lock()
+			state.running = false
+			idle := state.pending == nil
+			completed := state.completed
+			state.mu.Unlock()
+			if idle {
+				if completed {
+					p.streamMu.Lock()
+					delete(p.streamState, key)
+					p.streamMu.Unlock()
+				}
+				return
+			}
+			state.mu.Lock()
+			if !state.running {
+				state.running = true
+			}
+			state.mu.Unlock()
+			continue
+		}
+
+		state.mu.Lock()
+		aggregateThis := shouldAggregateWecomStream(req.content) || state.heldTool != "" || state.aggregator.hasPendingTool || len(state.aggregator.plainSegments) > 0
+		if aggregateThis && len(state.aggregator.plainSegments) == 0 && !state.aggregator.hasPendingTool && strings.TrimSpace(state.lastAcked) != "" {
+			state.aggregator.plainSegments = append(state.aggregator.plainSegments, strings.TrimSpace(state.lastAcked))
+		}
+		if aggregateThis && state.heldTool != "" {
+			state.aggregator.pendingTool = state.heldTool
+			state.aggregator.hasPendingTool = true
+			state.heldTool = ""
+		}
+		rendered := req.content
+		if !aggregateThis {
+			if req.finish {
+				state.heldTool = ""
+			}
+			lastAckedMatches := !req.finish && state.lastAcked == rendered
+			state.mu.Unlock()
+
+			if lastAckedMatches {
+				req.done <- nil
+				close(req.done)
+				continue
+			}
+
+			reqID, frame, err := p.buildStreamFrame(rc, rendered, req.finish)
+			if err == nil {
+				err = p.writeAndWaitAck(context.Background(), frame, reqID)
+			}
+			if err == nil && !req.finish {
+				state.mu.Lock()
+				state.lastAcked = rendered
+				state.mu.Unlock()
+			}
+			if req.finish && err == nil {
+				state.mu.Lock()
+				state.lastAcked = rendered
+				state.completed = true
+				state.mu.Unlock()
+			}
+			req.done <- err
+			close(req.done)
+			continue
+		}
+
+		if req.finish {
+			rendered = state.aggregator.finalize(req.content)
+		} else {
+			rendered = state.aggregator.ingest(req.content)
+		}
+		lastAckedMatches := !req.finish && state.lastAcked == rendered
+		state.mu.Unlock()
+
+		if lastAckedMatches {
+			req.done <- nil
+			close(req.done)
+			continue
+		}
+
+		reqID, frame, err := p.buildStreamFrame(rc, rendered, req.finish)
+		if err == nil {
+			err = p.writeAndWaitAck(context.Background(), frame, reqID)
+		}
+		if err == nil && !req.finish {
+			state.mu.Lock()
+			state.lastAcked = rendered
+			state.mu.Unlock()
+		}
+		if req.finish && err == nil {
+			state.mu.Lock()
+			state.lastAcked = rendered
+			state.completed = true
+			state.mu.Unlock()
+		}
+		req.done <- err
+		close(req.done)
+	}
+}
+
+func (p *WSPlatform) buildStreamFrame(rc wsReplyContext, content string, finish bool) (string, map[string]any, error) {
+	if rc.reqID == "" {
+		return "", nil, fmt.Errorf("wecom-ws: reqID is empty, cannot send stream reply")
 	}
 	streamID := rc.streamID
 	if streamID == "" {
@@ -508,11 +794,8 @@ func (p *WSPlatform) sendStreamFrame(ctx context.Context, rc wsReplyContext, con
 			},
 		},
 	}
-	if err := p.writeJSON(frame); err != nil {
-		return err
-	}
-	slog.Debug("wecom-ws: stream frame sent", "user", rc.userID, "stream_id", streamID, "finish", finish, "len", len(content))
-	return nil
+	slog.Debug("wecom-ws: stream frame prepared", "user", rc.userID, "stream_id", streamID, "finish", finish, "len", len(content))
+	return rc.reqID, frame, nil
 }
 
 // Send sends a proactive message via aibot_send_msg (markdown format).

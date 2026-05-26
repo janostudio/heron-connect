@@ -319,6 +319,7 @@ type interactiveState struct {
 	approveAll             bool            // when true, auto-approve all permission requests for this session
 	fromVoice              bool            // true if current turn originated from voice transcription
 	sideText               string
+	lastTurnMessageID      string
 	deleteMode             *deleteModeState
 	modelSwitch            *modelSwitchState
 	pendingProviderAdd     *pendingProviderAddState
@@ -2558,6 +2559,7 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	state.platform = p
 	state.replyCtx = msg.ReplyCtx
 	state.currentMessageID = msg.MessageID
+	state.lastTurnMessageID = msg.MessageID
 	state.mu.Unlock()
 	stopRecallMonitor := e.startMessageRecallMonitor(interactiveKey)
 	defer stopRecallMonitor()
@@ -2612,9 +2614,13 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	e.stopUnsolicitedReader(state)
 	state.mu.Lock()
 	needResync := state.eventsNeedResync
+	staleForMessageID := state.lastTurnMessageID
 	state.mu.Unlock()
 	if needResync {
-		drainEvents(state.agentSession.Events())
+		drained := drainEvents(state.agentSession.Events())
+		if drained > 0 {
+			slog.Warn("dropped buffered events before starting turn", "previous_message_id", staleForMessageID, "count", drained, "new_message_id", msg.MessageID)
+		}
 	}
 
 	promptContent := e.buildSenderPrompt(msg.Content, msg.UserID, msg.UserName, msg.Platform, msg.SessionKey, msg.ChannelKey)
@@ -2624,6 +2630,7 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	state.currentMessageID = msg.MessageID
 	state.fromVoice = msg.FromVoice
 	state.sideText = ""
+	state.lastTurnMessageID = msg.MessageID
 	state.mu.Unlock()
 
 	// Run Send concurrently with processInteractiveEvents. Some agents block inside
@@ -3094,7 +3101,6 @@ func buildCardContent(thinking string, tools []cardToolEntry, answer string) str
 	return sb.String()
 }
 
-
 // unsolicitedReaderStopTimeout bounds how long stopUnsolicitedReader waits
 // for the reader goroutine to exit. The reader is structured so its iterations
 // are short (blocking adapter calls like RespondPermission are offloaded), so
@@ -3387,6 +3393,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	if msgID != "" {
 		state.mu.Lock()
 		state.currentMessageID = msgID
+		state.lastTurnMessageID = msgID
 		state.mu.Unlock()
 	}
 
@@ -3437,8 +3444,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 
 	// Streaming card: aggregate entire turn into a single updatable card.
 	var streamCard StreamingCard
-	var cardToolCalls []cardToolEntry // track tool calls for card content
-	var cardThinkingText string       // latest thinking text
+	var cardToolCalls []cardToolEntry  // track tool calls for card content
+	var cardThinkingText string        // latest thinking text
 	var cardAnswerText strings.Builder // accumulated answer text
 
 	if scp, ok := state.platform.(StreamingCardPlatform); ok {
@@ -3452,6 +3459,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	sp := newStreamPreview(e.streamPreview, state.platform, state.replyCtx, e.ctx, workspaceRenderer)
 	cp := newCompactProgressWriter(e.ctx, state.platform, state.replyCtx, e.agent.Name(), e.i18n.CurrentLang(), workspaceRenderer)
 	state.mu.Unlock()
+	streamPreviewToolHold := sp.previewMode() == "tool_hold" && e.display.Mode == displayModeStream
 
 	// Send instant confirmation reply if enabled and no streaming card is active.
 	// Streaming cards provide their own "processing" indicator, so instant reply
@@ -3706,6 +3714,9 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				}
 				break
 			}
+			if streamPreviewToolHold {
+				continue
+			}
 			if e.display.Mode == displayModeStream && e.display.ToolMessages {
 				toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, event.ToolName, formattedInput)
 				prefix := ""
@@ -3812,6 +3823,9 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						break
 					}
 					resultMsg := e.formatToolResultEventFallback(event.ToolName, result, event.ToolStatus, event.ToolExitCode, event.ToolSuccess)
+					if streamPreviewToolHold {
+						continue
+					}
 					if e.display.Mode == displayModeStream {
 						prefix := ""
 						if len(textParts) > 0 {
@@ -4274,6 +4288,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				state.platform = queued.platform
 				state.replyCtx = queued.replyCtx
 				state.currentMessageID = queued.messageID
+				state.lastTurnMessageID = queued.messageID
 				state.fromVoice = queued.fromVoice
 				state.mu.Unlock()
 
@@ -4574,6 +4589,7 @@ func (e *Engine) drainPendingMessages(state *interactiveState, session *Session,
 		state.platform = queued.platform
 		state.replyCtx = queued.replyCtx
 		state.currentMessageID = queued.messageID
+		state.lastTurnMessageID = queued.messageID
 		state.fromVoice = queued.fromVoice
 		state.mu.Unlock()
 
@@ -4586,7 +4602,10 @@ func (e *Engine) drainPendingMessages(state *interactiveState, session *Session,
 			return false
 		}
 
-		drainEvents(state.agentSession.Events())
+		drained := drainEvents(state.agentSession.Events())
+		if drained > 0 {
+			slog.Warn("dropped buffered events before queued turn", "previous_message_id", state.lastTurnMessageID, "count", drained, "new_message_id", queued.messageID)
+		}
 
 		session.AddHistory("user", queued.content)
 
@@ -7272,9 +7291,9 @@ func helpCardGroups() []helpCardGroup {
 				{command: "/commands", action: "nav:/commands"},
 				{command: "/alias", action: "nav:/alias"},
 				{command: "/skills", action: "nav:/skills"},
-			{command: "/compress", action: "cmd:/compress"},
-			{command: "/cancel", action: "act:/cancel"},
-			{command: "/stop", action: "act:/stop"},
+				{command: "/compress", action: "cmd:/compress"},
+				{command: "/cancel", action: "act:/cancel"},
+				{command: "/stop", action: "act:/stop"},
 				{command: "/ps", action: "cmd:/ps"},
 			},
 		},
@@ -9195,21 +9214,22 @@ func (e *Engine) sendRaw(p Platform, replyCtx any, content string) {
 // drainEvents discards any buffered events from the channel.
 // Called before a new turn to prevent stale events from a previous turn's
 // agent process from being mistaken for the new turn's response.
-func drainEvents(ch <-chan Event) {
+// Returns the number of dropped events for diagnostics.
+func drainEvents(ch <-chan Event) int {
 	drained := 0
 	for {
 		select {
 		case _, ok := <-ch:
 			if !ok {
 				// Channel is closed; stop immediately to avoid an infinite loop.
-				return
+				return drained
 			}
 			drained++
 		default:
 			if drained > 0 {
 				slog.Warn("drained stale events from previous turn", "count", drained)
 			}
-			return
+			return drained
 		}
 	}
 }

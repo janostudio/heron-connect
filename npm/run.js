@@ -58,14 +58,14 @@ function needsReinstall() {
 }
 
 if (needsReinstall()) {
-  console.log(`[cc-connect] Binary missing or outdated, installing v${EXPECTED_VER}...`);
+  console.log(`[cc-connect-qhn] Binary missing or outdated, installing v${EXPECTED_VER}...`);
   try {
     execSync("node " + JSON.stringify(path.join(__dirname, "install.js")), {
       stdio: "inherit",
       cwd: __dirname,
     });
   } catch {
-    console.error("[cc-connect] Auto-install failed. Run manually: npm uninstall -g cc-connect && npm install -g cc-connect@beta");
+    console.error("[cc-connect-qhn] Auto-install failed. Run manually: npm uninstall -g @qinghuangniao/cc-connect-qhn && npm install -g @qinghuangniao/cc-connect-qhn");
     process.exit(1);
   }
 }

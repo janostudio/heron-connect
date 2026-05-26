@@ -205,6 +205,13 @@ type ProgressUpdateThrottler interface {
 	ProgressUpdateInterval() time.Duration
 }
 
+// StreamPreviewModeProvider is an optional interface for platforms that want
+// to customize stream-preview semantics. The empty string keeps the default
+// behavior.
+type StreamPreviewModeProvider interface {
+	StreamPreviewMode() string
+}
+
 // ButtonOption represents a clickable inline button.
 type ButtonOption struct {
 	Text string // display text on the button

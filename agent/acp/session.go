@@ -84,6 +84,10 @@ func newACPSession(ctx context.Context, cfg acpSessionConfig) (*acpSession, erro
 	}
 
 	sessionCtx, cancel := context.WithCancel(ctx)
+	resumeID := cfg.resumeSessionID
+	if resumeID == core.ContinueSession {
+		resumeID = ""
+	}
 	s := &acpSession{
 		workDir:       absWorkDir,
 		events:        make(chan core.Event, 128),
@@ -91,7 +95,7 @@ func newACPSession(ctx context.Context, cfg acpSessionConfig) (*acpSession, erro
 		cancel:        cancel,
 		permByID:      make(map[string]permState),
 		toolInputByID: make(map[string]string),
-		acpSessID:     cfg.resumeSessionID,
+		acpSessID:     resumeID,
 		callbacks:     cfg.callbacks,
 	}
 	s.alive.Store(true)
@@ -133,8 +137,10 @@ func newACPSession(ctx context.Context, cfg acpSessionConfig) (*acpSession, erro
 				slog.Error("acp: process exited", "error", waitErr, "stderr", msg)
 				s.emit(core.Event{Type: core.EventError, Error: fmt.Errorf("%s", strings.TrimSpace(msg))})
 			} else {
-				slog.Debug("acp: process exited", "error", waitErr)
+				slog.Warn("acp: process exited", "error", waitErr)
 			}
+		} else {
+			slog.Warn("acp: process exited cleanly", "session_id", s.currentACPSessionID())
 		}
 		s.alive.Store(false)
 	}()
@@ -395,7 +401,7 @@ func (s *acpSession) maybeAbsorbCurrentModeUpdate(params json.RawMessage) {
 		return
 	}
 	var head struct {
-		Kind     string `json:"sessionUpdate"`
+		Kind          string `json:"sessionUpdate"`
 		CurrentModeID string `json:"currentModeId"`
 	}
 	if json.Unmarshal(wrap.Update, &head) != nil {
@@ -615,11 +621,14 @@ func (s *acpSession) Send(prompt string, images []core.ImageAttachment, files []
 		"prompt":    promptBlocks,
 	}
 
+	slog.Info("acp: session/prompt start", "session_id", sid, "prompt_len", len(prompt), "images", len(images), "files", len(files))
 	_, err := s.tr.call(s.ctx, "session/prompt", params)
 	if err != nil {
+		slog.Error("acp: session/prompt failed", "session_id", sid, "error", err)
 		s.emit(core.Event{Type: core.EventError, Error: err})
 		return fmt.Errorf("acp: session/prompt: %w", err)
 	}
+	slog.Info("acp: session/prompt done", "session_id", sid)
 
 	// Text was streamed via session/update; engine aggregates EventText.
 	s.emit(core.Event{

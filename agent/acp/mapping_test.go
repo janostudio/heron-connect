@@ -35,7 +35,26 @@ func TestMapSessionUpdate_toolCallUpdate_inProgress(t *testing.T) {
 		}
 	}`)
 	evs := mapSessionUpdate("", params)
-	if len(evs) != 1 || evs[0].Type != core.EventToolResult || evs[0].ToolName != "Run" {
+	if len(evs) != 0 {
+		t.Fatalf("got %+v, want no IM-visible event for in_progress tool_call_update", evs)
+	}
+}
+
+func TestMapSessionUpdate_toolCallUpdate_completed(t *testing.T) {
+	params := json.RawMessage(`{
+		"sessionId": "s1",
+		"update": {
+			"sessionUpdate": "tool_call_update",
+			"toolCallId": "c1",
+			"title": "Run",
+			"status": "completed",
+			"content": [
+				{"type": "content", "content": {"type": "text", "text": "final output"}}
+			]
+		}
+	}`)
+	evs := mapSessionUpdate("", params)
+	if len(evs) != 1 || evs[0].Type != core.EventToolResult || evs[0].ToolName != "Run" || evs[0].Content != "final output" {
 		t.Fatalf("got %+v", evs)
 	}
 }

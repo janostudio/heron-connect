@@ -34,7 +34,7 @@ func (s *stubAgentSession) Events() <-chan Event                                
 func (s *stubAgentSession) CurrentSessionID() string                                     { return "stub-session" }
 func (s *stubAgentSession) Alive() bool                                                  { return true }
 func (s *stubAgentSession) Close() error                                                 { return nil }
-func (s *stubAgentSession) CancelTurn()                                                   {}
+func (s *stubAgentSession) CancelTurn()                                                  {}
 
 type recordingAgentSession struct {
 	stubAgentSession
@@ -2943,6 +2943,30 @@ func TestHandleMessage_AutoResetOnIdle_DoesNotTriggerForSlashCommand(t *testing.
 			t.Fatalf("unexpected auto-reset notice for slash command: %v", p.getSent())
 		}
 	}
+}
+
+func TestGetOrCreateInteractiveStateWith_ACPNewSessionDoesNotReuseStaleCurrentID(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	sess := &acpLikeSession{threadID: "fresh-acp-session", events: make(chan Event, 4)}
+	agent := &resultAgent{session: sess}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+	key := "test:user1"
+	session := e.sessions.GetOrCreateActive(key)
+	session.SetAgentSessionID("", "")
+
+	state := e.getOrCreateInteractiveStateWith(key, p, "ctx", session, e.sessions, agent, "")
+	if state == nil || state.agentSession == nil {
+		t.Fatal("expected interactive state with agent session")
+	}
+	if got := session.GetAgentSessionID(); got != "fresh-acp-session" {
+		t.Fatalf("session agent id = %q, want fresh-acp-session", got)
+	}
+	if got := state.agentSession.CurrentSessionID(); got != "fresh-acp-session" {
+		t.Fatalf("live agent session id = %q, want fresh-acp-session", got)
+	}
+	state.markStopped()
+	e.closeAgentSessionWithTimeout(key, state.agentSession)
 }
 
 func TestConfigItems_ThinkingMessagesToggle(t *testing.T) {
@@ -10941,9 +10965,9 @@ func (p *stubStreamingCardPlatform) CreateStreamingCard(_ context.Context, _ any
 // stubStreamingCard is a minimal StreamingCard for tests.
 type stubStreamingCard struct{}
 
-func (c *stubStreamingCard) Update(_ context.Context, _ string) error { return nil }
+func (c *stubStreamingCard) Update(_ context.Context, _ string) error   { return nil }
 func (c *stubStreamingCard) Finalize(_ context.Context, _ string) error { return nil }
-func (c *stubStreamingCard) Failed() bool                                { return false }
+func (c *stubStreamingCard) Failed() bool                               { return false }
 
 func TestHandleMessage_InstantReply_SendsConfirmationWhenEnabled(t *testing.T) {
 	p := &stubPlatformEngine{n: "test"}
@@ -12342,7 +12366,7 @@ func (s *codexLikeSession) CurrentSessionID() string {
 }
 func (s *codexLikeSession) Alive() bool  { return s.alive }
 func (s *codexLikeSession) Close() error { s.alive = false; return nil }
-func (s *codexLikeSession) CancelTurn() {}
+func (s *codexLikeSession) CancelTurn()  {}
 
 // TestSessionName_CodexLikeFlow does an end-to-end test simulating real codex
 // behavior: CurrentSessionID()="" initially, thread ID only available after Send().
@@ -12450,7 +12474,7 @@ func (s *claudeCodeLikeSession) CurrentSessionID() string {
 }
 func (s *claudeCodeLikeSession) Alive() bool  { return s.alive }
 func (s *claudeCodeLikeSession) Close() error { s.alive = false; return nil }
-func (s *claudeCodeLikeSession) CancelTurn() {}
+func (s *claudeCodeLikeSession) CancelTurn()  {}
 
 // TestSessionName_ClaudeCodeLikeFlow tests the claudecode/gemini/cursor pattern:
 // CurrentSessionID()="" initially, but an early EventText carries SessionID.

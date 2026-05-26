@@ -1,6 +1,12 @@
-# cc-connect
+# cc-connect-qhn
 
-这是一个面向开发和自部署的 `cc-connect` 仓库，核心用途是把本地 AI 编码 Agent 桥接到聊天平台，例如飞书、Telegram、Discord、Slack、钉钉、企业微信、微信个人号、QQ、LINE、微博等。当前 README 只保留开发相关内容，不再保留赞助、宣传和多语言入口。
+这是一个基于 `cc-connect` 的个人 fork 仓库，仅用于个人练手、自用和实验，不是上游官方发布，也不承诺兼容性、稳定性或长期维护支持。
+
+原始项目见：`https://github.com/chenhg5/cc-connect`
+
+fork 基线说明：当前仓库以 `cc-connect` 上游发布版本 `v1.3.3-beta.2` 为基础导入；本仓库内首次导入该项目的提交为 `c099ce699e44d74a9f2018244375a4ff410cd7eb`。
+
+当前仓库核心用途仍然是把本地 AI 编码 Agent 桥接到聊天平台，例如飞书、Telegram、Discord、Slack、钉钉、企业微信、微信个人号、QQ、LINE、微博等。当前 README 只保留开发相关内容，不再保留赞助、宣传和多语言入口。
 
 ## 项目定位
 
@@ -166,4 +172,3 @@ make build EXCLUDE=discord,dingtalk,qq,qqbot,line
 ## 许可证
 
 仓库和 npm 包当前都声明为 MIT，npm 元数据见 [npm/package.json](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/npm/package.json)。
-

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -222,6 +223,17 @@ func TestWSPreviewStartAndUpdate_ReuseSameStreamID(t *testing.T) {
 	var frames []map[string]any
 	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
 	rctx := wsReplyContext{reqID: "req_123", chatID: "chat_1", userID: "user_1"}
+	go func() {
+		for i := 0; i < 2; i++ {
+			for {
+				if v, ok := p.pendingAcks.LoadAndDelete("req_123"); ok {
+					v.(chan error) <- nil
+					break
+				}
+				time.Sleep(2 * time.Millisecond)
+			}
+		}
+	}()
 
 	handleAny, err := p.SendPreviewStart(context.Background(), rctx, "partial")
 	if err != nil {
@@ -263,6 +275,12 @@ func TestReply_SendsFinalStreamFrame(t *testing.T) {
 	var frames []map[string]any
 	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
 	rctx := wsReplyContext{reqID: "req_final", userID: "user_1"}
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		if v, ok := p.pendingAcks.LoadAndDelete("req_final"); ok {
+			v.(chan error) <- nil
+		}
+	}()
 	if err := p.Reply(context.Background(), rctx, "final answer"); err != nil {
 		t.Fatalf("Reply failed: %v", err)
 	}
@@ -280,6 +298,213 @@ func TestReply_SendsFinalStreamFrame(t *testing.T) {
 	}
 }
 
+func TestSendStreamFrameAndWaitAck_SerializesConcurrentUpdates(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		frames []map[string]any
+	)
+	p := &WSPlatform{writeJSONFn: func(v any) error {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		var frame map[string]any
+		if err := json.Unmarshal(b, &frame); err != nil {
+			return err
+		}
+		mu.Lock()
+		frames = append(frames, frame)
+		mu.Unlock()
+		return nil
+	}}
+	rc := wsReplyContext{reqID: "req_serial", userID: "user_1", streamID: "stream_fixed"}
+
+	firstStarted := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- p.sendStreamFrameAndWaitAck(context.Background(), rc, "first", false)
+	}()
+
+	go func() {
+		for {
+			if _, ok := p.pendingAcks.Load("req_serial"); ok {
+				close(firstStarted)
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+
+	<-firstStarted
+
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- p.sendStreamFrameAndWaitAck(context.Background(), rc, "second", false)
+	}()
+
+	time.Sleep(30 * time.Millisecond)
+	mu.Lock()
+	framesBeforeAck := len(frames)
+	mu.Unlock()
+	if framesBeforeAck != 1 {
+		t.Fatalf("frames before first ack = %d, want 1", framesBeforeAck)
+	}
+
+	if v, ok := p.pendingAcks.LoadAndDelete("req_serial"); ok {
+		v.(chan error) <- nil
+	} else {
+		t.Fatal("missing first pending ack")
+	}
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first update failed: %v", err)
+	}
+
+	for {
+		mu.Lock()
+		framesAfterFirstAck := len(frames)
+		mu.Unlock()
+		if framesAfterFirstAck == 2 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if v, ok := p.pendingAcks.LoadAndDelete("req_serial"); ok {
+		v.(chan error) <- nil
+	} else {
+		t.Fatal("missing second pending ack")
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatalf("second update failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(frames) != 2 {
+		t.Fatalf("frames = %d, want 2", len(frames))
+	}
+	if got := frames[0]["body"].(map[string]any)["stream"].(map[string]any)["content"]; got != "first" {
+		t.Fatalf("first content = %v, want first", got)
+	}
+	if got := frames[1]["body"].(map[string]any)["stream"].(map[string]any)["content"]; got != "second" {
+		t.Fatalf("second content = %v, want second", got)
+	}
+}
+
+func TestSendStreamFrameAndWaitAck_LatestWinsPendingPreview(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		frames []map[string]any
+	)
+	p := &WSPlatform{writeJSONFn: func(v any) error {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		var frame map[string]any
+		if err := json.Unmarshal(b, &frame); err != nil {
+			return err
+		}
+		mu.Lock()
+		frames = append(frames, frame)
+		mu.Unlock()
+		return nil
+	}}
+	rc := wsReplyContext{reqID: "req_latest", userID: "user_1", streamID: "stream_fixed"}
+
+	firstStarted := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- p.sendStreamFrameAndWaitAck(context.Background(), rc, "first", false)
+	}()
+
+	go func() {
+		for {
+			if _, ok := p.pendingAcks.Load("req_latest"); ok {
+				close(firstStarted)
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+
+	<-firstStarted
+
+	secondDone := make(chan error, 1)
+	thirdDone := make(chan error, 1)
+	go func() {
+		secondDone <- p.sendStreamFrameAndWaitAck(context.Background(), rc, "second", false)
+	}()
+	for {
+		key, state, err := p.streamStateFor(rc)
+		if err != nil {
+			t.Fatalf("streamStateFor failed: %v", err)
+		}
+		_ = key
+		state.mu.Lock()
+		pendingReady := state.pending != nil && state.pending.content == "second"
+		state.mu.Unlock()
+		if pendingReady {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	go func() {
+		thirdDone <- p.sendStreamFrameAndWaitAck(context.Background(), rc, "third", false)
+	}()
+
+	time.Sleep(30 * time.Millisecond)
+	mu.Lock()
+	framesBeforeAck := len(frames)
+	mu.Unlock()
+	if framesBeforeAck != 1 {
+		t.Fatalf("frames before first ack = %d, want 1", framesBeforeAck)
+	}
+
+	if v, ok := p.pendingAcks.LoadAndDelete("req_latest"); ok {
+		v.(chan error) <- nil
+	} else {
+		t.Fatal("missing first pending ack")
+	}
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first update failed: %v", err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatalf("second update should be superseded without error, got %v", err)
+	}
+
+	for {
+		mu.Lock()
+		framesAfterFirstAck := len(frames)
+		mu.Unlock()
+		if framesAfterFirstAck == 2 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	for {
+		if v, ok := p.pendingAcks.LoadAndDelete("req_latest"); ok {
+			v.(chan error) <- nil
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if err := <-thirdDone; err != nil {
+		t.Fatalf("third update failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(frames) != 2 {
+		t.Fatalf("frames = %d, want 2", len(frames))
+	}
+	if got := frames[0]["body"].(map[string]any)["stream"].(map[string]any)["content"]; got != "first" {
+		t.Fatalf("first content = %v, want first", got)
+	}
+	if got := frames[1]["body"].(map[string]any)["stream"].(map[string]any)["content"]; got != "third" {
+		t.Fatalf("latest content = %v, want third", got)
+	}
+}
+
 func TestUpdateMessage_InvalidHandle(t *testing.T) {
 	p := &WSPlatform{}
 	if err := p.UpdateMessage(context.Background(), "bad-handle", "x"); err == nil {
@@ -287,6 +512,172 @@ func TestUpdateMessage_InvalidHandle(t *testing.T) {
 	}
 	if err := p.UpdateMessage(context.Background(), &wsPreviewHandle{}, "x"); err == nil {
 		t.Fatal("expected missing stream id error")
+	}
+}
+
+func TestWSContentAggregator_KeepsOnlyLatestPendingTool(t *testing.T) {
+	var agg wsContentAggregator
+
+	first := "🔧 **工具 #1: Bash**\n---\n`wc -m C`"
+	second := "🔧 **工具 #1: Bash**\n---\n`wc -m CHANGELOG.md`"
+	text := "项目根目录没有 `CHANGELOG.md`。"
+
+	if got := agg.ingest(first); got != "" {
+		t.Fatalf("first tool render = %q, want empty", got)
+	}
+	if got := agg.ingest(second); got != "" {
+		t.Fatalf("second tool render = %q, want empty", got)
+	}
+	if got := agg.ingest(text); got != strings.TrimSpace(second)+"\n\n"+text {
+		t.Fatalf("text render = %q", got)
+	}
+}
+
+func TestWSContentAggregator_FinalizeFlushesPendingTool(t *testing.T) {
+	var agg wsContentAggregator
+	tool := "🔧 **工具 #1: Bash**\n---\n`wc -m CHANGELOG.md`"
+
+	_ = agg.ingest(tool)
+	if got := agg.finalize(""); got != strings.TrimSpace(tool) {
+		t.Fatalf("finalize render = %q, want %q", got, strings.TrimSpace(tool))
+	}
+	if got := agg.render(); got != "" {
+		t.Fatalf("aggregator should reset after finalize, got %q", got)
+	}
+}
+
+func TestSendStreamFrameAndWaitAck_AggregatesPendingToolPreview(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		frames []map[string]any
+	)
+	p := &WSPlatform{writeJSONFn: func(v any) error {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		var frame map[string]any
+		if err := json.Unmarshal(b, &frame); err != nil {
+			return err
+		}
+		mu.Lock()
+		frames = append(frames, frame)
+		mu.Unlock()
+		return nil
+	}}
+	rc := wsReplyContext{reqID: "req_agg", userID: "user_1", streamID: "stream_fixed"}
+
+	tool1 := "🔧 **工具 #1: Bash**\n---\n`wc -m C`"
+	tool2 := "🔧 **工具 #1: Bash**\n---\n`wc -m CHANGELOG.md`"
+	text := "项目根目录没有 `CHANGELOG.md`。"
+
+	done1 := make(chan error, 1)
+	go func() { done1 <- p.sendStreamFrameAndWaitAck(context.Background(), rc, tool1, false) }()
+	time.Sleep(20 * time.Millisecond)
+	done2 := make(chan error, 1)
+	go func() { done2 <- p.sendStreamFrameAndWaitAck(context.Background(), rc, tool2, false) }()
+	time.Sleep(20 * time.Millisecond)
+
+	if err := <-done1; err != nil {
+		t.Fatalf("first send failed: %v", err)
+	}
+	if err := <-done2; err != nil {
+		t.Fatalf("second send failed: %v", err)
+	}
+	_, state, err := p.streamStateFor(rc)
+	if err != nil {
+		t.Fatalf("streamStateFor failed: %v", err)
+	}
+	state.mu.Lock()
+	heldTool := state.heldTool
+	state.mu.Unlock()
+	if heldTool != tool2 {
+		t.Fatalf("held tool after second send = %q, want %q", heldTool, tool2)
+	}
+
+	mu.Lock()
+	if len(frames) != 0 {
+		mu.Unlock()
+		t.Fatalf("frames after tool-only updates = %d, want 0", len(frames))
+	}
+	mu.Unlock()
+
+	done3 := make(chan error, 1)
+	go func() { done3 <- p.sendStreamFrameAndWaitAck(context.Background(), rc, text, false) }()
+	for {
+		if _, ok := p.pendingAcks.Load("req_agg"); ok {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if v, ok := p.pendingAcks.LoadAndDelete("req_agg"); ok {
+		v.(chan error) <- nil
+	} else {
+		t.Fatal("missing text pending ack")
+	}
+	if err := <-done3; err != nil {
+		t.Fatalf("text send failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(frames) != 1 {
+		t.Fatalf("frames = %d, want 1", len(frames))
+	}
+	firstContent := frames[0]["body"].(map[string]any)["stream"].(map[string]any)["content"]
+	want := tool2 + "\n\n" + text
+	if firstContent != want {
+		t.Fatalf("aggregated content = %v, want %q", firstContent, want)
+	}
+}
+
+func TestSendStreamFrameAndWaitAck_TextStillStreamsWhileToolIsHeld(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		frames []map[string]any
+	)
+	p := &WSPlatform{writeJSONFn: func(v any) error {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		var frame map[string]any
+		if err := json.Unmarshal(b, &frame); err != nil {
+			return err
+		}
+		mu.Lock()
+		frames = append(frames, frame)
+		mu.Unlock()
+		return nil
+	}}
+	rc := wsReplyContext{reqID: "req_stream_text", userID: "user_1", streamID: "stream_fixed"}
+
+	text1 := "先检查一下。"
+	tool := "🔧 **工具 #1: Bash**\n---\n`wc -m CHANGELOG.md`"
+	text2 := "项目根目录没有 `CHANGELOG.md`。"
+
+	steps := []string{text1, tool, text2}
+	for _, step := range steps {
+		done := make(chan error, 1)
+		go func(content string) { done <- p.sendStreamFrameAndWaitAck(context.Background(), rc, content, false) }(step)
+		if err := <-done; err != nil {
+			t.Fatalf("send failed for %q: %v", step, err)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(frames) != 2 {
+		t.Fatalf("frames = %d, want 2", len(frames))
+	}
+	firstContent := frames[0]["body"].(map[string]any)["stream"].(map[string]any)["content"]
+	if firstContent != text1 {
+		t.Fatalf("first content = %v, want %q", firstContent, text1)
+	}
+	secondContent := frames[1]["body"].(map[string]any)["stream"].(map[string]any)["content"]
+	wantSecond := text1 + "\n\n" + tool + "\n\n" + text2
+	if secondContent != wantSecond {
+		t.Fatalf("second content = %v, want %q", secondContent, wantSecond)
 	}
 }
 

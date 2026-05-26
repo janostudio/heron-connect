@@ -137,18 +137,14 @@ func mapToolCallUpdate(sessionID string, update json.RawMessage) []core.Event {
 			SessionID: sessionID,
 		}}
 	case st == "in_progress" || st == "pending":
-		// Stream intermediate tool output to IM (ACP allows content while not terminal).
-		if body == "" {
-			return nil
-		}
-		return []core.Event{{
-			Type:      core.EventToolResult,
-			ToolName:  toolLabel,
-			Content:   truncateRunes(body, 800),
-			SessionID: sessionID,
-		}}
+		// ACP tool_call_update often streams partial JSON fragments while the tool
+		// input is still being assembled. Showing those fragments in IM creates
+		// noisy, broken-looking tool blocks, so only terminal tool updates are
+		// surfaced. The rawInput is still cached separately in session.go and will
+		// improve the eventual ToolUse display.
+		return nil
 	default:
-		if body != "" {
+		if body != "" && (st == "" || st == "done") {
 			return []core.Event{{
 				Type:      core.EventToolResult,
 				ToolName:  toolLabel,
