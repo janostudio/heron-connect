@@ -120,7 +120,15 @@ func (a *wsContentAggregator) render() string {
 
 func (a *wsContentAggregator) shouldHoldOnlyTool(content string) bool {
 	trimmed := strings.TrimSpace(content)
-	return trimmed != "" && strings.HasPrefix(trimmed, wecomToolBlockPrefix)
+	if trimmed == "" || !strings.HasPrefix(trimmed, wecomToolBlockPrefix) {
+		return false
+	}
+	if idx := strings.LastIndex(trimmed, "```"); idx >= 0 {
+		if suffix := strings.TrimSpace(trimmed[idx+3:]); suffix != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func shouldAggregateWecomStream(content string) bool {

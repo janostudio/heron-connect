@@ -59,6 +59,32 @@ func TestMapSessionUpdate_toolCallUpdate_completed(t *testing.T) {
 	}
 }
 
+func TestMapSessionUpdate_toolCallUpdate_completedRawOutputWins(t *testing.T) {
+	params := json.RawMessage(`{
+		"sessionId": "s1",
+		"update": {
+			"sessionUpdate": "tool_call_update",
+			"toolCallId": "c1",
+			"title": "Bash",
+			"status": "completed",
+			"content": [
+				{"type": "content", "content": {"type": "text", "text": "fragment"}}
+			],
+			"rawOutput": {
+				"type": "text",
+				"text": "Command: wc -m file\nStdout: 365 file\nExit Code: 0"
+			}
+		}
+	}`)
+	evs := mapSessionUpdate("", params)
+	if len(evs) != 1 {
+		t.Fatalf("got %+v", evs)
+	}
+	if evs[0].ToolResult != "Command: wc -m file\nStdout: 365 file\nExit Code: 0" {
+		t.Fatalf("ToolResult = %q", evs[0].ToolResult)
+	}
+}
+
 func TestMapSessionUpdate_toolCallUpdate_completedRawOutputFallback(t *testing.T) {
 	params := json.RawMessage(`{
 		"sessionId": "s1",

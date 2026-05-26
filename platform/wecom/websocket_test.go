@@ -681,6 +681,18 @@ func TestSendStreamFrameAndWaitAck_TextStillStreamsWhileToolIsHeld(t *testing.T)
 	}
 }
 
+func TestWSContentAggregator_ShouldHoldOnlyPureToolBlock(t *testing.T) {
+	agg := &wsContentAggregator{}
+	toolOnly := "🔧 **工具 #1: Bash**\n---\n```text\nCommand: ok\n```"
+	if !agg.shouldHoldOnlyTool(toolOnly) {
+		t.Fatal("pure tool block should be held")
+	}
+	toolWithAnswer := toolOnly + "最终答案"
+	if agg.shouldHoldOnlyTool(toolWithAnswer) {
+		t.Fatal("tool block with trailing answer should not be held")
+	}
+}
+
 func TestSendStreamFrameAndWaitAck_FinishFlushesHeldTool(t *testing.T) {
 	var (
 		mu     sync.Mutex

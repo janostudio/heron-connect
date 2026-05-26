@@ -123,9 +123,11 @@ func mapToolCallUpdate(sessionID string, update json.RawMessage) []core.Event {
 	if toolLabel == "" {
 		toolLabel = "tool"
 	}
-	body := extractToolCallContentText(u.Content)
-	if body == "" {
-		body = strings.TrimSpace(u.RawOutput.Text)
+	rawBody := strings.TrimSpace(u.RawOutput.Text)
+	contentBody := extractToolCallContentText(u.Content)
+	body := contentBody
+	if rawBody != "" {
+		body = rawBody
 	}
 	st := strings.ToLower(strings.TrimSpace(u.Status))
 
@@ -145,7 +147,7 @@ func mapToolCallUpdate(sessionID string, update json.RawMessage) []core.Event {
 			Content:   truncateRunes(body, 800),
 			SessionID: sessionID,
 		}}
-	case st == "in_progress" || st == "pending":
+	case st == "in_progress" || st == "pending" || st == "":
 		// ACP tool_call_update often streams partial JSON fragments while the tool
 		// input is still being assembled. Showing those fragments in IM creates
 		// noisy, broken-looking tool blocks, so only terminal tool updates are
@@ -153,7 +155,7 @@ func mapToolCallUpdate(sessionID string, update json.RawMessage) []core.Event {
 		// improve the eventual ToolUse display.
 		return nil
 	default:
-		if body != "" && (st == "" || st == "done") {
+		if body != "" && st == "done" {
 			return []core.Event{{
 				Type:      core.EventToolResult,
 				ToolName:  toolLabel,
