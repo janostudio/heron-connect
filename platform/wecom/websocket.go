@@ -79,7 +79,7 @@ func (a *wsContentAggregator) ingest(content string) string {
 	if trimmed == "" {
 		return a.render()
 	}
-	if strings.HasPrefix(trimmed, wecomToolBlockPrefix) {
+	if a.shouldHoldOnlyTool(trimmed) {
 		a.pendingTool = trimmed
 		a.hasPendingTool = true
 		return a.render()
@@ -713,9 +713,12 @@ func (p *WSPlatform) runStreamQueue(key string, state *wsStreamState, rc wsReply
 		}
 
 		state.mu.Lock()
+		contentStartsWithTool := strings.HasPrefix(strings.TrimSpace(req.content), wecomToolBlockPrefix)
 		aggregateThis := shouldAggregateWecomStream(req.content) || state.heldTool != "" || state.aggregator.hasPendingTool || len(state.aggregator.plainSegments) > 0
-		if aggregateThis && len(state.aggregator.plainSegments) == 0 && !state.aggregator.hasPendingTool && strings.TrimSpace(state.lastAcked) != "" {
-			state.aggregator.plainSegments = append(state.aggregator.plainSegments, strings.TrimSpace(state.lastAcked))
+		if len(state.aggregator.plainSegments) == 0 && !state.aggregator.hasPendingTool && strings.TrimSpace(state.lastAcked) != "" {
+			if state.heldTool != "" || len(state.aggregator.plainSegments) > 0 || (!contentStartsWithTool && shouldAggregateWecomStream(req.content)) {
+				state.aggregator.plainSegments = append(state.aggregator.plainSegments, strings.TrimSpace(state.lastAcked))
+			}
 		}
 		if aggregateThis && state.heldTool != "" {
 			state.aggregator.pendingTool = state.heldTool

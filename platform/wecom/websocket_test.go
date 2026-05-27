@@ -681,6 +681,17 @@ func TestSendStreamFrameAndWaitAck_TextStillStreamsWhileToolIsHeld(t *testing.T)
 	}
 }
 
+func TestWSContentAggregator_IngestDoesNotTreatToolPlusAnswerAsHeld(t *testing.T) {
+	agg := &wsContentAggregator{}
+	combined := "🔧 **工具 #1: Bash**\n---\n```text\nCommand: ok\n```\n最终答案"
+	if got := agg.ingest(combined); got != combined {
+		t.Fatalf("ingest render = %q, want %q", got, combined)
+	}
+	if agg.hasPendingTool {
+		t.Fatal("tool+answer content should not stay pending")
+	}
+}
+
 func TestWSContentAggregator_ShouldHoldOnlyPureToolBlock(t *testing.T) {
 	agg := &wsContentAggregator{}
 	toolOnly := "🔧 **工具 #1: Bash**\n---\n```text\nCommand: ok\n```"
@@ -690,6 +701,64 @@ func TestWSContentAggregator_ShouldHoldOnlyPureToolBlock(t *testing.T) {
 	toolWithAnswer := toolOnly + "最终答案"
 	if agg.shouldHoldOnlyTool(toolWithAnswer) {
 		t.Fatal("tool block with trailing answer should not be held")
+	}
+}
+
+func TestSendStreamFrameAndWaitAck_ToolPlusAnswerDoesNotCollapseToPreviousText(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		frames []map[string]any
+	)
+	p := &WSPlatform{writeJSONFn: func(v any) error {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		var frame map[string]any
+		if err := json.Unmarshal(b, &frame); err != nil {
+			return err
+		}
+		mu.Lock()
+		frames = append(frames, frame)
+		mu.Unlock()
+		return nil
+	}}
+	rc := wsReplyContext{reqID: "req_tool_answer", userID: "user_1", streamID: "stream_fixed"}
+
+	first := "`"
+	combined := "🔧 **工具 #1: Bash**\n---\n```text\nCommand: ok\n```\n`agent.json` 共 **425 字节**。"
+
+	done1 := make(chan error, 1)
+	go func() { done1 <- p.sendStreamFrameAndWaitAck(context.Background(), rc, first, false) }()
+	if err := <-done1; err != nil {
+		t.Fatalf("first send failed: %v", err)
+	}
+
+	done2 := make(chan error, 1)
+	go func() { done2 <- p.sendStreamFrameAndWaitAck(context.Background(), rc, combined, false) }()
+	for {
+		if _, ok := p.pendingAcks.Load("req_tool_answer"); ok {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if v, ok := p.pendingAcks.LoadAndDelete("req_tool_answer"); ok {
+		v.(chan error) <- nil
+	} else {
+		t.Fatal("missing combined pending ack")
+	}
+	if err := <-done2; err != nil {
+		t.Fatalf("combined send failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(frames) != 2 {
+		t.Fatalf("frames = %d, want 2", len(frames))
+	}
+	secondContent := frames[1]["body"].(map[string]any)["stream"].(map[string]any)["content"]
+	if secondContent != combined {
+		t.Fatalf("second content = %v, want %q", secondContent, combined)
 	}
 }
 
