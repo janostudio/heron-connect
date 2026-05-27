@@ -3443,6 +3443,10 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	sendWorkspaceWithError := func(p Platform, replyCtx any, content string) error {
 		return e.sendWithErrorForWorkspace(p, replyCtx, content, workspaceDir)
 	}
+	replyWorkspaceWithError := func(p Platform, replyCtx any, content string) error {
+		content = e.renderOutgoingContentForWorkspace(p, content, workspaceDir)
+		return e.replyWithError(p, replyCtx, content)
+	}
 
 	// Streaming card: aggregate entire turn into a single updatable card.
 	var streamCard StreamingCard
@@ -3718,12 +3722,14 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				break
 			}
 			if streamPreviewToolHold {
-				toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, event.ToolName, formattedInput)
-				if len(textParts) > 0 {
-					textParts = append(textParts, "\n\n")
+				if e.display.ToolMessages {
+					toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, event.ToolName, formattedInput)
+					if len(textParts) > 0 {
+						textParts = append(textParts, "\n\n")
+					}
+					textParts = append(textParts, toolMsg)
+					streamToolHoldNeedsAnswerSeparator = true
 				}
-				textParts = append(textParts, toolMsg)
-				streamToolHoldNeedsAnswerSeparator = true
 				continue
 			}
 			if e.display.Mode == displayModeStream && e.display.ToolMessages {
@@ -3833,11 +3839,13 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					}
 					resultMsg := e.formatToolResultEventFallback(event.ToolName, result, event.ToolStatus, event.ToolExitCode, event.ToolSuccess)
 					if streamPreviewToolHold {
-						if len(textParts) > 0 {
-							textParts = append(textParts, "\n\n")
+						if e.display.ToolMessages {
+							if len(textParts) > 0 {
+								textParts = append(textParts, "\n\n")
+							}
+							textParts = append(textParts, resultMsg)
+							streamToolHoldNeedsAnswerSeparator = true
 						}
-						textParts = append(textParts, resultMsg)
-						streamToolHoldNeedsAnswerSeparator = true
 						continue
 					}
 					if e.display.Mode == displayModeStream {
@@ -4044,12 +4052,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			state.mu.Unlock()
 
 			fullResponse := event.Content
-			// When tool progress is hidden, segmentStart stays 0 and textParts
-			// contains ALL text across tool boundaries. Prefer the full accumulated
-			// text over event.Content which only contains the last assistant segment.
-			if len(textParts) > 0 && segmentStart == 0 && !e.display.ToolMessages {
-				fullResponse = strings.Join(textParts, "")
-			} else if fullResponse == "" && len(textParts) > 0 {
+			if fullResponse == "" && len(textParts) > 0 {
 				fullResponse = strings.Join(textParts, "")
 			}
 			if fullResponse == "" {
@@ -4239,6 +4242,11 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			} else if suppressDuplicate {
 				sp.discard()
 				slog.Debug("EventResult: suppressed duplicate side-channel text", "response_len", len(deliverResponse))
+			} else if p.Name() == "wecom" && e.display.Mode == displayModeStream && !e.display.ToolMessages {
+				sp.detachPreview()
+				if err := replyWorkspaceWithError(p, replyCtx, fullResponse); err != nil {
+					return
+				}
 			} else if sp.finish(deliverResponse) {
 				slog.Debug("EventResult: finalized stream preview in-place", "response_len", len(deliverResponse))
 			} else {

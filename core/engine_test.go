@@ -1625,6 +1625,48 @@ func TestProcessInteractiveEvents_StreamModeToolHoldKeepsToolProgressInFinalRepl
 	}
 }
 
+func TestProcessInteractiveEvents_StreamModeToolHoldSkipsToolProgressWhenToolMessagesDisabled(t *testing.T) {
+	p := &mockKeepPreviewPlatform{mode: "tool_hold"}
+	p.n = "wecom"
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetDisplayConfig(DisplayCfg{Mode: displayModeStream, ThinkingMessages: false, ThinkingMaxLen: 300, ToolMaxLen: 500, ToolMessages: false})
+	e.SetStreamPreviewCfg(StreamPreviewCfg{Enabled: true, IntervalMs: 1, MinDeltaChars: 1, MaxChars: 4000})
+	sessionKey := "wecom:user-stream-tool-hold-no-tool-messages"
+	session := e.sessions.GetOrCreateActive(sessionKey)
+	agentSession := newControllableSession("s-stream-tool-hold-no-tool-messages")
+	state := &interactiveState{
+		agentSession: agentSession,
+		platform:     p,
+		replyCtx:     "ctx-stream-tool-hold-no-tool-messages",
+	}
+	e.interactiveStates[sessionKey] = state
+
+	agentSession.events <- Event{Type: EventText, Content: "我先定位问题。"}
+	agentSession.events <- Event{Type: EventToolUse, ToolName: "Bash", ToolInput: "wc -m /tmp/agent.json"}
+	agentSession.events <- Event{Type: EventToolResult, ToolName: "Bash", ToolResult: "42 /tmp/agent.json"}
+	agentSession.events <- Event{Type: EventResult, Content: "问题已经确认。", Done: true}
+
+	e.processInteractiveEvents(state, session, e.sessions, sessionKey, "m-stream-tool-hold-no-tool-messages", time.Now(), nil, nil, state.replyCtx)
+
+	if got := p.getSent(); len(got) != 1 || got[0] != "问题已经确认。" {
+		t.Fatalf("sent text = %#v, want one final reply with answer only", got)
+	}
+
+	p.mu.Lock()
+	previewMsgs := append([]string(nil), p.messages...)
+	p.mu.Unlock()
+	if len(previewMsgs) != 1 {
+		t.Fatalf("preview messages = %#v, want only initial preview", previewMsgs)
+	}
+	joined := strings.Join(previewMsgs, "\n")
+	if strings.Contains(joined, "Tool #1") || strings.Contains(joined, "42 /tmp/agent.json") || strings.Contains(joined, "wc -m /tmp/agent.json") {
+		t.Fatalf("preview messages should not contain tool progress when tool_messages=false, got %#v", previewMsgs)
+	}
+	if finalMsg := previewMsgs[0]; finalMsg != "start:我先定位问题。" {
+		t.Fatalf("preview message = %#v, want only the initial partial preview", previewMsgs)
+	}
+}
+
 func TestProcessInteractiveEvents_FinalReplyUsesWorkspaceForReferenceRendering(t *testing.T) {
 	p := &stubPlatformEngine{n: "feishu"}
 	a := &namedStubModelModeAgent{name: "codex"}

@@ -28,6 +28,7 @@ type WSPlatform struct {
 	botID       string
 	secret      string
 	allowFrom   string
+	accessLog   *wecomAccessLogger
 	conn        *websocket.Conn
 	writeJSONFn func(any) error
 	handler     core.MessageHandler
@@ -148,6 +149,8 @@ type wsPreviewHandle struct {
 	replyCtx wsReplyContext
 }
 
+const wecomStreamMaxBytes = 2048
+
 // --- WebSocket protocol frame types (matching official SDK) ---
 
 // wsFrame is the unified frame structure used for all WebSocket communication.
@@ -213,11 +216,14 @@ func newWebSocket(opts map[string]any) (core.Platform, error) {
 		return nil, fmt.Errorf("wecom-ws: bot_id and bot_secret are required for websocket mode")
 	}
 	allowFrom, _ := opts["allow_from"].(string)
+	dataDir, _ := opts["cc_data_dir"].(string)
+	project, _ := opts["cc_project"].(string)
 
 	return &WSPlatform{
 		botID:       botID,
 		secret:      secret,
 		allowFrom:   allowFrom,
+		accessLog:   newWecomAccessLogger(dataDir, project),
 		streamState: make(map[string]*wsStreamState),
 	}, nil
 }
@@ -460,6 +466,30 @@ func (p *WSPlatform) handleMsgCallback(frame wsFrame) {
 	}
 
 	if !core.AllowList(p.allowFrom, body.From.UserID) {
+		chatID := body.ChatID
+		if chatID == "" {
+			chatID = body.From.UserID
+		}
+		rctx := wsReplyContext{
+			chatID:   chatID,
+			chatType: body.ChatType,
+			userID:   body.From.UserID,
+		}
+		p.logAccess(wecomAccessRecord{
+			Source:     "websocket",
+			Allowed:    false,
+			UserID:     body.From.UserID,
+			ChatID:     chatID,
+			ChatType:   body.ChatType,
+			SessionKey: fmt.Sprintf("wecom:%s:%s", chatID, body.From.UserID),
+			MessageID:  body.MsgID,
+			MsgType:    body.MsgType,
+			Reason:     "allow_from_rejected",
+		})
+		denyMsg := fmt.Sprintf("无权限使用此机器人，请联系管理员开通。你的 UserID: %s", body.From.UserID)
+		if err := p.Send(context.Background(), rctx, denyMsg); err != nil {
+			slog.Warn("wecom-ws: failed to notify unauthorized user", "user", body.From.UserID, "chat_id", chatID, "error", err)
+		}
 		slog.Debug("wecom-ws: message from unauthorized user", "user", body.From.UserID)
 		return
 	}
@@ -476,6 +506,17 @@ func (p *WSPlatform) handleMsgCallback(frame wsFrame) {
 		chatType: body.ChatType,
 		userID:   body.From.UserID,
 	}
+	p.logAccess(wecomAccessRecord{
+		Source:     "websocket",
+		Allowed:    true,
+		UserID:     body.From.UserID,
+		ChatID:     chatID,
+		ChatType:   body.ChatType,
+		SessionKey: sessionKey,
+		MessageID:  body.MsgID,
+		MsgType:    body.MsgType,
+		Reason:     "received",
+	})
 
 	// WS mode does not provide display names; the protocol only carries userID.
 	// Name resolution would require a separate HTTP API call with corpSecret,
@@ -537,6 +578,13 @@ func (p *WSPlatform) handleMsgCallback(frame wsFrame) {
 	go p.deliverWSMediaInbound(&body, sessionKey, chatName, rctx, texts, imgRefs, fileRefs)
 }
 
+func (p *WSPlatform) logAccess(rec wecomAccessRecord) {
+	if p == nil || p.accessLog == nil {
+		return
+	}
+	p.accessLog.Log(rec)
+}
+
 // Reply sends a response message via aibot_respond_msg using the stream format.
 // Uses the req_id from the original callback.
 // The stream content field is a full-replacement (not incremental append), so we
@@ -551,7 +599,7 @@ func (p *WSPlatform) Reply(ctx context.Context, rctx any, content string) error 
 		return nil
 	}
 
-	if err := p.sendStreamFrameAndWaitAck(ctx, rc, content, true); err != nil {
+	if err := p.sendFinalReplyChunks(ctx, rc, content); err != nil {
 		slog.Error("wecom-ws: reply failed", "user", rc.userID, "error", err)
 		return err
 	}
@@ -567,11 +615,13 @@ func (p *WSPlatform) SendPreviewStart(ctx context.Context, rctx any, content str
 	if rc.reqID == "" {
 		return nil, core.ErrNotSupported
 	}
-	rc.streamID = p.generateReqID("stream")
-	if err := p.sendStreamFrameAndWaitAck(ctx, rc, content, false); err != nil {
+	handle := &wsPreviewHandle{replyCtx: rc}
+	previewContent := wecomPreviewPayload(content)
+	handle.replyCtx.streamID = p.generateReqID("stream")
+	if err := p.sendStreamFrameAndWaitAck(ctx, handle.replyCtx, previewContent, false); err != nil {
 		return nil, err
 	}
-	return &wsPreviewHandle{replyCtx: rc}, nil
+	return handle, nil
 }
 
 func (p *WSPlatform) UpdateMessage(ctx context.Context, previewHandle any, content string) error {
@@ -582,7 +632,48 @@ func (p *WSPlatform) UpdateMessage(ctx context.Context, previewHandle any, conte
 	if h.replyCtx.streamID == "" {
 		return fmt.Errorf("wecom-ws: preview handle missing stream id")
 	}
-	return p.sendStreamFrameAndWaitAck(ctx, h.replyCtx, content, false)
+	return p.sendStreamFrameAndWaitAck(ctx, h.replyCtx, wecomPreviewPayload(content), false)
+}
+
+func (p *WSPlatform) sendFinalReplyChunks(ctx context.Context, rc wsReplyContext, content string) error {
+	chunks := splitByBytes(content, wecomStreamMaxBytes)
+	if len(chunks) == 0 {
+		return nil
+	}
+	if len(chunks) == 1 {
+		return p.sendStreamFrameAndWaitAck(ctx, rc, chunks[0], true)
+	}
+	finalRC := rc
+	finalRC.streamID = p.generateReqID("stream")
+	if err := p.sendStreamFrameAndWaitAck(ctx, finalRC, chunks[0], true); err != nil {
+		return err
+	}
+	for i := 1; i < len(chunks); i++ {
+		if err := p.Send(ctx, rc, chunks[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func wecomPreviewPayload(content string) string {
+	chunks := splitByBytes(content, wecomStreamMaxBytes)
+	if len(chunks) == 0 {
+		return ""
+	}
+	if len(chunks) == 1 {
+		return chunks[0]
+	}
+	notice := "\n\n[内容较长，正在整理后续片段...]"
+	headMax := wecomStreamMaxBytes - len([]byte(notice))
+	if headMax <= 0 {
+		return splitByBytes(notice, wecomStreamMaxBytes)[0]
+	}
+	head := splitByBytes(chunks[0], headMax)
+	if len(head) == 0 {
+		return splitByBytes(notice, wecomStreamMaxBytes)[0]
+	}
+	return head[0] + notice
 }
 
 func (p *WSPlatform) sendStreamFrameAndWaitAck(ctx context.Context, rc wsReplyContext, content string, finish bool) error {
@@ -843,7 +934,7 @@ func (p *WSPlatform) Send(ctx context.Context, rctx any, content string) error {
 		return fmt.Errorf("wecom-ws: chatID is empty, cannot send proactive message")
 	}
 
-	chunks := splitByBytes(content, 2000)
+	chunks := splitByBytes(content, wecomStreamMaxBytes)
 	for i, chunk := range chunks {
 		reqID := p.generateReqID("aibot_send_msg")
 		frame := map[string]any{

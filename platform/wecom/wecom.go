@@ -70,6 +70,7 @@ type Platform struct {
 	corpSecret     string
 	agentID        string
 	apiBaseURL     string
+	accessLog      *wecomAccessLogger
 	allowFrom      string
 	token          string // callback verification token
 	aesKey         []byte // decoded EncodingAESKey (32 bytes)
@@ -181,6 +182,8 @@ func New(opts map[string]any) (core.Platform, error) {
 
 	enableMarkdown, _ := opts["enable_markdown"].(bool)
 	allowFrom, _ := opts["allow_from"].(string)
+	dataDir, _ := opts["cc_data_dir"].(string)
+	project, _ := opts["cc_project"].(string)
 	core.CheckAllowFrom("wecom", allowFrom)
 
 	return &Platform{
@@ -188,6 +191,7 @@ func New(opts map[string]any) (core.Platform, error) {
 		corpSecret:     corpSecret,
 		agentID:        agentID,
 		apiBaseURL:     apiBaseURL,
+		accessLog:      newWecomAccessLogger(dataDir, project),
 		allowFrom:      allowFrom,
 		token:          callbackToken,
 		aesKey:         aesKey,
@@ -342,6 +346,24 @@ func (p *Platform) handleMessage(w http.ResponseWriter, r *http.Request, msgSig,
 		"has_media_id", msg.MediaId != "",
 		"file_name", msg.FileName)
 
+	sessionKey := fmt.Sprintf("wecom:%s", msg.FromUserName)
+	allowed := core.AllowList(p.allowFrom, msg.FromUserName)
+	reason := "received"
+	if !allowed {
+		reason = "allow_from_rejected"
+	}
+	p.logAccess(wecomAccessRecord{
+		Source:     "callback",
+		Allowed:    allowed,
+		UserID:     msg.FromUserName,
+		ChatID:     msg.FromUserName,
+		ChatType:   "single",
+		SessionKey: sessionKey,
+		MessageID:  strconv.FormatInt(msg.MsgId, 10),
+		MsgType:    msg.MsgType,
+		Reason:     reason,
+	})
+
 	if p.dedup.isDuplicate(msg.MsgId) {
 		slog.Info("wecom: dropping duplicate message", "msg_id", msg.MsgId, "msg_type", msg.MsgType)
 		return
@@ -354,13 +376,16 @@ func (p *Platform) handleMessage(w http.ResponseWriter, r *http.Request, msgSig,
 		}
 	}
 
-	if !core.AllowList(p.allowFrom, msg.FromUserName) {
+	rctx := replyContext{userID: msg.FromUserName}
+
+	if !allowed {
+		denyMsg := fmt.Sprintf("无权限使用此机器人，请联系管理员开通。你的 UserID: %s", msg.FromUserName)
+		if err := p.Send(context.Background(), rctx, denyMsg); err != nil {
+			slog.Warn("wecom: failed to notify unauthorized user", "user", msg.FromUserName, "error", err)
+		}
 		slog.Warn("wecom: message rejected by allow_from", "user", msg.FromUserName, "msg_type", msg.MsgType)
 		return
 	}
-
-	sessionKey := fmt.Sprintf("wecom:%s", msg.FromUserName)
-	rctx := replyContext{userID: msg.FromUserName}
 
 	switch msg.MsgType {
 	case "text":
@@ -449,6 +474,13 @@ func (p *Platform) handleMessage(w http.ResponseWriter, r *http.Request, msgSig,
 	}
 }
 
+func (p *Platform) logAccess(rec wecomAccessRecord) {
+	if p == nil || p.accessLog == nil {
+		return
+	}
+	p.accessLog.Log(rec)
+}
+
 func (p *Platform) Reply(ctx context.Context, rctx any, content string) error {
 	rc, ok := rctx.(replyContext)
 	if !ok {
@@ -468,7 +500,7 @@ func (p *Platform) Reply(ctx context.Context, rctx any, content string) error {
 		content = core.StripMarkdown(content)
 	}
 
-	chunks := splitByBytes(content, 2000)
+	chunks := splitByBytes(content, wecomStreamMaxBytes)
 	for i, chunk := range chunks {
 		var sendErr error
 		if p.enableMarkdown {

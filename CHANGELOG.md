@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.3.8 (2026-05-27)
+
+Personal fork WeCom stream visibility and audit fixes for `@qinghuangniao/cc-connect-qhn`.
+
+### Notes
+- Fix WeCom `stream` mode with `tool_messages = false` so hidden tool events no longer leak into the final visible stream payload.
+- Keep WeCom long-message splitting on the final answer path when tool updates are hidden, avoiding the single-preview-message fallback.
+- Continue recording inbound WeCom access attempts and unauthorized users for allow-list troubleshooting.
+
+## v1.3.7 (2026-05-27)
+
+Personal fork WeCom delivery and audit fixes for `@qinghuangniao/cc-connect-qhn`.
+
+### Notes
+- Add WeCom access audit logging so inbound users and prompt send time are recorded to local JSONL files, including `allow_from` rejections.
+- Fix WeCom WebSocket final reply delivery for long messages by splitting the terminal response into ordered follow-up messages instead of truncating the tail.
+- Align WeCom message splitting with the documented 2048-byte limit and keep preview updates within that bound.
+
 ## v1.3.4 (2026-05-25)
 
 Personal fork release for `@qinghuangniao/cc-connect-qhn`.

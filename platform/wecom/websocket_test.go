@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -75,10 +77,10 @@ func TestSplitByBytes_ReassemblesLargeContent(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		s += fmt.Sprintf("line %d: 这是一段中文\n", i)
 	}
-	parts := splitByBytes(s, 2000)
+	parts := splitByBytes(s, wecomStreamMaxBytes)
 	reassembled := ""
 	for _, p := range parts {
-		if len(p) > 2000 {
+		if len(p) > wecomStreamMaxBytes {
 			t.Fatalf("chunk exceeds maxBytes: %d", len(p))
 		}
 		reassembled += p
@@ -175,6 +177,138 @@ func TestHandleMsgCallback_GroupChat_ChatIDPreserved(t *testing.T) {
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("handler not called")
+	}
+}
+
+func TestNewWebSocket_ConfiguresAccessLogger(t *testing.T) {
+	dataDir := t.TempDir()
+	pf, err := newWebSocket(map[string]any{
+		"bot_id":      "bot-1",
+		"bot_secret":  "sec-1",
+		"cc_data_dir": dataDir,
+		"cc_project":  "proj/ws",
+	})
+	if err != nil {
+		t.Fatalf("newWebSocket returned error: %v", err)
+	}
+
+	p := pf.(*WSPlatform)
+	if p.accessLog == nil {
+		t.Fatal("accessLog = nil, want configured logger")
+	}
+	want := filepath.Join(dataDir, "audit", "wecom_access", "proj_ws.jsonl")
+	if p.accessLog.path != want {
+		t.Fatalf("access log path = %q, want %q", p.accessLog.path, want)
+	}
+}
+
+func TestHandleMsgCallback_WritesAccessLog(t *testing.T) {
+	dataDir := t.TempDir()
+	p := &WSPlatform{
+		allowFrom: "*",
+		accessLog: newWecomAccessLogger(dataDir, "proj/ws"),
+	}
+
+	captured := make(chan *core.Message, 1)
+	p.handler = func(_ core.Platform, msg *core.Message) {
+		captured <- msg
+	}
+
+	body := wsMsgCallbackBody{
+		MsgID:    "msg_access",
+		ChatID:   "group_1",
+		ChatType: "group",
+		MsgType:  "text",
+	}
+	body.From.UserID = "lisi"
+	body.Text.Content = "hello"
+	body.CreateTime = time.Now().Unix()
+
+	bodyBytes, _ := json.Marshal(body)
+	frame := wsFrame{
+		Cmd:     "aibot_msg_callback",
+		Headers: wsFrameHeaders{ReqID: "req_access"},
+		Body:    bodyBytes,
+	}
+
+	p.handleMsgCallback(frame)
+
+	select {
+	case <-captured:
+	case <-time.After(1 * time.Second):
+		t.Fatal("handler not called")
+	}
+
+	buf, err := os.ReadFile(p.accessLog.path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var rec wecomAccessRecord
+	if err := json.Unmarshal(buf, &rec); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if rec.Source != "websocket" {
+		t.Fatalf("source = %q, want websocket", rec.Source)
+	}
+	if !rec.Allowed {
+		t.Fatal("allowed = false, want true")
+	}
+	if rec.UserID != "lisi" {
+		t.Fatalf("user_id = %q, want lisi", rec.UserID)
+	}
+	if rec.ChatID != "group_1" {
+		t.Fatalf("chat_id = %q, want group_1", rec.ChatID)
+	}
+	if rec.SessionKey != "wecom:group_1:lisi" {
+		t.Fatalf("session_key = %q", rec.SessionKey)
+	}
+	if rec.Reason != "received" {
+		t.Fatalf("reason = %q, want received", rec.Reason)
+	}
+}
+
+func TestHandleMsgCallback_UnauthorizedWritesAccessLog(t *testing.T) {
+	dataDir := t.TempDir()
+	p := &WSPlatform{
+		allowFrom: "allowed-user",
+		accessLog: newWecomAccessLogger(dataDir, "proj/ws"),
+	}
+
+	body := wsMsgCallbackBody{
+		MsgID:    "msg_denied",
+		ChatID:   "group_2",
+		ChatType: "group",
+		MsgType:  "text",
+	}
+	body.From.UserID = "blocked-user"
+	body.Text.Content = "hello"
+	body.CreateTime = time.Now().Unix()
+
+	bodyBytes, _ := json.Marshal(body)
+	frame := wsFrame{
+		Cmd:     "aibot_msg_callback",
+		Headers: wsFrameHeaders{ReqID: "req_denied"},
+		Body:    bodyBytes,
+	}
+
+	p.handleMsgCallback(frame)
+
+	buf, err := os.ReadFile(p.accessLog.path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var rec wecomAccessRecord
+	if err := json.Unmarshal(buf, &rec); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if rec.Allowed {
+		t.Fatal("allowed = true, want false")
+	}
+	if rec.UserID != "blocked-user" {
+		t.Fatalf("user_id = %q, want blocked-user", rec.UserID)
+	}
+	if rec.Reason != "allow_from_rejected" {
+		t.Fatalf("reason = %q, want allow_from_rejected", rec.Reason)
 	}
 }
 
@@ -295,6 +429,88 @@ func TestReply_SendsFinalStreamFrame(t *testing.T) {
 	}
 	if stream["content"] != "final answer" {
 		t.Fatalf("unexpected content: %+v", stream)
+	}
+}
+
+func TestReply_LongContentSplitsIntoFollowUpMessages(t *testing.T) {
+	var frames []map[string]any
+	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
+	rctx := wsReplyContext{reqID: "req_long", chatID: "chat_1", userID: "user_1"}
+	content := strings.Repeat("a", wecomStreamMaxBytes) + "b"
+
+	go func() {
+		seen := map[string]bool{}
+		for len(seen) < 2 {
+			p.pendingAcks.Range(func(key, value any) bool {
+				k, ok := key.(string)
+				if !ok || seen[k] {
+					return true
+				}
+				seen[k] = true
+				value.(chan error) <- nil
+				return true
+			})
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+
+	if err := p.Reply(context.Background(), rctx, content); err != nil {
+		t.Fatalf("Reply failed: %v", err)
+	}
+
+	if len(frames) != 2 {
+		t.Fatalf("captured frames = %d, want 2", len(frames))
+	}
+	stream := frames[0]["body"].(map[string]any)["stream"].(map[string]any)
+	if frames[0]["cmd"] != "aibot_respond_msg" {
+		t.Fatalf("first frame cmd = %v, want aibot_respond_msg", frames[0]["cmd"])
+	}
+	if stream["finish"] != true {
+		t.Fatalf("first frame finish = %v, want true", stream["finish"])
+	}
+	if got := stream["content"].(string); len(got) != wecomStreamMaxBytes {
+		t.Fatalf("first frame content len = %d, want %d", len(got), wecomStreamMaxBytes)
+	}
+	if frames[1]["cmd"] != "aibot_send_msg" {
+		t.Fatalf("second frame cmd = %v, want aibot_send_msg", frames[1]["cmd"])
+	}
+	markdown := frames[1]["body"].(map[string]any)["markdown"].(map[string]any)
+	if markdown["content"] != "b" {
+		t.Fatalf("follow-up content = %q, want %q", markdown["content"], "b")
+	}
+}
+
+func TestUpdateMessage_LongContentUsesPreviewNotice(t *testing.T) {
+	var frames []map[string]any
+	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
+	handle := &wsPreviewHandle{replyCtx: wsReplyContext{reqID: "req_preview", chatID: "chat_1", userID: "user_1", streamID: "stream_1"}}
+	content := strings.Repeat("你", 700)
+
+	go func() {
+		for {
+			if v, ok := p.pendingAcks.LoadAndDelete("req_preview"); ok {
+				v.(chan error) <- nil
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+
+	if err := p.UpdateMessage(context.Background(), handle, content); err != nil {
+		t.Fatalf("UpdateMessage failed: %v", err)
+	}
+	if len(frames) != 1 {
+		t.Fatalf("captured frames = %d, want 1", len(frames))
+	}
+	stream := frames[0]["body"].(map[string]any)["stream"].(map[string]any)
+	got := stream["content"].(string)
+	if !strings.Contains(got, "[内容较长，正在整理后续片段...]") {
+		t.Fatalf("preview content = %q, want truncation notice", got)
+	}
+	if len([]byte(got)) <= wecomStreamMaxBytes {
+		// acceptable: preview still fits after truncation
+	} else {
+		t.Fatalf("preview content bytes = %d, want <= %d", len([]byte(got)), wecomStreamMaxBytes)
 	}
 }
 
