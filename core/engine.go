@@ -3462,6 +3462,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	cp := newCompactProgressWriter(e.ctx, state.platform, state.replyCtx, e.agent.Name(), e.i18n.CurrentLang(), workspaceRenderer)
 	state.mu.Unlock()
 	streamPreviewToolHold := sp.previewMode() == "tool_hold" && e.display.Mode == displayModeStream
+	streamToolHoldNeedsAnswerSeparator := false
 
 	// Send instant confirmation reply if enabled and no streaming card is active.
 	// Streaming cards provide their own "processing" indicator, so instant reply
@@ -3722,6 +3723,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					textParts = append(textParts, "\n\n")
 				}
 				textParts = append(textParts, toolMsg)
+				streamToolHoldNeedsAnswerSeparator = true
 				continue
 			}
 			if e.display.Mode == displayModeStream && e.display.ToolMessages {
@@ -3835,6 +3837,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 							textParts = append(textParts, "\n\n")
 						}
 						textParts = append(textParts, resultMsg)
+						streamToolHoldNeedsAnswerSeparator = true
 						continue
 					}
 					if e.display.Mode == displayModeStream {
@@ -3890,6 +3893,10 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						} else {
 							sp.setStatus(CardStatusWorking)
 						}
+					}
+					if streamPreviewToolHold && streamToolHoldNeedsAnswerSeparator && len(textParts) > 0 {
+						textParts = append(textParts, "\n\n")
+						streamToolHoldNeedsAnswerSeparator = false
 					}
 					textParts = append(textParts, event.Content)
 					partialText += event.Content

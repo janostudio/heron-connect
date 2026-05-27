@@ -9,6 +9,15 @@ Personal fork release for `@qinghuangniao/cc-connect-qhn`.
 - Fork base: upstream `cc-connect` release `v1.3.3-beta.2`.
 - Local fork import reference in this repository: commit `c099ce699e44d74a9f2018244375a4ff410cd7eb`.
 
+## v1.3.6 (2026-05-27)
+
+Personal fork WeCom stream/tool display fixes for `@qinghuangniao/cc-connect-qhn`.
+
+### Notes
+- Fix ACP tool result mapping so completed tool updates prefer `rawOutput` over streamed assembly fragments.
+- Fix WeCom tool-hold stream aggregation so stale partial text does not collapse the final payload into a lone backtick.
+- Fix WeCom final rendering to insert a blank line between tool result blocks and the following natural-language answer, avoiding markdown/render breakage in WeCom.
+
 ## v1.3.5 (2026-05-26)
 
 Personal fork packaging fix for `@qinghuangniao/cc-connect-qhn`.

@@ -1620,6 +1620,9 @@ func TestProcessInteractiveEvents_StreamModeToolHoldKeepsToolProgressInFinalRepl
 	if !strings.Contains(finalMsg, "问题已经确认。") || !strings.Contains(finalMsg, "Tool #1") || !strings.Contains(finalMsg, "42 /tmp/agent.json") {
 		t.Fatalf("final preview message = %#v, want final reply to include held tool progress", previewMsgs)
 	}
+	if !strings.Contains(finalMsg, "```\n\n问题已经确认。") && !strings.Contains(finalMsg, "```text\n42 /tmp/agent.json\n```\n\n问题已经确认。") {
+		t.Fatalf("final preview message should separate tool block and answer with a blank line, got %#v", previewMsgs)
+	}
 }
 
 func TestProcessInteractiveEvents_FinalReplyUsesWorkspaceForReferenceRendering(t *testing.T) {
