@@ -3443,11 +3443,6 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	sendWorkspaceWithError := func(p Platform, replyCtx any, content string) error {
 		return e.sendWithErrorForWorkspace(p, replyCtx, content, workspaceDir)
 	}
-	replyWorkspaceWithError := func(p Platform, replyCtx any, content string) error {
-		content = e.renderOutgoingContentForWorkspace(p, content, workspaceDir)
-		return e.replyWithError(p, replyCtx, content)
-	}
-
 	// Streaming card: aggregate entire turn into a single updatable card.
 	var streamCard StreamingCard
 	var cardToolCalls []cardToolEntry  // track tool calls for card content
@@ -4242,11 +4237,6 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			} else if suppressDuplicate {
 				sp.discard()
 				slog.Debug("EventResult: suppressed duplicate side-channel text", "response_len", len(deliverResponse))
-			} else if p.Name() == "wecom" && e.display.Mode == displayModeStream && !e.display.ToolMessages {
-				sp.detachPreview()
-				if err := replyWorkspaceWithError(p, replyCtx, fullResponse); err != nil {
-					return
-				}
 			} else if sp.finish(deliverResponse) {
 				slog.Debug("EventResult: finalized stream preview in-place", "response_len", len(deliverResponse))
 			} else {

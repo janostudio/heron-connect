@@ -14,6 +14,30 @@ import (
 	"github.com/chenhg5/cc-connect/core"
 )
 
+type streamRegressionCase struct {
+	Name             string                 `json:"name"`
+	Source           string                 `json:"source"`
+	Mode             string                 `json:"mode"`
+	ReqID            string                 `json:"req_id"`
+	ChatID           string                 `json:"chat_id"`
+	UserID           string                 `json:"user_id"`
+	StreamID         string                 `json:"stream_id"`
+	WantSameStreamID bool                   `json:"want_same_stream_id"`
+	Steps            []streamRegressionStep `json:"steps"`
+	WantFrames       []streamRegressionWant `json:"want_frames"`
+}
+
+type streamRegressionStep struct {
+	Op      string `json:"op"`
+	Content string `json:"content"`
+	Finish  bool   `json:"finish"`
+}
+
+type streamRegressionWant struct {
+	Content string `json:"content"`
+	Finish  bool   `json:"finish"`
+}
+
 // ---------------------------------------------------------------------------
 // splitByBytes
 // ---------------------------------------------------------------------------
@@ -432,6 +456,99 @@ func TestReply_SendsFinalStreamFrame(t *testing.T) {
 	}
 }
 
+func TestFinalizePreviewMessage_UsesSameStreamIDAndFinishTrue(t *testing.T) {
+	var frames []map[string]any
+	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
+	handle := &wsPreviewHandle{replyCtx: wsReplyContext{reqID: "req_finalize", chatID: "chat_1", userID: "user_1", streamID: "stream_fixed"}}
+
+	go func() {
+		for {
+			if v, ok := p.pendingAcks.LoadAndDelete("req_finalize"); ok {
+				v.(chan error) <- nil
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+
+	if err := p.FinalizePreviewMessage(context.Background(), handle, "final answer"); err != nil {
+		t.Fatalf("FinalizePreviewMessage failed: %v", err)
+	}
+
+	if len(frames) != 1 {
+		t.Fatalf("captured frames = %d, want 1", len(frames))
+	}
+	stream := frames[0]["body"].(map[string]any)["stream"].(map[string]any)
+	if stream["id"] != "stream_fixed" {
+		t.Fatalf("stream id = %v, want stream_fixed", stream["id"])
+	}
+	if stream["finish"] != true {
+		t.Fatalf("finish = %v, want true", stream["finish"])
+	}
+	if stream["content"] != "final answer" {
+		t.Fatalf("content = %v, want final answer", stream["content"])
+	}
+}
+
+func TestFinalizePreviewMessage_LongContentSplitsIntoFollowUpMessages(t *testing.T) {
+	var frames []map[string]any
+	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
+	handle := &wsPreviewHandle{replyCtx: wsReplyContext{reqID: "req_finalize_long", chatID: "chat_1", userID: "user_1", streamID: "stream_fixed"}}
+	content := strings.Repeat("你", 700)
+
+	go func() {
+		seen := map[string]bool{}
+		for len(seen) < 2 {
+			p.pendingAcks.Range(func(key, value any) bool {
+				k, ok := key.(string)
+				if !ok || seen[k] {
+					return true
+				}
+				seen[k] = true
+				value.(chan error) <- nil
+				return true
+			})
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+
+	if err := p.FinalizePreviewMessage(context.Background(), handle, content); err != nil {
+		t.Fatalf("FinalizePreviewMessage failed: %v", err)
+	}
+
+	if len(frames) != 2 {
+		t.Fatalf("captured frames = %d, want 2", len(frames))
+	}
+	stream := frames[0]["body"].(map[string]any)["stream"].(map[string]any)
+	if frames[0]["cmd"] != "aibot_respond_msg" {
+		t.Fatalf("first frame cmd = %v, want aibot_respond_msg", frames[0]["cmd"])
+	}
+	if stream["id"] != "stream_fixed" {
+		t.Fatalf("stream id = %v, want stream_fixed", stream["id"])
+	}
+	if stream["finish"] != true {
+		t.Fatalf("first frame finish = %v, want true", stream["finish"])
+	}
+	firstChunk, ok := stream["content"].(string)
+	if !ok {
+		t.Fatalf("first frame content type = %T, want string", stream["content"])
+	}
+	if len([]byte(firstChunk)) > wecomStreamMaxBytes {
+		t.Fatalf("first frame content bytes = %d, want <= %d", len([]byte(firstChunk)), wecomStreamMaxBytes)
+	}
+	if frames[1]["cmd"] != "aibot_send_msg" {
+		t.Fatalf("second frame cmd = %v, want aibot_send_msg", frames[1]["cmd"])
+	}
+	markdown := frames[1]["body"].(map[string]any)["markdown"].(map[string]any)
+	secondChunk, ok := markdown["content"].(string)
+	if !ok {
+		t.Fatalf("follow-up content type = %T, want string", markdown["content"])
+	}
+	if got := firstChunk + secondChunk; got != content {
+		t.Fatalf("reassembled content mismatch: len=%d want=%d", len([]rune(got)), len([]rune(content)))
+	}
+}
+
 func TestReply_LongContentSplitsIntoFollowUpMessages(t *testing.T) {
 	var frames []map[string]any
 	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
@@ -847,6 +964,86 @@ func TestSendStreamFrameAndWaitAck_AggregatesPendingToolPreview(t *testing.T) {
 	}
 }
 
+func TestSendStreamFrameAndWaitAck_DoesNotDuplicateLastAckedDuringAggregation(t *testing.T) {
+	var frames []map[string]any
+	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
+	rc := wsReplyContext{reqID: "req_agg_text", userID: "user_1", streamID: "stream_fixed"}
+
+	ackOnce := func() {
+		for {
+			if v, ok := p.pendingAcks.LoadAndDelete("req_agg_text"); ok {
+				v.(chan error) <- nil
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+
+	go ackOnce()
+	if err := p.sendStreamFrameAndWaitAck(context.Background(), rc, "逐类分析未提交的文件：", false); err != nil {
+		t.Fatalf("first update failed: %v", err)
+	}
+
+	second := "逐类分析未提交的文件：按类别整理判断：\n\n**必须保留（有实质改动，需提交）**："
+	go ackOnce()
+	if err := p.sendStreamFrameAndWaitAck(context.Background(), rc, second, false); err != nil {
+		t.Fatalf("second update failed: %v", err)
+	}
+
+	if len(frames) != 2 {
+		t.Fatalf("frames = %d, want 2", len(frames))
+	}
+	firstContent := frames[0]["body"].(map[string]any)["stream"].(map[string]any)["content"]
+	if firstContent != "逐类分析未提交的文件：" {
+		t.Fatalf("first content = %v", firstContent)
+	}
+	secondContent := frames[1]["body"].(map[string]any)["stream"].(map[string]any)["content"]
+	if secondContent != second {
+		t.Fatalf("second content = %q, want %q", secondContent, second)
+	}
+}
+
+func TestSendStreamFrameAndWaitAck_FinalizeSkipsDuplicatePartialPrefix(t *testing.T) {
+	var frames []map[string]any
+	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
+	rc := wsReplyContext{reqID: "req_finalize_dup", userID: "user_1", streamID: "stream_fixed"}
+
+	ackOnce := func() {
+		for {
+			if v, ok := p.pendingAcks.LoadAndDelete("req_finalize_dup"); ok {
+				v.(chan error) <- nil
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+
+	partial := "这是搜了整个仓库（含 node_modules）。我重新只查根目录。根目录只有 2 个 md 文件：\n\n- `CODEBUDDY.md` —"
+	final := "这是搜了整个仓库（含 node_modules）。我重新只查根目录。根目录只有 2 个 md 文件：\n\n- `CODEBUDDY.md` — 项目上下文索引\n- `README.md`"
+
+	go ackOnce()
+	if err := p.sendStreamFrameAndWaitAck(context.Background(), rc, partial, false); err != nil {
+		t.Fatalf("partial update failed: %v", err)
+	}
+
+	go ackOnce()
+	if err := p.sendStreamFrameAndWaitAck(context.Background(), rc, final, true); err != nil {
+		t.Fatalf("final update failed: %v", err)
+	}
+
+	if len(frames) != 2 {
+		t.Fatalf("frames = %d, want 2", len(frames))
+	}
+	firstContent := frames[0]["body"].(map[string]any)["stream"].(map[string]any)["content"]
+	if firstContent != partial {
+		t.Fatalf("first content = %q, want %q", firstContent, partial)
+	}
+	finalContent := frames[1]["body"].(map[string]any)["stream"].(map[string]any)["content"]
+	if finalContent != final {
+		t.Fatalf("final content = %q, want %q", finalContent, final)
+	}
+}
+
 func TestSendStreamFrameAndWaitAck_TextStillStreamsWhileToolIsHeld(t *testing.T) {
 	var (
 		mu     sync.Mutex
@@ -1075,6 +1272,126 @@ func captureWSFrames(dst *[]map[string]any) func(any) error {
 		}
 		*dst = append(*dst, frame)
 		return nil
+	}
+}
+
+func loadStreamRegressionCases(t *testing.T) []streamRegressionCase {
+	t.Helper()
+	data, err := os.ReadFile("testdata/stream_regressions.json")
+	if err != nil {
+		t.Fatalf("read regression fixture: %v", err)
+	}
+	var cases []streamRegressionCase
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatalf("parse regression fixture: %v", err)
+	}
+	if len(cases) == 0 {
+		t.Fatal("stream regression fixture is empty")
+	}
+	return cases
+}
+
+func ackReqLoop(p *WSPlatform, reqID string) func() {
+	stop := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if v, ok := p.pendingAcks.LoadAndDelete(reqID); ok {
+				v.(chan error) <- nil
+				continue
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+	return func() { close(stop) }
+}
+
+func TestStreamRegressionsFromLogFixtures(t *testing.T) {
+	for _, tc := range loadStreamRegressionCases(t) {
+		t.Run(tc.Name, func(t *testing.T) {
+			var frames []map[string]any
+			p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
+			stopAck := ackReqLoop(p, tc.ReqID)
+			defer stopAck()
+
+			switch tc.Mode {
+			case "stream_send":
+				rc := wsReplyContext{reqID: tc.ReqID, chatID: tc.ChatID, userID: tc.UserID, streamID: tc.StreamID}
+				for _, step := range tc.Steps {
+					if step.Op != "send" {
+						t.Fatalf("unsupported step op %q for mode %q", step.Op, tc.Mode)
+					}
+					if err := p.sendStreamFrameAndWaitAck(context.Background(), rc, step.Content, step.Finish); err != nil {
+						t.Fatalf("sendStreamFrameAndWaitAck(%q) failed: %v", step.Content, err)
+					}
+				}
+			case "preview_flow":
+				rctx := wsReplyContext{reqID: tc.ReqID, chatID: tc.ChatID, userID: tc.UserID}
+				var handle *wsPreviewHandle
+				for _, step := range tc.Steps {
+					switch step.Op {
+					case "start":
+						h, err := p.SendPreviewStart(context.Background(), rctx, step.Content)
+						if err != nil {
+							t.Fatalf("SendPreviewStart failed: %v", err)
+						}
+						var ok bool
+						handle, ok = h.(*wsPreviewHandle)
+						if !ok {
+							t.Fatalf("preview handle type = %T", h)
+						}
+					case "update":
+						if handle == nil {
+							t.Fatal("update before start")
+						}
+						if err := p.UpdateMessage(context.Background(), handle, step.Content); err != nil {
+							t.Fatalf("UpdateMessage failed: %v", err)
+						}
+					case "finalize":
+						if handle == nil {
+							t.Fatal("finalize before start")
+						}
+						if err := p.FinalizePreviewMessage(context.Background(), handle, step.Content); err != nil {
+							t.Fatalf("FinalizePreviewMessage failed: %v", err)
+						}
+					default:
+						t.Fatalf("unsupported step op %q for mode %q", step.Op, tc.Mode)
+					}
+				}
+				if tc.WantSameStreamID {
+					var streamID any
+					for i, frame := range frames {
+						got := frame["body"].(map[string]any)["stream"].(map[string]any)["id"]
+						if i == 0 {
+							streamID = got
+							continue
+						}
+						if got != streamID {
+							t.Fatalf("frame %d stream id = %v, want %v", i, got, streamID)
+						}
+					}
+				}
+			default:
+				t.Fatalf("unsupported fixture mode %q", tc.Mode)
+			}
+
+			if len(frames) != len(tc.WantFrames) {
+				t.Fatalf("frames = %d, want %d", len(frames), len(tc.WantFrames))
+			}
+			for i, want := range tc.WantFrames {
+				stream := frames[i]["body"].(map[string]any)["stream"].(map[string]any)
+				if got := stream["content"]; got != want.Content {
+					t.Fatalf("frame %d content = %q, want %q (source %s)", i, got, want.Content, tc.Source)
+				}
+				if got := stream["finish"]; got != want.Finish {
+					t.Fatalf("frame %d finish = %v, want %v (source %s)", i, got, want.Finish, tc.Source)
+				}
+			}
+		})
 	}
 }
 

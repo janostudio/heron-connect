@@ -1648,15 +1648,15 @@ func TestProcessInteractiveEvents_StreamModeToolHoldSkipsToolProgressWhenToolMes
 
 	e.processInteractiveEvents(state, session, e.sessions, sessionKey, "m-stream-tool-hold-no-tool-messages", time.Now(), nil, nil, state.replyCtx)
 
-	if got := p.getSent(); len(got) != 1 || got[0] != "问题已经确认。" {
-		t.Fatalf("sent text = %#v, want one final reply with answer only", got)
+	if got := p.getSent(); len(got) != 0 {
+		t.Fatalf("sent text = %#v, want no standalone sends", got)
 	}
 
 	p.mu.Lock()
 	previewMsgs := append([]string(nil), p.messages...)
 	p.mu.Unlock()
-	if len(previewMsgs) != 1 {
-		t.Fatalf("preview messages = %#v, want only initial preview", previewMsgs)
+	if len(previewMsgs) != 2 {
+		t.Fatalf("preview messages = %#v, want initial preview + final finalize", previewMsgs)
 	}
 	joined := strings.Join(previewMsgs, "\n")
 	if strings.Contains(joined, "Tool #1") || strings.Contains(joined, "42 /tmp/agent.json") || strings.Contains(joined, "wc -m /tmp/agent.json") {
@@ -1664,6 +1664,9 @@ func TestProcessInteractiveEvents_StreamModeToolHoldSkipsToolProgressWhenToolMes
 	}
 	if finalMsg := previewMsgs[0]; finalMsg != "start:我先定位问题。" {
 		t.Fatalf("preview message = %#v, want only the initial partial preview", previewMsgs)
+	}
+	if finalMsg := previewMsgs[1]; finalMsg != "finalize:我先定位问题。\n\n问题已经确认。" {
+		t.Fatalf("final preview message = %#v, want finalized preview that keeps streamed text and answer only", previewMsgs)
 	}
 }
 

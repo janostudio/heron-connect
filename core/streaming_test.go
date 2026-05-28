@@ -32,6 +32,14 @@ func (m *mockUpdaterPlatform) UpdateMessage(_ context.Context, _ any, content st
 	return nil
 }
 
+func (m *mockUpdaterPlatform) FinalizePreviewMessage(_ context.Context, _ any, content string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.messages = append(m.messages, "finalize:"+content)
+	m.lastMsg = content
+	return nil
+}
+
 func (m *mockUpdaterPlatform) getMessages() []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -169,8 +177,8 @@ func TestStreamPreview_FinishInPlace(t *testing.T) {
 
 	msgs := mp.getMessages()
 	last := msgs[len(msgs)-1]
-	if last != "update:Hello World Final" {
-		t.Errorf("last message = %q, want 'update:Hello World Final'", last)
+	if last != "finalize:Hello World Final" {
+		t.Errorf("last message = %q, want 'finalize:Hello World Final'", last)
 	}
 }
 
@@ -292,7 +300,7 @@ func TestStreamPreview_FinishKeepsPreviewWhenPlatformPrefersInPlaceFinalize(t *t
 	if deletedCount != 0 {
 		t.Fatalf("expected no delete call, got %d", deletedCount)
 	}
-	if len(msgs) < 2 || msgs[len(msgs)-1] != "update:Hello World Final" {
+	if len(msgs) < 2 || msgs[len(msgs)-1] != "finalize:Hello World Final" {
 		t.Fatalf("messages = %#v, want final update in place", msgs)
 	}
 }
@@ -374,6 +382,32 @@ func TestStreamPreview_NeedsDoneReaction_FalseWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestStreamPreview_FinishPrefersPreviewFinalizer(t *testing.T) {
+	mp := &mockUpdaterPlatform{}
+	cfg := StreamPreviewCfg{
+		Enabled:       true,
+		IntervalMs:    50,
+		MinDeltaChars: 1,
+		MaxChars:      500,
+	}
+
+	sp := newStreamPreview(cfg, mp, "ctx", context.Background(), nil)
+	sp.appendText("partial")
+	time.Sleep(100 * time.Millisecond)
+
+	if !sp.finish("final answer") {
+		t.Fatal("finish should succeed via PreviewFinalizer")
+	}
+
+	msgs := mp.getMessages()
+	if len(msgs) < 2 {
+		t.Fatalf("messages = %v, want start + finalize", msgs)
+	}
+	if msgs[len(msgs)-1] != "finalize:final answer" {
+		t.Fatalf("last message = %q, want finalize:final answer", msgs[len(msgs)-1])
+	}
+}
+
 func TestStreamPreview_AppliesTransform(t *testing.T) {
 	mp := &mockUpdaterPlatform{}
 	cfg := StreamPreviewCfg{
@@ -401,7 +435,7 @@ func TestStreamPreview_AppliesTransform(t *testing.T) {
 	if got := msgs[0]; got != "start:See 📄 `src/app.ts:42`" {
 		t.Fatalf("start message = %q, want transformed preview start", got)
 	}
-	if got := msgs[len(msgs)-1]; got != "update:Final 📄 `src/app.ts:42`" {
+	if got := msgs[len(msgs)-1]; got != "finalize:Final 📄 `src/app.ts:42`" {
 		t.Fatalf("final message = %q, want transformed final preview", got)
 	}
 }

@@ -110,6 +110,14 @@ type PreviewFinishPreference interface {
 	KeepPreviewOnFinish() bool
 }
 
+// PreviewFinalizer is an optional interface for platforms that need a distinct
+// finalize step for preview messages. This is useful when the streaming update
+// API differs from the terminal completion API even when both target the same
+// visible message.
+type PreviewFinalizer interface {
+	FinalizePreviewMessage(ctx context.Context, previewHandle any, content string) error
+}
+
 func newStreamPreview(cfg StreamPreviewCfg, p Platform, replyCtx any, ctx context.Context, transform func(string) string) *streamPreview {
 	sp := &streamPreview{
 		cfg:       cfg,
@@ -411,6 +419,26 @@ func (sp *streamPreview) finish(finalText string) bool {
 	if finalText == "" {
 		slog.Debug("stream preview finish: empty final text")
 		return false
+	}
+
+	if finalizer, ok := sp.platform.(PreviewFinalizer); ok {
+		slog.Debug("stream preview finish: finalizing preview via PreviewFinalizer",
+			"text_len", len(finalText), "lastSent_len", len(sp.lastSentText),
+			"same", finalText == sp.lastSentText, "viaUpdate", sp.lastSentViaUpdate)
+		if err := finalizer.FinalizePreviewMessage(sp.ctx, sp.previewMsgID, finalText); err != nil {
+			slog.Debug("stream preview finish: preview finalizer FAILED, cleaning up preview", "error", err)
+			if cleaner, ok := sp.platform.(PreviewCleaner); ok {
+				_ = cleaner.DeletePreviewMessage(sp.ctx, sp.previewMsgID)
+			}
+			return false
+		}
+		if sp.pendingStatus != "" {
+			if statusUpdater, ok := sp.platform.(PreviewStatusUpdater); ok {
+				statusUpdater.SetPreviewStatus(sp.previewMsgID, sp.pendingStatus)
+			}
+		}
+		slog.Debug("stream preview finish: success via PreviewFinalizer")
+		return true
 	}
 
 	// If the final text is identical to what was last sent via UpdateMessage,

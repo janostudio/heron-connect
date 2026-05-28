@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.3.11 (2026-05-28)
+
+Personal fork WeCom stream dedup regression fix for `@qinghuangniao/cc-connect-qhn`.
+
+### Notes
+- Fix WeCom WebSocket stream aggregation so a finalized answer that extends an already streamed partial line no longer repeats the partial prefix in the closing frame.
+- Cover the repeated root-directory markdown reply case from `auto-bugfix/latest/cc-connect.log` with a dedicated regression fixture.
+- Keep the earlier long-finalize splitting protection and verify the full `platform/wecom` test suite still passes after the dedup adjustment.
+
+## v1.3.10 (2026-05-28)
+
+Personal fork WeCom long-finalize delivery fix for `@qinghuangniao/cc-connect-qhn`.
+
+### Notes
+- Fix WeCom WebSocket preview finalize path so terminal content over 2048 bytes is split into one closing stream frame plus ordered follow-up markdown messages instead of being forced into a single oversized frame.
+- Keep the existing preview `stream_id` when finalizing long replies so the in-place closing frame still lands on the original preview message.
+- Add regression coverage for the online long-finalize case and for prefix/tool aggregation edge cases derived from the captured logs.
+
+## v1.3.9 (2026-05-27)
+
+Personal fork WeCom stream regression hardening for `@qinghuangniao/cc-connect-qhn`.
+
+### Notes
+- Fix WeCom preview completion so the final answer closes the existing stream message in place instead of creating an additional near-duplicate message.
+- Fix WeCom stream aggregation so partial text from the last acked frame is only reused when the next payload is truly incremental, avoiding repeated prefixes in long updates.
+- Add log-derived regression fixtures under `platform/wecom/testdata/stream_regressions.json` so the exact online payload patterns from `a.log` remain covered by stable tests.
+
 ## v1.3.8 (2026-05-27)
 
 Personal fork WeCom stream visibility and audit fixes for `@qinghuangniao/cc-connect-qhn`.

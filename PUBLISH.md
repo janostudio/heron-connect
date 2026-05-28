@@ -72,13 +72,13 @@ npm view @qinghuangniao/cc-connect-qhn version
 确认 GitHub release 资源：
 
 ```bash
-gh release view v1.3.5 --repo janostudio/cc-connect-qhn --json tagName,assets,url
+gh release view v1.3.11 --repo janostudio/cc-connect-qhn --json tagName,assets,url
 ```
 
 也可以直接验证某个平台资源是否可下载，例如 Linux amd64：
 
 ```bash
-curl -I -L https://github.com/janostudio/cc-connect-qhn/releases/download/v1.3.5/cc-connect-v1.3.5-linux-amd64.tar.gz
+curl -I -L https://github.com/janostudio/cc-connect-qhn/releases/download/v1.3.11/cc-connect-v1.3.11-linux-amd64.tar.gz
 ```
 
 最后找一台干净环境机器验证安装：

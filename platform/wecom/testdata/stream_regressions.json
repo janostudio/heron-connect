@@ -1,0 +1,117 @@
+[
+  {
+    "name": "log_stream_90_prefix_should_not_duplicate",
+    "source": "a.log:328,359,478,479,480",
+    "mode": "stream_send",
+    "req_id": "req_stream_90",
+    "stream_id": "stream_90",
+    "user_id": "T12260048A",
+    "steps": [
+      {
+        "op": "send",
+        "content": "逐类",
+        "finish": false
+      },
+      {
+        "op": "send",
+        "content": "逐类分析未提交的文件：",
+        "finish": false
+      },
+      {
+        "op": "send",
+        "content": "逐类分析未提交的文件：按类别整理判断：\n\n**必须保留（有实质改动，需提交）**：\n- `",
+        "finish": false
+      }
+    ],
+    "want_frames": [
+      {
+        "content": "逐类",
+        "finish": false
+      },
+      {
+        "content": "逐类分析未提交的文件：",
+        "finish": false
+      },
+      {
+        "content": "逐类分析未提交的文件：按类别整理判断：\n\n**必须保留（有实质改动，需提交）**：\n- `",
+        "finish": false
+      }
+    ]
+  },
+  {
+    "name": "log_stream_97_preview_should_finalize_in_place",
+    "source": "a.log:713,912,1203,1206,1208",
+    "mode": "preview_flow",
+    "req_id": "req_stream_97",
+    "chat_id": "chat_1",
+    "user_id": "T12260048A",
+    "steps": [
+      {
+        "op": "start",
+        "content": "需要先更新 gitignore 来排除运行时产物，然后提交有价值的改动。"
+      },
+      {
+        "op": "update",
+        "content": "需要先更新 gitignore 来排除运行时产物，然后提交有价值的改动。临时产物已全部被 gitignore 过滤，只剩有价值的改动。现在提交："
+      },
+      {
+        "op": "finalize",
+        "content": "需要先更新 gitignore 来排除运行时产物，然后提交有价值的改动。临时产物已全部被 gitignore 过滤，只剩有价值的改动。现在提交：提交完成。本次整理了：\n\n- **删除** 21 个临时调试脚本（`check_buildtime`/`check_sandbox`/`check_version` 系列）\n- **gitignore 新增**排除 `logs/`、`reports/sandbox-analyze/`、`.task-context-archive/`、`knowledge/traces/` 这些运行时产物，后续不会再出现在 `git status` 中\n- **提交**知识库更新、risk_guard 基线、SKILL.md 更新等有价值的改动"
+      }
+    ],
+    "want_same_stream_id": true,
+    "want_frames": [
+      {
+        "content": "需要先更新 gitignore 来排除运行时产物，然后提交有价值的改动。",
+        "finish": false
+      },
+      {
+        "content": "需要先更新 gitignore 来排除运行时产物，然后提交有价值的改动。临时产物已全部被 gitignore 过滤，只剩有价值的改动。现在提交：",
+        "finish": false
+      },
+      {
+        "content": "需要先更新 gitignore 来排除运行时产物，然后提交有价值的改动。临时产物已全部被 gitignore 过滤，只剩有价值的改动。现在提交：提交完成。本次整理了：\n\n- **删除** 21 个临时调试脚本（`check_buildtime`/`check_sandbox`/`check_version` 系列）\n- **gitignore 新增**排除 `logs/`、`reports/sandbox-analyze/`、`.task-context-archive/`、`knowledge/traces/` 这些运行时产物，后续不会再出现在 `git status` 中\n- **提交**知识库更新、risk_guard 基线、SKILL.md 更新等有价值的改动",
+        "finish": true
+      }
+    ]
+  },
+  {
+    "name": "log_stream_5_partial_prefix_should_not_repeat_on_finalize",
+    "source": "cc-connect.log:91,117,132,133",
+    "mode": "stream_send",
+    "req_id": "req_stream_5",
+    "stream_id": "stream_5",
+    "user_id": "T12260048A",
+    "steps": [
+      {
+        "op": "send",
+        "content": "这是搜了整个仓库（含 node_modules）。我重新只查根目录。",
+        "finish": false
+      },
+      {
+        "op": "send",
+        "content": "这是搜了整个仓库（含 node_modules）。我重新只查根目录。根目录只有 2 个 md 文件：\n\n- `CODEBUDDY.md` —",
+        "finish": false
+      },
+      {
+        "op": "send",
+        "content": "这是搜了整个仓库（含 node_modules）。我重新只查根目录。根目录只有 2 个 md 文件：\n\n- `CODEBUDDY.md` — 项目上下文索引\n- `README.md`",
+        "finish": true
+      }
+    ],
+    "want_frames": [
+      {
+        "content": "这是搜了整个仓库（含 node_modules）。我重新只查根目录。",
+        "finish": false
+      },
+      {
+        "content": "这是搜了整个仓库（含 node_modules）。我重新只查根目录。根目录只有 2 个 md 文件：\n\n- `CODEBUDDY.md` —",
+        "finish": false
+      },
+      {
+        "content": "这是搜了整个仓库（含 node_modules）。我重新只查根目录。根目录只有 2 个 md 文件：\n\n- `CODEBUDDY.md` — 项目上下文索引\n- `README.md`",
+        "finish": true
+      }
+    ]
+  }
+]

@@ -80,6 +80,16 @@ func (a *wsContentAggregator) ingest(content string) string {
 	if trimmed == "" {
 		return a.render()
 	}
+	if !a.hasPendingTool {
+		rendered := a.render()
+		switch {
+		case rendered == trimmed:
+			return rendered
+		case rendered != "" && strings.HasPrefix(trimmed, rendered):
+			a.plainSegments = []string{trimmed}
+			return trimmed
+		}
+	}
 	if a.shouldHoldOnlyTool(trimmed) {
 		a.pendingTool = trimmed
 		a.hasPendingTool = true
@@ -635,6 +645,20 @@ func (p *WSPlatform) UpdateMessage(ctx context.Context, previewHandle any, conte
 	return p.sendStreamFrameAndWaitAck(ctx, h.replyCtx, wecomPreviewPayload(content), false)
 }
 
+func (p *WSPlatform) FinalizePreviewMessage(ctx context.Context, previewHandle any, content string) error {
+	h, ok := previewHandle.(*wsPreviewHandle)
+	if !ok {
+		return fmt.Errorf("wecom-ws: invalid preview handle type %T", previewHandle)
+	}
+	if h.replyCtx.streamID == "" {
+		return fmt.Errorf("wecom-ws: preview handle missing stream id")
+	}
+	if content == "" {
+		return nil
+	}
+	return p.sendFinalReplyChunks(ctx, h.replyCtx, content)
+}
+
 func (p *WSPlatform) sendFinalReplyChunks(ctx context.Context, rc wsReplyContext, content string) error {
 	chunks := splitByBytes(content, wecomStreamMaxBytes)
 	if len(chunks) == 0 {
@@ -644,7 +668,9 @@ func (p *WSPlatform) sendFinalReplyChunks(ctx context.Context, rc wsReplyContext
 		return p.sendStreamFrameAndWaitAck(ctx, rc, chunks[0], true)
 	}
 	finalRC := rc
-	finalRC.streamID = p.generateReqID("stream")
+	if finalRC.streamID == "" {
+		finalRC.streamID = p.generateReqID("stream")
+	}
 	if err := p.sendStreamFrameAndWaitAck(ctx, finalRC, chunks[0], true); err != nil {
 		return err
 	}
@@ -804,12 +830,11 @@ func (p *WSPlatform) runStreamQueue(key string, state *wsStreamState, rc wsReply
 		}
 
 		state.mu.Lock()
-		contentStartsWithTool := strings.HasPrefix(strings.TrimSpace(req.content), wecomToolBlockPrefix)
 		aggregateThis := shouldAggregateWecomStream(req.content) || state.heldTool != "" || state.aggregator.hasPendingTool || len(state.aggregator.plainSegments) > 0
-		if len(state.aggregator.plainSegments) == 0 && !state.aggregator.hasPendingTool && strings.TrimSpace(state.lastAcked) != "" {
-			if state.heldTool != "" || len(state.aggregator.plainSegments) > 0 || (!contentStartsWithTool && shouldAggregateWecomStream(req.content)) {
-				state.aggregator.plainSegments = append(state.aggregator.plainSegments, strings.TrimSpace(state.lastAcked))
-			}
+		trimmedReq := strings.TrimSpace(req.content)
+		trimmedLastAcked := strings.TrimSpace(state.lastAcked)
+		if aggregateThis && len(state.aggregator.plainSegments) == 0 && !state.aggregator.hasPendingTool && trimmedLastAcked != "" && !strings.HasPrefix(trimmedReq, trimmedLastAcked) && !strings.HasPrefix(trimmedReq, wecomToolBlockPrefix) {
+			state.aggregator.plainSegments = append(state.aggregator.plainSegments, trimmedLastAcked)
 		}
 		if aggregateThis && state.heldTool != "" {
 			state.aggregator.pendingTool = state.heldTool
