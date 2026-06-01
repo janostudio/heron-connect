@@ -230,7 +230,7 @@ func (ws *WebhookServer) executePrompt(engine *Engine, sessionKey, prompt string
 	}
 
 	if !silent {
-		engine.send(targetPlatform, replyCtx, fmt.Sprintf("🪝 %s", event))
+		engine.SendMessage(targetPlatform, replyCtx, fmt.Sprintf("🪝 %s", event))
 	}
 
 	msg := &Message{
@@ -246,12 +246,12 @@ func (ws *WebhookServer) executePrompt(engine *Engine, sessionKey, prompt string
 	if !session.TryLock() {
 		slog.Warn("webhook: session busy, queued prompt dropped", "event", event, "session_key", sessionKey)
 		if !silent {
-			engine.send(targetPlatform, replyCtx, fmt.Sprintf("🪝 ⚠️ session busy, skipped: %s", event))
+			engine.SendMessage(targetPlatform, replyCtx, fmt.Sprintf("🪝 ⚠️ session busy, skipped: %s", event))
 		}
 		return
 	}
 
-	engine.processInteractiveMessage(targetPlatform, msg, session)
+	engine.ProcessInteractiveMessage(targetPlatform, msg, session)
 	slog.Info("webhook: prompt executed", "event", event, "session_key", sessionKey)
 }
 
@@ -289,7 +289,7 @@ func (ws *WebhookServer) executeShell(engine *Engine, req WebhookRequest, event 
 	}
 
 	if !req.Silent {
-		engine.send(targetPlatform, replyCtx, fmt.Sprintf("🪝 %s: `%s`", event, truncateStr(req.Exec, 60)))
+		engine.SendMessage(targetPlatform, replyCtx, fmt.Sprintf("🪝 %s: `%s`", event, truncateStr(req.Exec, 60)))
 	}
 
 	workDir := req.WorkDir
@@ -312,7 +312,7 @@ func (ws *WebhookServer) executeShell(engine *Engine, req WebhookRequest, event 
 	result := strings.TrimSpace(string(output))
 
 	if ctx.Err() == context.DeadlineExceeded {
-		engine.send(targetPlatform, replyCtx, fmt.Sprintf("🪝 ⚠️ timeout: `%s`", truncateStr(req.Exec, 60)))
+		engine.SendMessage(targetPlatform, replyCtx, fmt.Sprintf("🪝 ⚠️ timeout: `%s`", truncateStr(req.Exec, 60)))
 		return
 	}
 
@@ -322,12 +322,12 @@ func (ws *WebhookServer) executeShell(engine *Engine, req WebhookRequest, event 
 			msg += "\n\n" + truncateStr(result, 3000)
 		}
 		msg += "\n\nerror: " + execErr.Error()
-		engine.send(targetPlatform, replyCtx, msg)
+		engine.SendMessage(targetPlatform, replyCtx, msg)
 	} else {
 		if result == "" {
 			result = "(no output)"
 		}
-		engine.send(targetPlatform, replyCtx, fmt.Sprintf("🪝 ✅ `%s`\n\n%s", truncateStr(req.Exec, 60), truncateStr(result, 3000)))
+		engine.SendMessage(targetPlatform, replyCtx, fmt.Sprintf("🪝 ✅ `%s`\n\n%s", truncateStr(req.Exec, 60), truncateStr(result, 3000)))
 	}
 
 	slog.Info("webhook: shell executed", "event", event, "session_key", sessionKey, "success", execErr == nil)
