@@ -98,6 +98,23 @@ func validateCronJob(j *CronJob) error {
 	return nil
 }
 
+// CronAddRequest is the JSON body for POST /cron/add.
+// It is defined in core so both the local API server and the management server
+// can use it without creating a circular import.
+type CronAddRequest struct {
+	Project     string `json:"project"`
+	SessionKey  string `json:"session_key"`
+	CronExpr    string `json:"cron_expr"`
+	Prompt      string `json:"prompt"`
+	Exec        string `json:"exec"`
+	WorkDir     string `json:"work_dir"`
+	Description string `json:"description"`
+	Silent      *bool  `json:"silent,omitempty"`
+	SessionMode string `json:"session_mode,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	TimeoutMins *int   `json:"timeout_mins,omitempty"`
+}
+
 // CronStore persists cron jobs to a JSON file.
 type CronStore struct {
 	path string

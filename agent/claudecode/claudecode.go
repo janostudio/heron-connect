@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/chenhg5/cc-connect/core"
+	"github.com/chenhg5/cc-connect/proxy"
 )
 
 func init() {
@@ -52,7 +53,7 @@ type Agent struct {
 	routerAPIKey     string // Claude Code Router API key (optional)
 	systemPrompt     string // Custom system prompt to pass to Claude CLI
 
-	providerProxy  *core.ProviderProxy // local proxy for third-party providers
+	providerProxy  *proxy.ProviderProxy // local proxy for third-party providers
 	proxyLocalURL  string              // local URL of the proxy
 	platformPrompt string              // platform-specific formatting instructions
 
@@ -1107,11 +1108,11 @@ func (a *Agent) ensureProviderProxyLocked(targetURL, thinkingOverride string) er
 		return nil
 	}
 	a.stopProviderProxyLocked()
-	proxy, localURL, err := core.NewProviderProxy(targetURL, thinkingOverride)
+	pp, localURL, err := proxy.NewProviderProxy(targetURL, thinkingOverride)
 	if err != nil {
 		return err
 	}
-	a.providerProxy = proxy
+	a.providerProxy = pp
 	a.proxyLocalURL = localURL
 	return nil
 }

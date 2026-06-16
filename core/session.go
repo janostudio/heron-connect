@@ -713,3 +713,40 @@ func (sm *SessionManager) InvalidateForAgent(agentType string) {
 		sm.saveLocked()
 	}
 }
+
+// ── Session snapshot helpers (used by management package) ────────────────────
+
+// SessionSnapshot is a thread-safe, immutable copy of a Session's key fields.
+type SessionSnapshot struct {
+	ID             string
+	Name           string
+	AgentSessionID string
+	AgentType      string
+	History        []HistoryEntry
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// Snapshot returns a consistent, thread-safe copy of the session's fields.
+func (s *Session) Snapshot() SessionSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	hist := make([]HistoryEntry, len(s.History))
+	copy(hist, s.History)
+	return SessionSnapshot{
+		ID:             s.ID,
+		Name:           s.Name,
+		AgentSessionID: s.AgentSessionID,
+		AgentType:      s.AgentType,
+		History:        hist,
+		CreatedAt:      s.CreatedAt,
+		UpdatedAt:      s.UpdatedAt,
+	}
+}
+
+// SetName sets the session's display name under the session lock.
+func (s *Session) SetName(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Name = name
+}

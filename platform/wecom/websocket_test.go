@@ -848,34 +848,37 @@ func TestUpdateMessage_InvalidHandle(t *testing.T) {
 	}
 }
 
-func TestWSContentAggregator_KeepsOnlyLatestPendingTool(t *testing.T) {
-	var agg wsContentAggregator
+func TestWSStreamAssembler_KeepsOnlyLatestPendingTool(t *testing.T) {
+	var agg wsStreamAssembler
 
 	first := "🔧 **工具 #1: Bash**\n---\n`wc -m C`"
 	second := "🔧 **工具 #1: Bash**\n---\n`wc -m CHANGELOG.md`"
 	text := "项目根目录没有 `CHANGELOG.md`。"
 
-	if got := agg.ingest(first); got != "" {
+	if got, ok := agg.ingest(first, false); got != "" || ok {
 		t.Fatalf("first tool render = %q, want empty", got)
 	}
-	if got := agg.ingest(second); got != "" {
+	if got, ok := agg.ingest(second, false); got != "" || ok {
 		t.Fatalf("second tool render = %q, want empty", got)
 	}
-	if got := agg.ingest(text); got != strings.TrimSpace(second)+"\n\n"+text {
+	if got, ok := agg.ingest(text, false); !ok || got != strings.TrimSpace(second)+"\n\n"+text {
 		t.Fatalf("text render = %q", got)
 	}
 }
 
-func TestWSContentAggregator_FinalizeFlushesPendingTool(t *testing.T) {
-	var agg wsContentAggregator
+func TestWSStreamAssembler_FinalizeFlushesPendingTool(t *testing.T) {
+	var agg wsStreamAssembler
 	tool := "🔧 **工具 #1: Bash**\n---\n`wc -m CHANGELOG.md`"
 
-	_ = agg.ingest(tool)
-	if got := agg.finalize(""); got != strings.TrimSpace(tool) {
+	if got, ok := agg.ingest(tool, false); got != "" || ok {
+		t.Fatalf("tool hold = %q ok=%v, want empty false", got, ok)
+	}
+	if got, ok := agg.ingest("", true); !ok || got != strings.TrimSpace(tool) {
 		t.Fatalf("finalize render = %q, want %q", got, strings.TrimSpace(tool))
 	}
-	if got := agg.render(); got != "" {
-		t.Fatalf("aggregator should reset after finalize, got %q", got)
+	agg.reset()
+	if agg.visibleText != "" || agg.heldTool != "" {
+		t.Fatalf("assembler should reset after finalize, got visible=%q held=%q", agg.visibleText, agg.heldTool)
 	}
 }
 
@@ -922,7 +925,7 @@ func TestSendStreamFrameAndWaitAck_AggregatesPendingToolPreview(t *testing.T) {
 		t.Fatalf("streamStateFor failed: %v", err)
 	}
 	state.mu.Lock()
-	heldTool := state.heldTool
+	heldTool := state.assembler.heldTool
 	state.mu.Unlock()
 	if heldTool != tool2 {
 		t.Fatalf("held tool after second send = %q, want %q", heldTool, tool2)
@@ -1094,19 +1097,19 @@ func TestSendStreamFrameAndWaitAck_TextStillStreamsWhileToolIsHeld(t *testing.T)
 	}
 }
 
-func TestWSContentAggregator_IngestDoesNotTreatToolPlusAnswerAsHeld(t *testing.T) {
-	agg := &wsContentAggregator{}
+func TestWSStreamAssembler_IngestDoesNotTreatToolPlusAnswerAsHeld(t *testing.T) {
+	agg := &wsStreamAssembler{}
 	combined := "🔧 **工具 #1: Bash**\n---\n```text\nCommand: ok\n```\n最终答案"
-	if got := agg.ingest(combined); got != combined {
+	if got, ok := agg.ingest(combined, false); !ok || got != combined {
 		t.Fatalf("ingest render = %q, want %q", got, combined)
 	}
-	if agg.hasPendingTool {
+	if agg.heldTool != "" {
 		t.Fatal("tool+answer content should not stay pending")
 	}
 }
 
-func TestWSContentAggregator_ShouldHoldOnlyPureToolBlock(t *testing.T) {
-	agg := &wsContentAggregator{}
+func TestWSStreamAssembler_ShouldHoldOnlyPureToolBlock(t *testing.T) {
+	agg := &wsStreamAssembler{}
 	toolOnly := "🔧 **工具 #1: Bash**\n---\n```text\nCommand: ok\n```"
 	if !agg.shouldHoldOnlyTool(toolOnly) {
 		t.Fatal("pure tool block should be held")
@@ -1241,6 +1244,46 @@ func TestSendStreamFrameAndWaitAck_FinishFlushesHeldTool(t *testing.T) {
 	want := tool + "\n\n" + text
 	if stream["content"] != want {
 		t.Fatalf("finish content = %v, want %q", stream["content"], want)
+	}
+}
+
+func TestSendStreamFrameAndWaitAck_FinalizeDoesNotReplayLastAckedPrefix(t *testing.T) {
+	var frames []map[string]any
+	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
+	rc := wsReplyContext{reqID: "req_finalize_prefix", userID: "user_1", streamID: "stream_fixed"}
+
+	ackOnce := func() {
+		for {
+			if v, ok := p.pendingAcks.LoadAndDelete("req_finalize_prefix"); ok {
+				v.(chan error) <- nil
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+
+	preview := "上次报告找到了。现在来查询最近7天的 Grafana 数据，生成同款 HTML 报告。\n\n[内容较长，正在整理后续片段...]"
+	final := "上次报告找到了。现在来查询最近7天的 Grafana 数据，生成同款 HTML 报告。SSL/TLS 被拒，需要走内网。"
+
+	go ackOnce()
+	if err := p.sendStreamFrameAndWaitAck(context.Background(), rc, preview, false); err != nil {
+		t.Fatalf("preview send failed: %v", err)
+	}
+
+	go ackOnce()
+	if err := p.sendStreamFrameAndWaitAck(context.Background(), rc, final, true); err != nil {
+		t.Fatalf("final send failed: %v", err)
+	}
+
+	if len(frames) != 2 {
+		t.Fatalf("frames = %d, want 2", len(frames))
+	}
+	finalContent := frames[1]["body"].(map[string]any)["stream"].(map[string]any)["content"]
+	if finalContent != final {
+		t.Fatalf("final content = %q, want %q", finalContent, final)
+	}
+	if strings.Count(finalContent.(string), "上次报告找到了") != 1 {
+		t.Fatalf("final content unexpectedly duplicated prefix: %q", finalContent)
 	}
 }
 

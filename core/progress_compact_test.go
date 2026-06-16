@@ -47,9 +47,9 @@ type progressHintReplyCtx struct {
 	payload bool
 }
 
-func (r progressHintReplyCtx) progressStyleHint() string { return r.style }
+func (r progressHintReplyCtx) ProgressStyleHint() string { return r.style }
 
-func (r progressHintReplyCtx) supportsProgressCardPayloadHint() bool { return r.payload }
+func (r progressHintReplyCtx) SupportsProgressCardPayloadHint() bool { return r.payload }
 
 type previewCapturePlatform struct {
 	started []string
@@ -105,7 +105,7 @@ func TestBuildAndParseProgressCardPayload(t *testing.T) {
 func TestCompactProgressWriter_UsesReplyContextHints(t *testing.T) {
 	p := &previewCapturePlatform{}
 	replyCtx := progressHintReplyCtx{
-		style:   progressStyleCard,
+		style:   ProgressStyleCard,
 		payload: true,
 	}
 
@@ -116,8 +116,8 @@ func TestCompactProgressWriter_UsesReplyContextHints(t *testing.T) {
 	if !w.usePayload {
 		t.Fatal("progress writer should use payload when reply context advertises it")
 	}
-	if got := w.style; got != progressStyleCard {
-		t.Fatalf("style = %q, want %q", got, progressStyleCard)
+	if got := w.style; got != ProgressStyleCard {
+		t.Fatalf("style = %q, want %q", got, ProgressStyleCard)
 	}
 
 	if !w.AppendEvent(ProgressEntryThinking, "planning bridge progress", "", "planning bridge progress") {

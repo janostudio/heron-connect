@@ -12,6 +12,7 @@ import (
 
 	"github.com/chenhg5/cc-connect/config"
 	"github.com/chenhg5/cc-connect/core"
+	"github.com/chenhg5/cc-connect/management"
 	_ "modernc.org/sqlite"
 )
 
@@ -486,7 +487,7 @@ func ccSwitchDBCandidates() []string {
 
 // listCCSwitchProvidersForWeb reads the cc-switch database and returns
 // providers in the format expected by the management API.
-func listCCSwitchProvidersForWeb() ([]core.CCSwitchProviderInfo, error) {
+func listCCSwitchProvidersForWeb() ([]management.CCSwitchProviderInfo, error) {
 	dbPath := findCCSwitchDB()
 	if dbPath == "" {
 		return nil, fmt.Errorf("cc-switch database not found")
@@ -497,13 +498,13 @@ func listCCSwitchProvidersForWeb() ([]core.CCSwitchProviderInfo, error) {
 		return nil, err
 	}
 
-	result := make([]core.CCSwitchProviderInfo, 0, len(rows))
+	result := make([]management.CCSwitchProviderInfo, 0, len(rows))
 	for _, row := range rows {
 		p, err := convertCCSwitchProvider(row)
 		if err != nil {
 			continue
 		}
-		result = append(result, core.CCSwitchProviderInfo{
+		result = append(result, management.CCSwitchProviderInfo{
 			Name:      p.Name,
 			AppType:   row.AppType,
 			APIKey:    p.APIKey,

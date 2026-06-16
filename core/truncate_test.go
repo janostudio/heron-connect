@@ -76,64 +76,6 @@ func TestTruncateStr(t *testing.T) {
 	}
 }
 
-func TestTruncateRelay(t *testing.T) {
-	tests := []struct {
-		name   string
-		input  string
-		maxLen int
-		want   string
-	}{
-		{
-			name:   "short no truncation",
-			input:  "hello",
-			maxLen: 10,
-			want:   "hello",
-		},
-		{
-			name:   "exact length",
-			input:  "hello",
-			maxLen: 5,
-			want:   "hello",
-		},
-		{
-			name:   "ascii truncated with ellipsis",
-			input:  "hello world",
-			maxLen: 5,
-			want:   "hello…",
-		},
-		{
-			name:   "chinese truncated",
-			input:  "这是一段很长的中文文本需要截断",
-			maxLen: 6,
-			want:   "这是一段很长…",
-		},
-		{
-			name:   "emoji truncated",
-			input:  "🎉🚀💡✨👋🌍",
-			maxLen: 2,
-			want:   "🎉🚀…",
-		},
-		{
-			name:   "empty string",
-			input:  "",
-			maxLen: 5,
-			want:   "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := truncateRelay(tt.input, tt.maxLen)
-			if got != tt.want {
-				t.Errorf("truncateRelay(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
-			}
-			if !utf8.ValidString(got) {
-				t.Errorf("truncateRelay(%q, %d) produced invalid UTF-8: %q", tt.input, tt.maxLen, got)
-			}
-		})
-	}
-}
-
 func TestShellOutputTruncation(t *testing.T) {
 	// Simulate the inline shell truncation logic from engine.go
 	truncateShell := func(result string) string {

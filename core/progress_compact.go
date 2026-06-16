@@ -11,9 +11,12 @@ import (
 )
 
 const (
-	progressStyleLegacy  = "legacy"
-	progressStyleCompact = "compact"
-	progressStyleCard    = "card"
+	// ProgressStyleLegacy is the default progress style (one message per event).
+	ProgressStyleLegacy = "legacy"
+	// ProgressStyleCompact coalesces events into a single in-place updated message.
+	ProgressStyleCompact = "compact"
+	// ProgressStyleCard coalesces events into a rich progress card.
+	ProgressStyleCard = "card"
 
 	// ProgressCardPayloadPrefix marks a structured payload for card-style progress.
 	ProgressCardPayloadPrefix = "__cc_connect_progress_card_v1__:"
@@ -233,45 +236,51 @@ type compactProgressWriter struct {
 	lastUpdateAt      time.Time
 }
 
-func normalizeProgressStyle(style string) string {
+// NormalizeProgressStyle canonicalises a raw progress style string.
+// Unknown values fall back to ProgressStyleLegacy.
+func NormalizeProgressStyle(style string) string {
 	switch strings.ToLower(strings.TrimSpace(style)) {
-	case "", progressStyleLegacy:
-		return progressStyleLegacy
-	case progressStyleCompact:
-		return progressStyleCompact
-	case progressStyleCard:
-		return progressStyleCard
+	case "", ProgressStyleLegacy:
+		return ProgressStyleLegacy
+	case ProgressStyleCompact:
+		return ProgressStyleCompact
+	case ProgressStyleCard:
+		return ProgressStyleCard
 	default:
-		return progressStyleLegacy
+		return ProgressStyleLegacy
 	}
 }
 
 func progressStyleForPlatform(p Platform) string {
-	ps := progressStyleLegacy
+	ps := ProgressStyleLegacy
 	if sp, ok := p.(ProgressStyleProvider); ok {
-		ps = normalizeProgressStyle(sp.ProgressStyle())
+		ps = NormalizeProgressStyle(sp.ProgressStyle())
 	}
 	return ps
 }
 
-type progressStyleHintProvider interface {
-	progressStyleHint() string
+// ProgressStyleHintProvider is an optional interface that a replyCtx may implement
+// to override the progress style for that specific reply target (e.g. a bridge adapter).
+type ProgressStyleHintProvider interface {
+	ProgressStyleHint() string
 }
 
-type progressCardPayloadHintProvider interface {
-	supportsProgressCardPayloadHint() bool
+// ProgressCardPayloadHintProvider is an optional interface that a replyCtx may implement
+// to indicate it can receive structured progress card payloads.
+type ProgressCardPayloadHintProvider interface {
+	SupportsProgressCardPayloadHint() bool
 }
 
 func progressStyleForTarget(p Platform, replyCtx any) string {
-	if hint, ok := replyCtx.(progressStyleHintProvider); ok {
-		return normalizeProgressStyle(hint.progressStyleHint())
+	if hint, ok := replyCtx.(ProgressStyleHintProvider); ok {
+		return NormalizeProgressStyle(hint.ProgressStyleHint())
 	}
 	return progressStyleForPlatform(p)
 }
 
 func progressCardPayloadForTarget(p Platform, replyCtx any) bool {
-	if hint, ok := replyCtx.(progressCardPayloadHintProvider); ok {
-		return hint.supportsProgressCardPayloadHint()
+	if hint, ok := replyCtx.(ProgressCardPayloadHintProvider); ok {
+		return hint.SupportsProgressCardPayloadHint()
 	}
 	if cap, ok := p.(ProgressCardPayloadSupport); ok {
 		return cap.SupportsProgressCardPayload()
@@ -289,7 +298,7 @@ func SuppressStandaloneToolResultEvent(p Platform) bool {
 	if !ok {
 		return false
 	}
-	return progressStyleForPlatform(p) == progressStyleLegacy
+	return progressStyleForPlatform(p) == ProgressStyleLegacy
 }
 
 func newCompactProgressWriter(ctx context.Context, p Platform, replyCtx any, agentName string, lang Language, transform func(string) string) *compactProgressWriter {
@@ -307,7 +316,7 @@ func newCompactProgressWriter(ctx context.Context, p Platform, replyCtx any, age
 	if throttler, ok := p.(ProgressUpdateThrottler); ok {
 		w.minUpdateInterval = throttler.ProgressUpdateInterval()
 	}
-	if w.style != progressStyleCompact && w.style != progressStyleCard {
+	if w.style != ProgressStyleCompact && w.style != ProgressStyleCard {
 		slog.Debug("progress writer disabled: unsupported style", "platform", p.Name(), "style", w.style)
 		return w
 	}
@@ -321,7 +330,7 @@ func newCompactProgressWriter(ctx context.Context, p Platform, replyCtx any, age
 	if starter, ok := p.(PreviewStarter); ok {
 		w.starter = starter
 	}
-	if w.style == progressStyleCard {
+	if w.style == ProgressStyleCard {
 		if progressCardPayloadForTarget(p, replyCtx) {
 			w.usePayload = true
 		}
@@ -409,7 +418,7 @@ func (w *compactProgressWriter) AppendStructured(item ProgressCardEntry, fallbac
 	item.Status = strings.TrimSpace(item.Status)
 
 	switch w.style {
-	case progressStyleCard:
+	case ProgressStyleCard:
 		w.items = append(w.items, item)
 		w.entries = append(w.entries, fallback)
 		truncated := false
@@ -497,7 +506,7 @@ func (w *compactProgressWriter) AppendStructured(item ProgressCardEntry, fallbac
 // Finalize updates card progress state (running/completed/failed) without
 // appending a new progress entry.
 func (w *compactProgressWriter) Finalize(state ProgressCardState) bool {
-	if !w.enabled || w.failed || w.style != progressStyleCard || !w.usePayload || w.handle == nil {
+	if !w.enabled || w.failed || w.style != ProgressStyleCard || !w.usePayload || w.handle == nil {
 		return false
 	}
 	if state == "" {

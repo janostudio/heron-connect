@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.3.12 (2026-06-05)
+
+Personal fork codebase modularization for `@qinghuangniao/cc-connect-qhn`.
+
+### Notes
+- Split the monolithic `core/engine.go` (~13,800 lines) into 14 focused files (`engine_admin_cmds.go`, `engine_alias_cmds.go`, `engine_bind_cmds.go`, `engine_card_actions.go`, `engine_cards.go`, `engine_cron.go`, `engine_info_cmds.go`, `engine_model_cmds.go`, `engine_provider_cmds.go`, `engine_relay.go`, `engine_reply.go`, `engine_session_cmds.go`, `engine_shell_cmds.go`, `engine_turn.go`) for improved maintainability.
+- Extract six sub-systems out of `core/` into dedicated top-level packages: `relay`, `webhook`, `bridge`, `api`, `management`, `proxy`, reducing core coupling and enabling independent testing.
+- Introduce `core.RelayManagerAPI` interface so `core/` references relay via interface rather than a concrete struct, breaking the circular import.
+- Refactor WeCom WebSocket stream handling into three focused files: `websocket_stream_assembler.go`, `websocket_stream_queue.go`, `websocket_stream_reply.go`.
+- Add public Engine accessor methods (`Commands()`, `HandleRelayRequest()`, `SendMessage()`, `ProcessInteractiveMessage()`) to expose internal functionality for the extracted packages without breaking encapsulation.
+
 ## v1.3.11 (2026-05-28)
 
 Personal fork WeCom stream dedup regression fix for `@qinghuangniao/cc-connect-qhn`.

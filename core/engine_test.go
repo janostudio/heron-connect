@@ -8565,8 +8565,15 @@ func TestResolveLocalDirPath_AcceptsSubdir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != sub {
-		t.Fatalf("expected %q, got %q", sub, got)
+	// resolveLocalDirPath canonicalises paths via filepath.EvalSymlinks.
+	// On macOS, t.TempDir() is under /var/folders which is a symlink to
+	// /private/var/folders, so resolve the expected path too.
+	wantSub := sub
+	if real, err2 := filepath.EvalSymlinks(sub); err2 == nil {
+		wantSub = real
+	}
+	if got != wantSub {
+		t.Fatalf("expected %q, got %q", wantSub, got)
 	}
 }
 

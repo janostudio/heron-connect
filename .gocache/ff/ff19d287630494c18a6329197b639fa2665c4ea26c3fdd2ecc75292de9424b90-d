@@ -1,0 +1,7 @@
+./cdn.go
+./client.go
+./media_inbound.go
+./media_outbound.go
+./parse.go
+./types.go
+./weixin.go

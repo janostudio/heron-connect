@@ -530,11 +530,11 @@ func (e *Engine) SetMaxQueuedMessages(n int) {
 	}
 }
 
-func (e *Engine) SetRelayManager(rm *RelayManager) {
+func (e *Engine) SetRelayManager(rm RelayManagerAPI) {
 	e.relayManager = rm
 }
 
-func (e *Engine) RelayManager() *RelayManager {
+func (e *Engine) RelayManager() RelayManagerAPI {
 	return e.relayManager
 }
 
@@ -734,4 +734,91 @@ func (e *Engine) SendMessage(p Platform, replyCtx any, content string) {
 // This enables the webhook and local API packages to handle interactive events.
 func (e *Engine) ProcessInteractiveMessage(p Platform, msg *Message, session *Session) {
 	e.processInteractiveMessage(p, msg, session)
+}
+
+// HandleMessage is a public wrapper for the private handleMessage method.
+// Its signature satisfies core.MessageHandler so the bridge package can pass it
+// to BridgePlatform.Start without importing internal Engine state.
+func (e *Engine) HandleMessage(p Platform, msg *Message) {
+	e.handleMessage(p, msg)
+}
+
+// HandleCardNav is a public wrapper for the private handleCardNav method.
+// Its signature satisfies core.CardNavigationHandler so the bridge package can
+// pass engine.HandleCardNav to BridgePlatform.SetCardNavigationHandler.
+func (e *Engine) HandleCardNav(action, sessionKey string) *Card {
+	return e.handleCardNav(action, sessionKey)
+}
+
+// PublishedCommand is a command that a bridge control-plane client can safely
+// expose as a slash command.
+type PublishedCommand struct {
+	Name              string
+	Description       string
+	Source            string
+	RequiresWorkspace bool
+	ArgsMode          string
+}
+
+const (
+	publishedCommandArgsModeText  = "text"
+	publishedCommandSourceBuiltin = "builtin"
+	publishedCommandSourceCustom  = "custom"
+)
+
+// GetBridgePublishedCommands returns the subset of commands a bridge
+// control-plane client can safely expose as slash commands. It intentionally
+// excludes skills and other richer command models until the bridge protocol
+// grows beyond the single free-form "args" text bucket.
+func (e *Engine) GetBridgePublishedCommands() []PublishedCommand {
+	e.userRolesMu.RLock()
+	disabledCmds := e.disabledCmds
+	e.userRolesMu.RUnlock()
+
+	seen := make(map[string]bool)
+	var commands []PublishedCommand
+
+	for _, c := range builtinCommands {
+		if len(c.names) == 0 || disabledCmds[c.id] {
+			continue
+		}
+		if seen[c.id] {
+			continue
+		}
+		seen[c.id] = true
+		commands = append(commands, PublishedCommand{
+			Name:              c.id,
+			Description:       e.i18n.T(MsgKey(c.id)),
+			Source:            publishedCommandSourceBuiltin,
+			RequiresWorkspace: false,
+			ArgsMode:          publishedCommandArgsModeText,
+		})
+	}
+
+	customCommands := e.Commands().ListAll()
+	sort.Slice(customCommands, func(i, j int) bool {
+		return strings.ToLower(customCommands[i].Name) < strings.ToLower(customCommands[j].Name)
+	})
+	for _, c := range customCommands {
+		lowerName := strings.ToLower(strings.TrimSpace(c.Name))
+		if lowerName == "" || seen[lowerName] || disabledCmds[lowerName] {
+			continue
+		}
+		seen[lowerName] = true
+
+		desc := strings.TrimSpace(c.Description)
+		if desc == "" {
+			desc = "Custom command"
+		}
+
+		commands = append(commands, PublishedCommand{
+			Name:              c.Name,
+			Description:       desc,
+			Source:            publishedCommandSourceCustom,
+			RequiresWorkspace: false,
+			ArgsMode:          publishedCommandArgsModeText,
+		})
+	}
+
+	return commands
 }

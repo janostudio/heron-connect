@@ -17,9 +17,14 @@ import (
 	"time"
 
 	ccconnect "github.com/chenhg5/cc-connect"
+	"github.com/chenhg5/cc-connect/api"
+	"github.com/chenhg5/cc-connect/bridge"
 	"github.com/chenhg5/cc-connect/config"
 	"github.com/chenhg5/cc-connect/core"
 	"github.com/chenhg5/cc-connect/daemon"
+	"github.com/chenhg5/cc-connect/management"
+	"github.com/chenhg5/cc-connect/relay"
+	"github.com/chenhg5/cc-connect/webhook"
 	// Agent and platform imports are in separate plugin_*.go files
 	// controlled by build tags. See Makefile for selective compilation.
 )
@@ -152,8 +157,8 @@ func main() {
 
 	core.VersionInfo = fmt.Sprintf("cc-connect %s\ncommit: %s\nbuilt: %s", version, commit, buildTime)
 	core.CurrentVersion = version
-	core.CurrentCommit = commit
-	core.CurrentBuildTime = buildTime
+	bridge.CurrentCommit = commit
+	bridge.CurrentBuildTime = buildTime
 
 	configPath := resolveConfigPath(*configFlag)
 
@@ -817,7 +822,7 @@ func main() {
 	heartbeatSched.Start()
 
 	// Start bridge server if enabled
-	var bridgeSrv *core.BridgeServer
+	var bridgeSrv *bridge.BridgeServer
 	if cfg.Bridge.Enabled != nil && *cfg.Bridge.Enabled {
 		port := cfg.Bridge.Port
 		if port <= 0 {
@@ -830,9 +835,9 @@ func main() {
 		// Check insecure flag for local development mode
 		insecure := cfg.Bridge.Insecure != nil && *cfg.Bridge.Insecure
 		if insecure {
-			bridgeSrv = core.NewBridgeServerInsecure(port, cfg.Bridge.Token, path, cfg.Bridge.CORSOrigins)
+			bridgeSrv = bridge.NewBridgeServerInsecure(port, cfg.Bridge.Token, path, cfg.Bridge.CORSOrigins)
 		} else {
-			bridgeSrv = core.NewBridgeServer(port, cfg.Bridge.Token, path, cfg.Bridge.CORSOrigins)
+			bridgeSrv = bridge.NewBridgeServer(port, cfg.Bridge.Token, path, cfg.Bridge.CORSOrigins)
 		}
 		if bridgeSrv == nil {
 			slog.Error("bridge: failed to create server - token is required (or set insecure=true for local dev)")
@@ -847,7 +852,7 @@ func main() {
 	}
 
 	// Start webhook server if enabled
-	var webhookSrv *core.WebhookServer
+	var webhookSrv *webhook.WebhookServer
 	if cfg.Webhook.Enabled != nil && *cfg.Webhook.Enabled {
 		port := cfg.Webhook.Port
 		if port <= 0 {
@@ -857,7 +862,7 @@ func main() {
 		if path == "" {
 			path = "/hook"
 		}
-		webhookSrv = core.NewWebhookServer(port, cfg.Webhook.Token, path)
+		webhookSrv = webhook.NewWebhookServer(port, cfg.Webhook.Token, path)
 		for i, e := range engines {
 			webhookSrv.RegisterEngine(cfg.Projects[i].Name, e)
 		}
@@ -865,13 +870,13 @@ func main() {
 	}
 
 	// Start management API server if enabled
-	var mgmtSrv *core.ManagementServer
+	var mgmtSrv *management.ManagementServer
 	if cfg.Management.Enabled != nil && *cfg.Management.Enabled {
 		port := cfg.Management.Port
 		if port <= 0 {
 			port = 9820
 		}
-		mgmtSrv = core.NewManagementServer(port, cfg.Management.Token, cfg.Management.CORSOrigins)
+		mgmtSrv = management.NewManagementServer(port, cfg.Management.Token, cfg.Management.CORSOrigins)
 		for i, e := range engines {
 			mgmtSrv.RegisterEngine(cfg.Projects[i].Name, e)
 		}
@@ -882,7 +887,7 @@ func main() {
 		if bridgeSrv != nil {
 			mgmtSrv.SetBridgeServer(bridgeSrv)
 		}
-		mgmtSrv.SetSetupFeishuSave(func(req core.FeishuSetupSaveRequest) error {
+		mgmtSrv.SetSetupFeishuSave(func(req management.FeishuSetupSaveRequest) error {
 			platType := req.PlatformType
 			if platType == "" {
 				platType = "feishu"
@@ -906,7 +911,7 @@ func main() {
 			})
 			return err
 		})
-		mgmtSrv.SetSetupWeixinSave(func(req core.WeixinSetupSaveRequest) error {
+		mgmtSrv.SetSetupWeixinSave(func(req management.WeixinSetupSaveRequest) error {
 			_, err := config.EnsureProjectWithWeixinPlatform(config.EnsureProjectWithWeixinOptions{
 				ProjectName: req.ProjectName,
 				WorkDir:     req.WorkDir,
@@ -932,7 +937,7 @@ func main() {
 			return config.AddPlatformToProject(projectName, config.PlatformConfig{Type: platType, Options: opts}, workDir, agentType)
 		})
 		mgmtSrv.SetRemoveProject(config.RemoveProject)
-		mgmtSrv.SetSaveProjectSettings(func(name string, u core.ProjectSettingsUpdate) error {
+		mgmtSrv.SetSaveProjectSettings(func(name string, u management.ProjectSettingsUpdate) error {
 			return config.SaveProjectSettings(name, config.ProjectSettingsUpdate{
 				Language:             u.Language,
 				AdminFrom:            u.AdminFrom,
@@ -996,21 +1001,21 @@ func main() {
 			}
 			return config.SaveGlobalSettings(u)
 		})
-		mgmtSrv.SetListGlobalProviders(func() ([]core.GlobalProviderInfo, error) {
+		mgmtSrv.SetListGlobalProviders(func() ([]management.GlobalProviderInfo, error) {
 			providers, err := config.ListGlobalProviders()
 			if err != nil {
 				return nil, err
 			}
-			out := make([]core.GlobalProviderInfo, len(providers))
+			out := make([]management.GlobalProviderInfo, len(providers))
 			for i, p := range providers {
 				out[i] = configProviderToGlobal(p)
 			}
 			return out, nil
 		})
-		mgmtSrv.SetAddGlobalProvider(func(info core.GlobalProviderInfo) error {
+		mgmtSrv.SetAddGlobalProvider(func(info management.GlobalProviderInfo) error {
 			return config.AddGlobalProvider(globalProviderToConfig(info))
 		})
-		mgmtSrv.SetUpdateGlobalProvider(func(name string, info core.GlobalProviderInfo) error {
+		mgmtSrv.SetUpdateGlobalProvider(func(name string, info management.GlobalProviderInfo) error {
 			return config.UpdateGlobalProvider(name, globalProviderToConfig(info))
 		})
 		mgmtSrv.SetRemoveGlobalProvider(func(name string) error {
@@ -1026,11 +1031,11 @@ func main() {
 	}
 
 	// Start internal API server for CLI send
-	apiSrv, err := core.NewAPIServer(cfg.DataDir)
+	apiSrv, err := api.NewAPIServer(cfg.DataDir)
 	if err != nil {
 		slog.Warn("api server unavailable", "error", err)
 	} else {
-		relayMgr := core.NewRelayManager(cfg.DataDir)
+		relayMgr := relay.NewRelayManager(cfg.DataDir)
 		if cfg.Relay.TimeoutSecs != nil {
 			secs := *cfg.Relay.TimeoutSecs
 			if secs <= 0 {
@@ -1640,8 +1645,8 @@ func startInitialRefreshIfReady(agent core.Agent, result providerWiringResult) {
 	}
 }
 
-func configProviderToGlobal(p config.ProviderConfig) core.GlobalProviderInfo {
-	info := core.GlobalProviderInfo{
+func configProviderToGlobal(p config.ProviderConfig) management.GlobalProviderInfo {
+	info := management.GlobalProviderInfo{
 		Name:        p.Name,
 		APIKey:      p.APIKey,
 		BaseURL:     p.BaseURL,
@@ -1659,17 +1664,17 @@ func configProviderToGlobal(p config.ProviderConfig) core.GlobalProviderInfo {
 		}{Model: m.Model, Alias: m.Alias})
 	}
 	if len(p.AgentModelLists) > 0 {
-		info.AgentModelLists = make(map[string][]core.GlobalModelEntry, len(p.AgentModelLists))
+		info.AgentModelLists = make(map[string][]management.GlobalModelEntry, len(p.AgentModelLists))
 		for at, ml := range p.AgentModelLists {
-			entries := make([]core.GlobalModelEntry, len(ml))
+			entries := make([]management.GlobalModelEntry, len(ml))
 			for i, m := range ml {
-				entries[i] = core.GlobalModelEntry{Model: m.Model, Alias: m.Alias}
+				entries[i] = management.GlobalModelEntry{Model: m.Model, Alias: m.Alias}
 			}
 			info.AgentModelLists[at] = entries
 		}
 	}
 	if p.Codex != nil {
-		info.Codex = &core.GlobalCodexConfig{
+		info.Codex = &management.GlobalCodexConfig{
 			WireAPI:     p.Codex.WireAPI,
 			HTTPHeaders: p.Codex.HTTPHeaders,
 		}
@@ -1677,7 +1682,7 @@ func configProviderToGlobal(p config.ProviderConfig) core.GlobalProviderInfo {
 	return info
 }
 
-func globalProviderToConfig(info core.GlobalProviderInfo) config.ProviderConfig {
+func globalProviderToConfig(info management.GlobalProviderInfo) config.ProviderConfig {
 	p := config.ProviderConfig{
 		Name:        info.Name,
 		APIKey:      info.APIKey,

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/chenhg5/cc-connect/api"
 	"github.com/chenhg5/cc-connect/core"
 )
 
@@ -133,7 +134,7 @@ func TestReadAttachment_CleanPath(t *testing.T) {
 }
 
 func TestBuildSendPayload_JSONRoundTrip(t *testing.T) {
-	req := core.SendRequest{
+	req := api.SendRequest{
 		Project:    "demo",
 		SessionKey: "telegram:1:2",
 		Message:    "done",
@@ -154,7 +155,7 @@ func TestBuildSendPayload_JSONRoundTrip(t *testing.T) {
 		t.Fatalf("buildSendPayload returned error: %v", err)
 	}
 
-	var decoded core.SendRequest
+	var decoded api.SendRequest
 	if err := decodeSendPayload(body, &decoded); err != nil {
 		t.Fatalf("decodeSendPayload returned error: %v", err)
 	}

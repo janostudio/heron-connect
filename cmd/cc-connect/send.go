@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/chenhg5/cc-connect/api"
 	"github.com/chenhg5/cc-connect/core"
 )
 
@@ -67,8 +68,8 @@ func runSend(args []string) {
 
 var errSendUsage = errors.New("show send usage")
 
-func parseSendArgs(args []string) (core.SendRequest, string, error) {
-	var req core.SendRequest
+func parseSendArgs(args []string) (api.SendRequest, string, error) {
+	var req api.SendRequest
 	var dataDir string
 	var useStdin bool
 	var imagePaths []string
@@ -224,11 +225,11 @@ func detectAttachmentMimeType(fileName string, data []byte) string {
 	return http.DetectContentType(sniff)
 }
 
-func buildSendPayload(req core.SendRequest) ([]byte, error) {
+func buildSendPayload(req api.SendRequest) ([]byte, error) {
 	return json.Marshal(req)
 }
 
-func decodeSendPayload(data []byte, req *core.SendRequest) error {
+func decodeSendPayload(data []byte, req *api.SendRequest) error {
 	return json.Unmarshal(data, req)
 }
 
