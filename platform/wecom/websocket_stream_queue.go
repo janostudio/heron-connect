@@ -14,13 +14,9 @@ func (p *WSPlatform) enqueueLatestStreamSend(ctx context.Context, key string, st
 		state.mu.Unlock()
 		return nil
 	}
-	if !finish && state.assembler.shouldHoldOnlyTool(content) {
-		state.assembler.holdTool(content)
-		state.completed = false
-		state.mu.Unlock()
-		slog.Info("wecom-ws: stream hold tool-only", "key", key, "content", truncateWecomLogBody(content))
-		return nil
-	}
+	// Note: shouldHoldOnlyTool/holdTool logic was removed because tool_hold is now
+	// driven explicitly by the engine via ProgressAssembler.OnToolStart/OnToolComplete.
+	// The queue no longer needs to guess whether content is a tool-only block.
 	if pending := state.pending; pending != nil {
 		if finish || !pending.finish {
 			superseded = pending

@@ -212,6 +212,17 @@ type StreamPreviewModeProvider interface {
 	StreamPreviewMode() string
 }
 
+// ProgressAssembler is an optional interface for platforms that render tool
+// progress as a UI side-channel (separate region from the answer text).
+// When a platform implements this and opts into "tool_hold" stream-preview
+// mode, the engine calls OnToolStart/OnToolComplete instead of appending
+// tool messages to the visible text buffer. This keeps tool progress
+// physically separated from the model-produced answer.
+type ProgressAssembler interface {
+	OnToolStart(ctx context.Context, previewHandle any, toolName, explainArg, rawArg string) error
+	OnToolComplete(ctx context.Context, previewHandle any, toolName, resultSummary string) error
+}
+
 // ButtonOption represents a clickable inline button.
 type ButtonOption struct {
 	Text string // display text on the button
@@ -306,6 +317,18 @@ type AgentSession interface {
 	// CancelTurn cancels the current in-progress turn without closing the session.
 	// The session remains alive and can accept subsequent prompts.
 	CancelTurn()
+}
+
+// SessionIDRotator is an optional interface for agent sessions whose backend
+// rotates the session ID on spawn (e.g. ACP). When implemented, the engine
+// refreshes the persisted session ID unconditionally after StartSession so
+// stale resume IDs are replaced by the fresh backend-assigned ID. Sessions
+// that do NOT implement this keep their existing persisted ID on resume
+// (CompareAndSet semantics: only set when empty or sentinel).
+type SessionIDRotator interface {
+	// RotatesSessionIDOnSpawn returns true if the backend assigns a fresh
+	// session ID at spawn time that should replace the persisted resume ID.
+	RotatesSessionIDOnSpawn() bool
 }
 
 // PermissionResult represents the user's decision on a permission request.

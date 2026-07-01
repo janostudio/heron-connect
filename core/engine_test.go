@@ -1580,7 +1580,7 @@ func TestProcessInteractiveEvents_StreamModeMergesToolProgressIntoPreview(t *tes
 	}
 }
 
-func TestProcessInteractiveEvents_StreamModeToolHoldKeepsToolProgressInFinalReply(t *testing.T) {
+func TestProcessInteractiveEvents_StreamModeToolHoldRoutesToolProgressToAssembler(t *testing.T) {
 	p := &mockKeepPreviewPlatform{mode: "tool_hold"}
 	p.n = "wecom"
 	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
@@ -1607,21 +1607,107 @@ func TestProcessInteractiveEvents_StreamModeToolHoldKeepsToolProgressInFinalRepl
 		t.Fatalf("sent text = %#v, want no standalone sends", got)
 	}
 
+	// ProgressAssembler should have received tool start + complete
+	starts := p.getToolStarts()
+	if len(starts) != 1 {
+		t.Fatalf("OnToolStart calls = %d, want 1 (got %#v)", len(starts), starts)
+	}
+	if starts[0].toolName != "Bash" {
+		t.Fatalf("OnToolStart toolName = %q, want 'Bash'", starts[0].toolName)
+	}
+	completes := p.getToolCompletes()
+	if len(completes) != 1 {
+		t.Fatalf("OnToolComplete calls = %d, want 1 (got %#v)", len(completes), completes)
+	}
+	if completes[0].toolName != "Bash" {
+		t.Fatalf("OnToolComplete toolName = %q, want 'Bash'", completes[0].toolName)
+	}
+
 	p.mu.Lock()
 	previewMsgs := append([]string(nil), p.messages...)
 	p.mu.Unlock()
 	if len(previewMsgs) < 2 {
 		t.Fatalf("preview messages = %#v, want start + final update", previewMsgs)
 	}
-	if strings.Contains(strings.Join(previewMsgs[:len(previewMsgs)-1], "\n"), "Tool #1") {
-		t.Fatalf("intermediate preview should not expose held tool messages, got %#v", previewMsgs)
+
+	// Key new contract: tool progress text MUST NOT appear in any preview message
+	// (it should be routed via ProgressAssembler side-channel, not into visibleText)
+	joined := strings.Join(previewMsgs, "\n")
+	if strings.Contains(joined, "Tool #1") {
+		t.Fatalf("preview messages should not contain 'Tool #1' (tool progress must go via ProgressAssembler), got %#v", previewMsgs)
+	}
+	if strings.Contains(joined, "42 /tmp/agent.json") {
+		t.Fatalf("preview messages should not contain tool result (must go via ProgressAssembler), got %#v", previewMsgs)
+	}
+	if strings.Contains(joined, "wc -m /tmp/agent.json") {
+		t.Fatalf("preview messages should not contain tool input (must go via ProgressAssembler), got %#v", previewMsgs)
+	}
+
+	// Final message must contain the answer text
+	finalMsg := previewMsgs[len(previewMsgs)-1]
+	if !strings.Contains(finalMsg, "问题已经确认。") {
+		t.Fatalf("final preview message = %#v, want contain answer '问题已经确认。'", finalMsg)
+	}
+}
+
+// TestProcessInteractiveEvents_StreamModeMultiToolRoutesAllToAssembler verifies G10:
+// when multiple tools are called in one turn, each OnToolStart/OnToolComplete
+// is routed to the ProgressAssembler, and the final answer message contains
+// none of the tool progress text.
+func TestProcessInteractiveEvents_StreamModeMultiToolRoutesAllToAssembler(t *testing.T) {
+	p := &mockKeepPreviewPlatform{mode: "tool_hold"}
+	p.n = "wecom"
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetDisplayConfig(DisplayCfg{Mode: displayModeStream, ThinkingMessages: false, ThinkingMaxLen: 300, ToolMaxLen: 500, ToolMessages: true})
+	e.SetStreamPreviewCfg(StreamPreviewCfg{Enabled: true, IntervalMs: 1, MinDeltaChars: 1, MaxChars: 4000})
+	sessionKey := "wecom:user-stream-multi-tool"
+	session := e.sessions.GetOrCreateActive(sessionKey)
+	agentSession := newControllableSession("s-stream-multi-tool")
+	state := &interactiveState{
+		agentSession: agentSession,
+		platform:     p,
+		replyCtx:     "ctx-stream-multi-tool",
+	}
+	e.interactiveStates[sessionKey] = state
+
+	agentSession.events <- Event{Type: EventText, Content: "让我检查两处。"}
+	agentSession.events <- Event{Type: EventToolUse, ToolName: "Bash", ToolInput: "ls /a"}
+	agentSession.events <- Event{Type: EventToolResult, ToolName: "Bash", ToolResult: "file_a"}
+	agentSession.events <- Event{Type: EventToolUse, ToolName: "Read", ToolInput: "cat /b"}
+	agentSession.events <- Event{Type: EventToolResult, ToolName: "Read", ToolResult: "content_b"}
+	agentSession.events <- Event{Type: EventResult, Content: "检查完成。", Done: true}
+
+	e.processInteractiveEvents(state, session, e.sessions, sessionKey, "m-stream-multi-tool", time.Now(), nil, nil, state.replyCtx)
+
+	// Both tools should be routed to ProgressAssembler
+	starts := p.getToolStarts()
+	if len(starts) != 2 {
+		t.Fatalf("OnToolStart calls = %d, want 2 (Bash + Read)", len(starts))
+	}
+	if starts[0].toolName != "Bash" || starts[1].toolName != "Read" {
+		t.Fatalf("OnToolStart toolNames = %q, %q, want 'Bash', 'Read'", starts[0].toolName, starts[1].toolName)
+	}
+	completes := p.getToolCompletes()
+	if len(completes) != 2 {
+		t.Fatalf("OnToolComplete calls = %d, want 2", len(completes))
+	}
+
+	// Final answer must not contain any tool progress text
+	p.mu.Lock()
+	previewMsgs := append([]string(nil), p.messages...)
+	p.mu.Unlock()
+	if len(previewMsgs) == 0 {
+		t.Fatal("no preview messages produced")
+	}
+	joined := strings.Join(previewMsgs, "\n")
+	for _, forbidden := range []string{"Tool #", "file_a", "content_b", "ls /a", "cat /b"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("preview messages should not contain %q (tool progress must be side-channeled), got %#v", forbidden, previewMsgs)
+		}
 	}
 	finalMsg := previewMsgs[len(previewMsgs)-1]
-	if !strings.Contains(finalMsg, "问题已经确认。") || !strings.Contains(finalMsg, "Tool #1") || !strings.Contains(finalMsg, "42 /tmp/agent.json") {
-		t.Fatalf("final preview message = %#v, want final reply to include held tool progress", previewMsgs)
-	}
-	if !strings.Contains(finalMsg, "```\n\n问题已经确认。") && !strings.Contains(finalMsg, "```text\n42 /tmp/agent.json\n```\n\n问题已经确认。") {
-		t.Fatalf("final preview message should separate tool block and answer with a blank line, got %#v", previewMsgs)
+	if !strings.Contains(finalMsg, "检查完成。") {
+		t.Fatalf("final preview message = %#v, want contain answer", finalMsg)
 	}
 }
 
@@ -12651,6 +12737,7 @@ func (s *acpLikeSession) Send(prompt string, _ []ImageAttachment, _ []FileAttach
 func (s *acpLikeSession) RespondPermission(_ string, _ PermissionResult) error { return nil }
 func (s *acpLikeSession) Events() <-chan Event                                 { return s.events }
 func (s *acpLikeSession) CurrentSessionID() string                             { return s.threadID }
+func (s *acpLikeSession) RotatesSessionIDOnSpawn() bool                        { return true }
 func (s *acpLikeSession) Alive() bool                                          { return s.alive }
 func (s *acpLikeSession) Close() error                                         { s.alive = false; return nil }
 func (s *acpLikeSession) CancelTurn()                                          {}

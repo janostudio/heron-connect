@@ -198,6 +198,22 @@ func (m *mockCleanerPlatform) DeletePreviewMessage(_ context.Context, handle any
 type mockKeepPreviewPlatform struct {
 	mockCleanerPlatform
 	mode string
+
+	// ProgressAssembler call records
+	muProgress sync.Mutex
+	toolStarts    []toolStartCall
+	toolCompletes []toolCompleteCall
+}
+
+type toolStartCall struct {
+	toolName   string
+	explainArg string
+	rawArg     string
+}
+
+type toolCompleteCall struct {
+	toolName      string
+	resultSummary string
 }
 
 func (m *mockKeepPreviewPlatform) KeepPreviewOnFinish() bool {
@@ -209,6 +225,36 @@ func (m *mockKeepPreviewPlatform) StreamPreviewMode() string {
 		return ""
 	}
 	return m.mode
+}
+
+func (m *mockKeepPreviewPlatform) OnToolStart(_ context.Context, _ any, toolName, explainArg, rawArg string) error {
+	m.muProgress.Lock()
+	defer m.muProgress.Unlock()
+	m.toolStarts = append(m.toolStarts, toolStartCall{toolName, explainArg, rawArg})
+	return nil
+}
+
+func (m *mockKeepPreviewPlatform) OnToolComplete(_ context.Context, _ any, toolName, resultSummary string) error {
+	m.muProgress.Lock()
+	defer m.muProgress.Unlock()
+	m.toolCompletes = append(m.toolCompletes, toolCompleteCall{toolName, resultSummary})
+	return nil
+}
+
+func (m *mockKeepPreviewPlatform) getToolStarts() []toolStartCall {
+	m.muProgress.Lock()
+	defer m.muProgress.Unlock()
+	out := make([]toolStartCall, len(m.toolStarts))
+	copy(out, m.toolStarts)
+	return out
+}
+
+func (m *mockKeepPreviewPlatform) getToolCompletes() []toolCompleteCall {
+	m.muProgress.Lock()
+	defer m.muProgress.Unlock()
+	out := make([]toolCompleteCall, len(m.toolCompletes))
+	copy(out, m.toolCompletes)
+	return out
 }
 
 func TestStreamPreview_FreezeDeletesOnFinish(t *testing.T) {

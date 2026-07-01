@@ -49,7 +49,10 @@ type wsStreamState struct {
 	pending   *wsStreamSend
 	lastAcked string
 	assembler wsStreamAssembler
-	completed bool
+	// wecomAssembler is the new three-region assembler for tool_hold mode.
+	// It is populated lazily when OnToolStart/OnToolComplete is first called.
+	wecomAssembler *wecomStreamAssembler
+	completed      bool
 }
 
 type wsStreamSend struct {

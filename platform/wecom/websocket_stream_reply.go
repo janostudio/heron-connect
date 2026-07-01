@@ -55,6 +55,16 @@ func (p *WSPlatform) UpdateMessage(ctx context.Context, previewHandle any, conte
 	if h.replyCtx.streamID == "" {
 		return fmt.Errorf("wecom-ws: preview handle missing stream id")
 	}
+	// If a wecomStreamAssembler exists for this stream, track the visible text
+	// in it and send the merged render (progressLines + visibleText).
+	// This is the打通 contract: visible text and tool progress are merged before
+	// sending, so the preview shows both together instead of alternating.
+	if state, err := p.wecomAssemblerFor(h.replyCtx); err == nil {
+		state.appendText(content)
+		merged := state.snapshot()
+		return p.sendStreamFrameAndWaitAck(ctx, h.replyCtx, wecomPreviewPayload(merged), false)
+	}
+	// No assembler (non-tool_hold mode or assembler not yet initialized): send as-is.
 	return p.sendStreamFrameAndWaitAck(ctx, h.replyCtx, wecomPreviewPayload(content), false)
 }
 
@@ -68,6 +78,13 @@ func (p *WSPlatform) FinalizePreviewMessage(ctx context.Context, previewHandle a
 	}
 	if content == "" {
 		return nil
+	}
+	// If a wecomStreamAssembler exists, finalize it: this clears progressLines
+	// and sets the final visible text. The final frame will contain ONLY the
+	// answer (no tool progress), which is the expected finalize behavior.
+	if state, err := p.wecomAssemblerFor(h.replyCtx); err == nil {
+		finalRendered := state.finish(content)
+		return p.sendFinalReplyChunks(ctx, h.replyCtx, finalRendered)
 	}
 	return p.sendFinalReplyChunks(ctx, h.replyCtx, content)
 }

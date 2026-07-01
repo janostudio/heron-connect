@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.4.0 (2026-07-01)
+
+Personal fork WeCom streaming display alignment with openclaw progress-draft design for `@qinghuangniao/cc-connect-qhn`.
+
+### Notes
+- Introduce three-region `wecomStreamAssembler` (`visibleText` / `progressLines` / `heldTool`) as the single source of truth for WeCom WebSocket stream preview state, replacing the old two-field `wsStreamAssembler` that mixed tool blocks into visible text.
+- Add `ProgressAssembler` optional platform interface (`core/interfaces.go`) so the engine routes `EventToolUse`/`EventToolResult` to a UI side-channel in `tool_hold` mode instead of appending tool messages to the `textParts` buffer. This physically separates tool progress from the model-produced answer text, aligning with openclaw's progress-draft philosophy.
+- Implement `WSPlatform.OnToolStart`/`OnToolComplete` (`platform/wecom/websocket_progress_assembler.go`) to route tool progress into `progressLines`, then merge with `visibleText` via `UpdateMessage` so the preview shows both together instead of alternating flicker.
+- Wire `WSPlatform.UpdateMessage` to track received text in `assembler.visibleText` and send the merged render (`progressLines + separator + visibleText`), so tool progress and answer text are always displayed together.
+- Wire `WSPlatform.FinalizePreviewMessage` to call `assembler.finish(finalText)`, which clears `progressLines` so the final frame contains only the answer (no residual tool progress).
+- Remove `streamToolHoldNeedsAnswerSeparator` hack from `core/engine_turn.go` (4 call sites) since the assembler now owns separation via `render()`.
+- Remove `shouldHoldOnlyTool`/`holdTool` guessing logic from `platform/wecom/websocket_stream_queue.go` since tool holding is now driven explicitly by the engine via `ProgressAssembler` events.
+- Add `SessionIDRotator` optional interface (`core/interfaces.go`) and implement it on `acpSession` so ACP backends that rotate session IDs on spawn refresh the persisted binding unconditionally, while non-ACP sessions keep `CompareAndSetAgentSessionID` semantics (only set when empty or sentinel). Fixes `TestSessionIDWriteback_DoesNotOverwriteExisting` regression introduced by commit `6e70f87`.
+
+### Tests
+- 16 new `wecomStreamAssembler` unit tests covering invariants I1-I6 (visibleText isolation, progressLines FIFO bounding, render idempotency, finish clears progress, heldTool overwrite) and paths G1-G6 (appendText/onToolStart/onToolComplete region isolation, snapshot read-only, formatToolLine explain/raw modes, truncateMiddle).
+- 2 updated engine integration tests (`StreamModeToolHoldRoutesToolProgressToAssembler`, `StreamModeMultiToolRoutesAllToAssembler`) expressing the new contract: tool progress must NOT appear in any preview message, must be routed via `ProgressAssembler`.
+- 5 new WeCom integration tests (`UpdateMessage_MergesProgressAndVisibleText`, `OnToolStart_DoesNotSendStandaloneFrameWhenNoVisibleText`, `FinalizePreviewMessage_ClearsProgressAndSendsOnlyAnswer`, `UpdateMessage_TracksVisibleTextInAssembler`, `FullFlow_TextToolTextFinalize`) verifying the end-to-end打通: visible text and tool progress are merged before sending, finalize clears progress.
+- Full suite: `platform/wecom` 89 pass, `core` 736 pass, `agent/acp` 34 pass (short mode), 0 failures.
+
+### Docs
+- `docs/upgradefeature/wecom-stream-align-openclaw-design.md` — technical design with 18-module alignment matrix, 4-scenario before/after comparison, 5-phase rollout plan.
+- `docs/upgradefeature/wecom-stream-tdd-gap-analysis.md` — TDD gap analysis with 5 reverse-failing tests, 12 uncovered paths, 22 recommended new tests.
+
 ## v1.3.12 (2026-06-05)
 
 Personal fork codebase modularization for `@qinghuangniao/cc-connect-qhn`.
@@ -682,7 +706,7 @@ This is the first stable release of cc-connect 1.2.0, consolidating all beta cha
 - **CLAUDECODE env filter**: Prevent nested Claude Code session crash by filtering CLAUDECODE env var from subprocesses
 
 ### Docs
-- Clarified global config path `~/.cc-connect/config.toml` in INSTALL.md
+- Clarified global config path `~/.cc-connect-qhn/config.toml` in INSTALL.md
 - Fixed markdown image syntax in Chinese README
 
 ## v1.1.0-beta.5 (2026-03-01)
@@ -709,7 +733,7 @@ This is the first stable release of cc-connect 1.2.0, consolidating all beta cha
 
 ### New Features
 - **Provider Management**: `/provider` command for runtime API provider switching; CLI `cc-connect provider add/list`
-- **Configurable Data Dir**: Session data stored in `~/.cc-connect/` by default (configurable via `data_dir`)
+- **Configurable Data Dir**: Session data stored in `~/.cc-connect-qhn/` by default (configurable via `data_dir`)
 - **Markdown Stripping**: Plain text fallback for platforms that don't support markdown (e.g. WeChat)
 
 ## v1.1.0-beta.1 (2026-03-01)

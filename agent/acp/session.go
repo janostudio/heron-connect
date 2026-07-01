@@ -640,7 +640,7 @@ func (s *acpSession) Send(prompt string, images []core.ImageAttachment, files []
 }
 
 func (s *acpSession) appendImageRefs(prompt string, images []core.ImageAttachment) string {
-	attachDir := filepath.Join(s.workDir, ".cc-connect", "attachments")
+	attachDir := filepath.Join(s.workDir, ".cc-connect-qhn", "attachments")
 	if err := os.MkdirAll(attachDir, 0o755); err != nil {
 		slog.Warn("acp: mkdir attachments failed", "error", err)
 		return prompt
@@ -708,6 +708,13 @@ func (s *acpSession) Events() <-chan core.Event {
 
 func (s *acpSession) CurrentSessionID() string {
 	return s.currentACPSessionID()
+}
+
+// RotatesSessionIDOnSpawn implements core.SessionIDRotator.
+// ACP backends assign a fresh session/thread id at spawn time that should
+// replace any stale resume id persisted locally.
+func (s *acpSession) RotatesSessionIDOnSpawn() bool {
+	return true
 }
 
 func (s *acpSession) Alive() bool {

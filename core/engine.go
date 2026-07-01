@@ -1950,9 +1950,18 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 
 	if newID := agentSession.CurrentSessionID(); newID != "" {
 		// ACP-like adapters already know the concrete session/thread id at spawn
-		// time. Refresh the persisted binding unconditionally so we do not keep an
-		// old resume id around after the backend rotates the live session id.
-		session.SetAgentSessionID(newID, agent.Name())
+		// time and may rotate it on resume. Such sessions implement SessionIDRotator
+		// so we refresh the persisted binding unconditionally, replacing any stale
+		// resume id with the fresh backend-assigned id.
+		// Sessions that do NOT implement SessionIDRotator (e.g. plain --resume)
+		// keep their existing persisted id via Compare-and-Set: the new id is only
+		// stored when the persisted slot is empty or holds the ContinueSession sentinel.
+		if rotator, ok := agentSession.(SessionIDRotator); ok && rotator.RotatesSessionIDOnSpawn() {
+			session.SetAgentSessionID(newID, agent.Name())
+		} else if !session.CompareAndSetAgentSessionID(newID, agent.Name()) {
+			// CompareAndSet returned false: a real session id was already stored
+			// and the session does not rotate ids. Keep the existing id.
+		}
 		pendingName := session.GetName()
 		if pendingName != "" && pendingName != "session" && pendingName != "default" {
 			sessions.SetSessionName(newID, pendingName)

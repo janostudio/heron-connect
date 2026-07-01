@@ -414,7 +414,6 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	cp := newCompactProgressWriter(e.ctx, state.platform, state.replyCtx, e.agent.Name(), e.i18n.CurrentLang(), workspaceRenderer)
 	state.mu.Unlock()
 	streamPreviewToolHold := sp.previewMode() == "tool_hold" && e.display.Mode == displayModeStream
-	streamToolHoldNeedsAnswerSeparator := false
 
 	// Send instant confirmation reply if enabled and no streaming card is active.
 	// Streaming cards provide their own "processing" indicator, so instant reply
@@ -671,12 +670,12 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			}
 			if streamPreviewToolHold {
 				if e.display.ToolMessages {
-					toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, event.ToolName, formattedInput)
-					if len(textParts) > 0 {
-						textParts = append(textParts, "\n\n")
+					// Route tool progress to ProgressAssembler side-channel instead of
+					// polluting visibleText. Tool progress is a UI side-channel, never
+					// enters the model-produced answer text.
+					if assembler, ok := p.(ProgressAssembler); ok {
+						_ = assembler.OnToolStart(sp.ctx, sp.previewMsgID, event.ToolName, formattedInput, event.ToolInput)
 					}
-					textParts = append(textParts, toolMsg)
-					streamToolHoldNeedsAnswerSeparator = true
 				}
 				continue
 			}
@@ -788,11 +787,10 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					resultMsg := e.formatToolResultEventFallback(event.ToolName, result, event.ToolStatus, event.ToolExitCode, event.ToolSuccess)
 					if streamPreviewToolHold {
 						if e.display.ToolMessages {
-							if len(textParts) > 0 {
-								textParts = append(textParts, "\n\n")
+							// Route tool result to ProgressAssembler side-channel.
+							if assembler, ok := p.(ProgressAssembler); ok {
+								_ = assembler.OnToolComplete(sp.ctx, sp.previewMsgID, event.ToolName, result)
 							}
-							textParts = append(textParts, resultMsg)
-							streamToolHoldNeedsAnswerSeparator = true
 						}
 						continue
 					}
@@ -849,10 +847,6 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						} else {
 							sp.setStatus(CardStatusWorking)
 						}
-					}
-					if streamPreviewToolHold && streamToolHoldNeedsAnswerSeparator && len(textParts) > 0 {
-						textParts = append(textParts, "\n\n")
-						streamToolHoldNeedsAnswerSeparator = false
 					}
 					textParts = append(textParts, event.Content)
 					partialText += event.Content
