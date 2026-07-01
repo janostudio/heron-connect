@@ -105,7 +105,7 @@ type StreamPreviewCfg struct {
     DisabledPlatforms []string // 禁用列表 (如 "feishu")
     IntervalMs        int      // 最小更新间隔 (默认 1500ms)
     MinDeltaChars     int      // 最小新字符阈值 (默认 30)
-    MaxChars          int      // 预览最大长度 (默认 2000)
+    MaxChars          int      // 预览最大长度 (默认 4000)
 }
 ```
 
@@ -530,7 +530,7 @@ func (p *Platform) CreateStreamingCard(ctx context.Context, replyCtx any) (core.
 ```go
 IntervalMs = 1500        // 最小 1.5 秒间隔
 MinDeltaChars = 30       // 最少 30 个新字符
-MaxChars = 2000          // 预览最长 2000 字符
+MaxChars = 4000          // 预览最长 4000 字符
 ```
 
 **触发条件** (任一满足):

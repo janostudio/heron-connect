@@ -83,7 +83,7 @@ var configMu sync.Mutex
 var ConfigPath string
 
 type Config struct {
-	DataDir        string `toml:"data_dir"` // session store directory, default ~/.cc-connect
+	DataDir        string `toml:"data_dir"` // session store directory, default ~/.cc-connect-qhn
 	AttachmentSend string `toml:"attachment_send"`
 	// Quiet is legacy: when true and [display] does not set thinking_messages / tool_messages,
 	// engines behave as if those flags were false. Per-project quiet overrides when set.
@@ -190,7 +190,7 @@ type StreamPreviewConfig struct {
 	DisabledPlatforms []string `toml:"disabled_platforms,omitempty"` // platforms where preview is disabled (e.g. ["feishu"])
 	IntervalMs        *int     `toml:"interval_ms"`                  // min ms between updates; default 1500
 	MinDeltaChars     *int     `toml:"min_delta_chars"`              // min new chars before update; default 30
-	MaxChars          *int     `toml:"max_chars"`                    // max preview length; default 2000
+	MaxChars          *int     `toml:"max_chars"`                    // max preview length; default 4000
 }
 
 // InstantReplyConfig controls the immediate confirmation reply sent when a message
@@ -467,9 +467,9 @@ func Load(path string) (*Config, error) {
 
 	if cfg.DataDir == "" {
 		if home, err := os.UserHomeDir(); err == nil {
-			cfg.DataDir = filepath.Join(home, ".cc-connect")
+			cfg.DataDir = filepath.Join(home, ".cc-connect-qhn")
 		} else {
-			cfg.DataDir = ".cc-connect"
+			cfg.DataDir = ".cc-connect-qhn"
 		}
 	}
 	cfg.AttachmentSend = strings.ToLower(strings.TrimSpace(cfg.AttachmentSend))

@@ -398,7 +398,7 @@ This runs the full preflight (the three go/no-go gates from
 **isolation probe**: it spawns a fixed shell script as the target user
 and reports what the target can read, what it's denied, and any
 cross-user leaks. Output goes to stdout plus a JSON report in
-`~/.cc-connect/audits/<timestamp>-<project>.json`.
+`~/.cc-connect-qhn/audits/<timestamp>-<project>.json`.
 
 Exit code 0 = clean. Exit code 1 = at least one fatal problem.
 
@@ -814,7 +814,7 @@ cc-connect relay send --to gemini "What do you think about this architecture?"
 Run as background service.
 
 ```bash
-cc-connect daemon install --config ~/.cc-connect/config.toml
+cc-connect daemon install --config ~/.cc-connect-qhn/config.toml
 cc-connect daemon start
 cc-connect daemon stop
 cc-connect daemon restart

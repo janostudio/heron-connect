@@ -152,7 +152,7 @@ func (cs *codexSession) stageImages(prompt string, images []core.ImageAttachment
 		return prompt, nil, nil
 	}
 
-	imgDir := filepath.Join(cs.workDir, ".cc-connect", "images")
+	imgDir := filepath.Join(cs.workDir, ".cc-connect-qhn", "images")
 	if err := os.MkdirAll(imgDir, 0o755); err != nil {
 		return "", nil, fmt.Errorf("codexSession: create image dir: %w", err)
 	}

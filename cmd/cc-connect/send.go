@@ -238,9 +238,9 @@ func resolveSocketPath(dataDir string) string {
 		return filepath.Join(dataDir, "run", "api.sock")
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".cc-connect", "run", "api.sock")
+		return filepath.Join(home, ".cc-connect-qhn", "run", "api.sock")
 	}
-	return filepath.Join(".cc-connect", "run", "api.sock")
+	return filepath.Join(".cc-connect-qhn", "run", "api.sock")
 }
 
 func printSendUsage() {
@@ -260,7 +260,7 @@ Options:
       --stdin              Read message from stdin (best for long/special-char messages)
   -p, --project <name>     Target project (optional if only one project)
   -s, --session <key>      Target session key (optional, picks first active)
-      --data-dir <path>    Data directory (default: ~/.cc-connect)
+      --data-dir <path>    Data directory (default: ~/.cc-connect-qhn)
   -h, --help               Show this help
 
 Examples:

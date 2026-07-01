@@ -532,7 +532,7 @@ func (cs *claudeSession) Send(prompt string, images []core.ImageAttachment, file
 		})
 	}
 
-	attachDir := filepath.Join(cs.workDir, ".cc-connect", "attachments")
+	attachDir := filepath.Join(cs.workDir, ".cc-connect-qhn", "attachments")
 	if err := os.MkdirAll(attachDir, 0o755); err != nil {
 		slog.Warn("claudeSession: mkdir attachments failed", "error", err, "path", attachDir)
 	}

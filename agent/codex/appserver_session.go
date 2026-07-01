@@ -476,7 +476,7 @@ func (s *appServerSession) stageImages(prompt string, images []core.ImageAttachm
 		return prompt, nil, nil
 	}
 
-	imgDir := filepath.Join(s.workDir, ".cc-connect", "images")
+	imgDir := filepath.Join(s.workDir, ".cc-connect-qhn", "images")
 	if err := os.MkdirAll(imgDir, 0o755); err != nil {
 		return "", nil, fmt.Errorf("codex app-server: create image dir: %w", err)
 	}

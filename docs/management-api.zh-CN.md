@@ -252,7 +252,7 @@ GET /api/v1/status?token=mgmt-secret
 {
   "ok": true,
   "data": {
-    "data_dir": "/home/user/.cc-connect",
+    "data_dir": "/home/user/.cc-connect-qhn",
     "language": "en",
     "projects": [
       {
@@ -309,7 +309,7 @@ GET /api/v1/status?token=mgmt-secret
         "time": "2026-03-10T10:30:00Z",
         "level": "info",
         "message": "api server started",
-        "attrs": {"socket": "/home/user/.cc-connect/run/api.sock"}
+        "attrs": {"socket": "/home/user/.cc-connect-qhn/run/api.sock"}
       }
     ]
   }

@@ -252,7 +252,7 @@ Returns the current configuration with secrets redacted. Useful for debugging an
 {
   "ok": true,
   "data": {
-    "data_dir": "/home/user/.cc-connect",
+    "data_dir": "/home/user/.cc-connect-qhn",
     "language": "en",
     "projects": [
       {
@@ -309,7 +309,7 @@ Returns recent log entries.
         "time": "2026-03-10T10:30:00Z",
         "level": "info",
         "message": "api server started",
-        "attrs": {"socket": "/home/user/.cc-connect/run/api.sock"}
+        "attrs": {"socket": "/home/user/.cc-connect-qhn/run/api.sock"}
       }
     ]
   }

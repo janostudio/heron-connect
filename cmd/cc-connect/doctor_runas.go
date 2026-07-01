@@ -45,7 +45,7 @@ func runDoctorUserIsolation(args []string) {
 	fs := flag.NewFlagSet("doctor user-isolation", flag.ExitOnError)
 	configPath := fs.String("config", "", "path to config file (default: auto-discover)")
 	projectFilter := fs.String("project", "", "limit audit to a single project name")
-	outPath := fs.String("out", "", "path to write JSON report (default: ~/.cc-connect/audits/<timestamp>-<project>.json per project)")
+	outPath := fs.String("out", "", "path to write JSON report (default: ~/.cc-connect-qhn/audits/<timestamp>-<project>.json per project)")
 	printScript := fs.Bool("print-script", false, "print the embedded probe script and exit")
 	_ = fs.Parse(args)
 
@@ -286,11 +286,11 @@ func writeHumanReport(w *strings.Builder, r core.IsolationReport) {
 	}
 }
 
-// defaultAuditDir returns ~/.cc-connect/audits for the supervisor user.
+// defaultAuditDir returns ~/.cc-connect-qhn/audits for the supervisor user.
 func defaultAuditDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".cc-connect", "audits"), nil
+	return filepath.Join(home, ".cc-connect-qhn", "audits"), nil
 }

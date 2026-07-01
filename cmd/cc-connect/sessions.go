@@ -116,9 +116,9 @@ func resolveDataDir(flagValue string) string {
 		return flagValue
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".cc-connect")
+		return filepath.Join(home, ".cc-connect-qhn")
 	}
-	return ".cc-connect"
+	return ".cc-connect-qhn"
 }
 
 func loadAllSessions(dataDir string) ([]sessionRecord, error) {
@@ -346,7 +346,7 @@ Commands:
   show <id> [-n N]   Show session messages
 
 Options:
-  --data-dir <path>  Data directory (default: ~/.cc-connect)
+  --data-dir <path>  Data directory (default: ~/.cc-connect-qhn)
   -h, --help         Show this help
 
 Session ID formats for 'show':

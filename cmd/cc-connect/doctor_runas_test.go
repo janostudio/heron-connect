@@ -12,8 +12,8 @@ func TestDefaultAuditDir_HomeSuffix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaultAuditDir error: %v", err)
 	}
-	if !strings.HasSuffix(dir, "/.cc-connect/audits") {
-		t.Errorf("audit dir = %q, want suffix /.cc-connect/audits", dir)
+	if !strings.HasSuffix(dir, "/.cc-connect-qhn/audits") {
+		t.Errorf("audit dir = %q, want suffix /.cc-connect-qhn/audits", dir)
 	}
 }
 

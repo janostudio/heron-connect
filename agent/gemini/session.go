@@ -70,7 +70,7 @@ func (gs *geminiSession) Send(prompt string, images []core.ImageAttachment, file
 	}
 
 	// Save images and files into the workspace so Gemini CLI tools can access them.
-	attachDir := filepath.Join(gs.workDir, ".cc-connect", "attachments")
+	attachDir := filepath.Join(gs.workDir, ".cc-connect-qhn", "attachments")
 	if (len(images) > 0 || len(files) > 0) && os.MkdirAll(attachDir, 0o755) != nil {
 		attachDir = os.TempDir()
 	}

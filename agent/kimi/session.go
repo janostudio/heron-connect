@@ -69,7 +69,7 @@ func (ks *kimiSession) Send(prompt string, images []core.ImageAttachment, files 
 	}
 
 	// Save images and files into the workspace so Kimi CLI can access them.
-	attachDir := filepath.Join(ks.workDir, ".cc-connect", "attachments")
+	attachDir := filepath.Join(ks.workDir, ".cc-connect-qhn", "attachments")
 	if (len(images) > 0 || len(files) > 0) && os.MkdirAll(attachDir, 0o755) != nil {
 		attachDir = os.TempDir()
 	}

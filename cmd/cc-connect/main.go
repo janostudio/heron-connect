@@ -142,7 +142,7 @@ func main() {
 		slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	}
 
-	configFlag := flag.String("config", "", "path to config file (default: ./config.toml or ~/.cc-connect/config.toml)")
+	configFlag := flag.String("config", "", "path to config file (default: ./config.toml or ~/.cc-connect-qhn/config.toml)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	observeFlag := flag.Bool("observe", false, "observe native terminal Claude Code sessions and forward to Slack")
 	observeChannel := flag.String("observe-channel", "", "Slack channel ID to forward terminal observations to (requires --observe)")
@@ -1242,7 +1242,7 @@ func resolveClaudeProjectDir(workDir string) string {
 }
 
 // resolveConfigPath determines which config file to use.
-// Priority: explicit flag → ./config.toml → ~/.cc-connect/config.toml
+// Priority: explicit flag → ./config.toml → ~/.cc-connect-qhn/config.toml
 func resolveConfigPath(explicit string) string {
 	if explicit != "" {
 		return explicit
@@ -1251,7 +1251,7 @@ func resolveConfigPath(explicit string) string {
 		return "config.toml"
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".cc-connect", "config.toml")
+		return filepath.Join(home, ".cc-connect-qhn", "config.toml")
 	}
 	return "config.toml"
 }
@@ -1322,7 +1322,7 @@ Usage:
   cc-connect <command> [args]
 
 Flags:
-  --config <path>    Path to config file (default: ./config.toml or ~/.cc-connect/config.toml)
+  --config <path>    Path to config file (default: ./config.toml or ~/.cc-connect-qhn/config.toml)
   --force            Kill any existing instance with the same config before starting
   --version          Print version and exit
   --help             Show this help message

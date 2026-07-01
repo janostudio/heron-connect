@@ -411,7 +411,7 @@ func (s *piSession) CancelTurn() {
 // cleanAttachments removes files from the attachments directory to avoid
 // accumulating files across turns.
 func cleanAttachments(workDir string) {
-	attachDir := filepath.Join(workDir, ".cc-connect", "attachments")
+	attachDir := filepath.Join(workDir, ".cc-connect-qhn", "attachments")
 	entries, err := os.ReadDir(attachDir)
 	if err != nil {
 		return // directory may not exist yet
@@ -423,10 +423,10 @@ func cleanAttachments(workDir string) {
 	}
 }
 
-// saveImagesToDisk saves image attachments to workDir/.cc-connect/attachments/
+// saveImagesToDisk saves image attachments to workDir/.cc-connect-qhn/attachments/
 // and returns the list of absolute file paths.
 func saveImagesToDisk(workDir string, images []core.ImageAttachment) []string {
-	attachDir := filepath.Join(workDir, ".cc-connect", "attachments")
+	attachDir := filepath.Join(workDir, ".cc-connect-qhn", "attachments")
 	if err := os.MkdirAll(attachDir, 0o755); err != nil {
 		slog.Error("piSession: failed to create attachments dir", "error", err)
 		return nil

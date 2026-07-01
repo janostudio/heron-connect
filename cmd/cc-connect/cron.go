@@ -539,7 +539,7 @@ Options:
       --desc <text>          Short description
       --session-mode <mode>  reuse (default) or new-per-run — fresh agent session each run
       --timeout-mins <n>     Max minutes to wait per run (0 = no limit; default 30 if omitted)
-      --data-dir <path>      Data directory (default: ~/.cc-connect)
+      --data-dir <path>      Data directory (default: ~/.cc-connect-qhn)
   -h, --help                 Show this help
 
 Examples:
@@ -575,7 +575,7 @@ Read-only Fields (cannot be edited):
   id, created_at, last_run, last_error
 
 Options:
-      --data-dir <path>  Data directory (default: ~/.cc-connect)
+      --data-dir <path>  Data directory (default: ~/.cc-connect-qhn)
   -h, --help             Show this help
 
 Examples:

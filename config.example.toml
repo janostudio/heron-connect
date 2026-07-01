@@ -23,9 +23,9 @@
 # - "" (empty/not set): Auto-detect from user's first message / 留空自动检测
 # language = "en"
 
-# Session data storage directory (default: ~/.cc-connect)
+# Session data storage directory (default: ~/.cc-connect-qhn)
 # Stores conversation history and session state as JSON files.
-# 会话数据存储目录（默认 ~/.cc-connect），以 JSON 文件保存对话历史和会话状态。
+# 会话数据存储目录（默认 ~/.cc-connect-qhn），以 JSON 文件保存对话历史和会话状态。
 # data_dir = "/path/to/custom/dir"
 
 # Attachment send-back switch for `cc-connect send --image/--file`.

@@ -102,7 +102,7 @@ cc-connect-qhn
 
 1. `-config <path>` 命令行参数
 2. `./config.toml`（当前目录）
-3. `~/.cc-connect/config.toml`（全局，推荐）
+3. `~/.cc-connect-qhn/config.toml`（全局，推荐）
 
 最简配置示例（Claude Code + 飞书）：
 
@@ -262,7 +262,7 @@ token = "your-bridge-secret"
 注册为系统服务（Linux systemd / macOS launchd / Windows Task Scheduler）：
 
 ```bash
-cc-connect-qhn daemon install --config ~/.cc-connect/config.toml
+cc-connect-qhn daemon install --config ~/.cc-connect-qhn/config.toml
 cc-connect-qhn daemon start
 cc-connect-qhn daemon logs -f
 ```
