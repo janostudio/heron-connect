@@ -249,12 +249,41 @@ func TestStreamStateFor_ReturnsSameAssembler(t *testing.T) {
 // --- G1/G2 additional: appendText returns rendered text containing the new text ---
 
 // TestAppendText_ReturnsRenderedContainingNewText verifies that appendText
-// returns a render() result that includes the newly appended text.
+// returns a render() result that includes the newly set text.
 func TestAppendText_ReturnsRenderedContainingNewText(t *testing.T) {
 	a := newWecomStreamAssembler()
 	rendered := a.appendText("hello world")
 	if !strings.Contains(rendered, "hello world") {
 		t.Fatalf("appendText returned %q, want contain 'hello world'", rendered)
+	}
+}
+
+// TestAppendText_ReplacesNotAppends verifies that appendText replaces visibleText
+// rather than appending to it. The engine passes the accumulated full text on
+// every UpdateMessage call, so appendText must do a full replacement to avoid
+// duplicating content (regression test for visible text duplication bug).
+func TestAppendText_ReplacesNotAppends(t *testing.T) {
+	a := newWecomStreamAssembler()
+
+	// Simulate engine sending accumulated full text over multiple updates
+	a.appendText("hello")            // engine passes "hello"
+	a.appendText("hello world")      // engine passes "hello world" (accumulated)
+	a.appendText("hello world v2")   // engine passes "hello world v2" (accumulated)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// visibleText must be exactly the last value, not a concatenation
+	if a.visibleText != "hello world v2" {
+		t.Fatalf("visibleText = %q, want 'hello world v2' (appendText must replace, not append)", a.visibleText)
+	}
+
+	// Must not contain duplicated fragments from earlier calls
+	if strings.Count(a.visibleText, "hello world") > 1 {
+		t.Fatalf("visibleText = %q, contains duplicated 'hello world' (appendText must replace, not append)", a.visibleText)
+	}
+	if strings.Count(a.visibleText, "hello") > 1 {
+		t.Fatalf("visibleText = %q, contains duplicated 'hello' (appendText must replace, not append)", a.visibleText)
 	}
 }
 

@@ -45,11 +45,14 @@ func newWecomStreamAssembler() *wecomStreamAssembler {
 	}
 }
 
-// appendText adds model text to visibleText only. It MUST NOT touch progressLines.
+// appendText sets visibleText to the given text (full replacement, not append).
+// The engine passes the accumulated full text on every UpdateMessage call, so we
+// must replace rather than append to avoid duplicating content.
+// It MUST NOT touch progressLines.
 func (a *wecomStreamAssembler) appendText(text string) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.visibleText += text
+	a.visibleText = text
 	return a.render()
 }
 
