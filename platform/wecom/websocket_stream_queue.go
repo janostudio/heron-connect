@@ -91,7 +91,12 @@ func (p *WSPlatform) runStreamQueue(key string, state *wsStreamState, rc wsReply
 		}
 
 		state.mu.Lock()
-		rendered, shouldSend := state.assembler.ingest(req.content, req.finish)
+		// New path: content from UpdateMessage/FinalizePreviewMessage is already
+		// the final rendered output from wecomStreamAssembler. We no longer run
+		// the old wsStreamAssembler.ingest() here — that caused double processing
+		// (new assembler merges in UpdateMessage, old assembler merges again here).
+		rendered := req.content
+		shouldSend := true
 		lastAckedMatches := !req.finish && state.lastAcked == rendered
 		state.mu.Unlock()
 
@@ -123,6 +128,9 @@ func (p *WSPlatform) runStreamQueue(key string, state *wsStreamState, rc wsReply
 			state.mu.Lock()
 			state.lastAcked = rendered
 			state.assembler.reset()
+			if state.wecomAssembler != nil {
+				state.wecomAssembler.reset()
+			}
 			state.completed = true
 			state.mu.Unlock()
 		}

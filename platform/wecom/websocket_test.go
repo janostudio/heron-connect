@@ -882,7 +882,10 @@ func TestWSStreamAssembler_FinalizeFlushesPendingTool(t *testing.T) {
 	}
 }
 
-func TestSendStreamFrameAndWaitAck_AggregatesPendingToolPreview(t *testing.T) {
+func TestSendStreamFrameAndWaitAck_ToolContentSentDirectlyNotHeld(t *testing.T) {
+	// Updated contract: sendStreamFrameAndWaitAck no longer holds tool-only content.
+	// Tool holding is now handled by wecomStreamAssembler + ProgressAssembler,
+	// so content passed to sendStreamFrameAndWaitAck is sent as-is.
 	var (
 		mu     sync.Mutex
 		frames []map[string]any
@@ -910,33 +913,28 @@ func TestSendStreamFrameAndWaitAck_AggregatesPendingToolPreview(t *testing.T) {
 	done1 := make(chan error, 1)
 	go func() { done1 <- p.sendStreamFrameAndWaitAck(context.Background(), rc, tool1, false) }()
 	time.Sleep(20 * time.Millisecond)
-	done2 := make(chan error, 1)
-	go func() { done2 <- p.sendStreamFrameAndWaitAck(context.Background(), rc, tool2, false) }()
-	time.Sleep(20 * time.Millisecond)
 
+	// Tool content is sent directly (no longer held)
 	if err := <-done1; err != nil {
 		t.Fatalf("first send failed: %v", err)
+	}
+
+	done2 := make(chan error, 1)
+	go func() { done2 <- p.sendStreamFrameAndWaitAck(context.Background(), rc, tool2, false) }()
+	for {
+		if _, ok := p.pendingAcks.Load("req_agg"); ok {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if v, ok := p.pendingAcks.LoadAndDelete("req_agg"); ok {
+		v.(chan error) <- nil
+	} else {
+		t.Fatal("missing second tool pending ack")
 	}
 	if err := <-done2; err != nil {
 		t.Fatalf("second send failed: %v", err)
 	}
-	_, state, err := p.streamStateFor(rc)
-	if err != nil {
-		t.Fatalf("streamStateFor failed: %v", err)
-	}
-	state.mu.Lock()
-	heldTool := state.assembler.heldTool
-	state.mu.Unlock()
-	if heldTool != tool2 {
-		t.Fatalf("held tool after second send = %q, want %q", heldTool, tool2)
-	}
-
-	mu.Lock()
-	if len(frames) != 0 {
-		mu.Unlock()
-		t.Fatalf("frames after tool-only updates = %d, want 0", len(frames))
-	}
-	mu.Unlock()
 
 	done3 := make(chan error, 1)
 	go func() { done3 <- p.sendStreamFrameAndWaitAck(context.Background(), rc, text, false) }()
@@ -957,13 +955,14 @@ func TestSendStreamFrameAndWaitAck_AggregatesPendingToolPreview(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(frames) != 1 {
-		t.Fatalf("frames = %d, want 1", len(frames))
+	// Each content is sent independently (no aggregation/holding)
+	if len(frames) != 3 {
+		t.Fatalf("frames = %d, want 3 (each sent directly, no holding)", len(frames))
 	}
-	firstContent := frames[0]["body"].(map[string]any)["stream"].(map[string]any)["content"]
-	want := tool2 + "\n\n" + text
-	if firstContent != want {
-		t.Fatalf("aggregated content = %v, want %q", firstContent, want)
+	// Last frame should be the text content
+	lastContent := frames[2]["body"].(map[string]any)["stream"].(map[string]any)["content"]
+	if lastContent != text {
+		t.Fatalf("last frame content = %v, want %q", lastContent, text)
 	}
 }
 
@@ -1047,7 +1046,7 @@ func TestSendStreamFrameAndWaitAck_FinalizeSkipsDuplicatePartialPrefix(t *testin
 	}
 }
 
-func TestSendStreamFrameAndWaitAck_TextStillStreamsWhileToolIsHeld(t *testing.T) {
+func TestSendStreamFrameAndWaitAck_EachContentSentDirectlyNoHolding(t *testing.T) {
 	var (
 		mu     sync.Mutex
 		frames []map[string]any
@@ -1083,17 +1082,14 @@ func TestSendStreamFrameAndWaitAck_TextStillStreamsWhileToolIsHeld(t *testing.T)
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(frames) != 2 {
-		t.Fatalf("frames = %d, want 2", len(frames))
+	if len(frames) != 3 {
+		t.Fatalf("frames = %d, want 3 (each sent directly)", len(frames))
 	}
-	firstContent := frames[0]["body"].(map[string]any)["stream"].(map[string]any)["content"]
-	if firstContent != text1 {
-		t.Fatalf("first content = %v, want %q", firstContent, text1)
-	}
-	secondContent := frames[1]["body"].(map[string]any)["stream"].(map[string]any)["content"]
-	wantSecond := text1 + "\n\n" + tool + "\n\n" + text2
-	if secondContent != wantSecond {
-		t.Fatalf("second content = %v, want %q", secondContent, wantSecond)
+	for i, want := range steps {
+		got := frames[i]["body"].(map[string]any)["stream"].(map[string]any)["content"]
+		if got != want {
+			t.Fatalf("frame %d content = %v, want %q", i, got, want)
+		}
 	}
 }
 
@@ -1178,7 +1174,8 @@ func TestSendStreamFrameAndWaitAck_ToolPlusAnswerDoesNotCollapseToPreviousText(t
 	}
 }
 
-func TestSendStreamFrameAndWaitAck_FinishFlushesHeldTool(t *testing.T) {
+func TestSendStreamFrameAndWaitAck_FinishSendsContentDirectlyNoFlush(t *testing.T) {
+	// Updated: tool content is no longer held, so finish just sends its content as-is.
 	var (
 		mu     sync.Mutex
 		frames []map[string]any
@@ -1208,10 +1205,11 @@ func TestSendStreamFrameAndWaitAck_FinishFlushesHeldTool(t *testing.T) {
 		t.Fatalf("tool send failed: %v", err)
 	}
 
+	// Tool is sent directly (no holding)
 	mu.Lock()
-	if len(frames) != 0 {
+	if len(frames) != 1 {
 		mu.Unlock()
-		t.Fatalf("frames after held tool = %d, want 0", len(frames))
+		t.Fatalf("frames after tool = %d, want 1 (sent directly)", len(frames))
 	}
 	mu.Unlock()
 
@@ -1234,16 +1232,15 @@ func TestSendStreamFrameAndWaitAck_FinishFlushesHeldTool(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(frames) != 1 {
-		t.Fatalf("frames = %d, want 1", len(frames))
+	if len(frames) != 2 {
+		t.Fatalf("frames = %d, want 2 (tool + finish)", len(frames))
 	}
-	stream := frames[0]["body"].(map[string]any)["stream"].(map[string]any)
+	stream := frames[1]["body"].(map[string]any)["stream"].(map[string]any)
 	if stream["finish"] != true {
 		t.Fatalf("finish flag = %v, want true", stream["finish"])
 	}
-	want := tool + "\n\n" + text
-	if stream["content"] != want {
-		t.Fatalf("finish content = %v, want %q", stream["content"], want)
+	if stream["content"] != text {
+		t.Fatalf("finish content = %v, want %q (no tool merge)", stream["content"], text)
 	}
 }
 
