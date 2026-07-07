@@ -437,13 +437,57 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 
 	events := state.agentSession.Events()
 	stopCh := state.stopSignal()
+
+	// cancelCh is a per-turn signal that /cancel closes to make this loop stop
+	// relaying further events. It is created fresh each turn and cleared on
+	// exit, so its scope is exactly "the currently running turn" — the session
+	// itself stays alive for the next message.
+	cancelCh := make(chan struct{})
+	state.mu.Lock()
+	state.cancelCh = cancelCh
+	state.mu.Unlock()
+	defer func() {
+		state.mu.Lock()
+		if state.cancelCh == cancelCh {
+			state.cancelCh = nil
+		}
+		state.mu.Unlock()
+	}()
+
+	// handleCancel performs the same terminal cleanup as the idle-timeout
+	// branch: finalize the progress card, discard the streaming preview, and
+	// mark eventsNeedResync so any events still buffered in the channel are
+	// drained before the next turn AND are not picked up by the unsolicited
+	// reader (which would otherwise relay them to the user post-cancel).
+	handleCancel := func() {
+		cp.Finalize(ProgressCardStateFailed)
+		sp.discard()
+		state.mu.Lock()
+		state.eventsNeedResync = true
+		state.mu.Unlock()
+	}
+
 	for {
 		var event Event
 		var ok bool
 
+		// Prioritize cancel: Go's select is random when multiple cases are
+		// ready, so without this a /cancel could still lose the race to a
+		// buffered chunk and leak one more message before exiting. Checking
+		// cancelCh first makes the stop deterministic.
+		select {
+		case <-cancelCh:
+			handleCancel()
+			return
+		default:
+		}
+
 		select {
 		case <-stopCh:
 			sp.discard()
+			return
+		case <-cancelCh:
+			handleCancel()
 			return
 		case event, ok = <-events:
 			if !ok {
@@ -1640,4 +1684,3 @@ var builtinCommands = []struct {
 	{[]string{"diff"}, "diff"},
 	{[]string{"ps", "btw"}, "ps"},
 }
-

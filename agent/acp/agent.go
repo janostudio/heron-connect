@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/chenhg5/cc-connect/core"
 )
@@ -33,6 +34,11 @@ type Agent struct {
 	// session/new. Empty means "use whatever the agent selects by default".
 	mode string
 
+	// model is the pending model id to apply to new sessions. When set,
+	// StartSession applies it via session/set_model after session/new.
+	// Empty means "use whatever the agent defaults to".
+	model string
+
 	// listUnsupported caches a negative result after we probe the agent
 	// for sessionCapabilities.list once. Eliminates spawn cost on
 	// subsequent `/ls` invocations against agents that don't implement
@@ -44,11 +50,37 @@ type Agent struct {
 	// handshake so that future PermissionModes() calls can reflect the
 	// actual modes this specific ACP agent offers (rather than a
 	// hard-coded fallback that may not match).
-	modesMu       sync.RWMutex
-	modesCache    []core.PermissionModeInfo
-	modesCurrent  string
+	modesMu      sync.RWMutex
+	modesCache   []core.PermissionModeInfo
+	modesCurrent string
+
+	// modelsCache holds the latest available models observed via
+	// session/new or session/load (either from configOptions with
+	// category "model" or from the legacy "models" field). Populated
+	// by the session handshake so AvailableModels() can answer
+	// without spawning a probe process.
+	modelsMu        sync.RWMutex
+	modelsCache     []core.ModelOption
+	modelsCurrent   string
+
+	// localSessions tracks sessions started by cc-connect so /list can
+	// still return something useful when the ACP server does not
+	// implement session/list (e.g. CodeBuddy). Entries are populated
+	// on StartSession and updated when the first agent_message_chunk
+	// arrives (auto-extracted title).
+	localSessionsMu sync.RWMutex
+	localSessions   map[string]*localSessionInfo
 
 	mu sync.RWMutex
+}
+
+// localSessionInfo is the bookkeeping entry for the local session
+// fallback used by ListSessions when session/list is unsupported.
+type localSessionInfo struct {
+	SessionID string
+	CWD       string
+	Title     string
+	UpdatedAt time.Time
 }
 
 // sessionCallbacks lets a running acpSession report what it learned
@@ -57,7 +89,10 @@ type Agent struct {
 // would never see availableModes / capability advertisements.
 type sessionCallbacks interface {
 	reportModes(block acpModesBlock)
+	reportModels(current string, available []core.ModelOption)
 	reportListSupported(supported bool)
+	recordSessionStart(sessionID, cwd string)
+	recordSessionTitle(sessionID, title string)
 }
 
 // Ensure *Agent satisfies sessionCallbacks at compile time.
@@ -95,14 +130,15 @@ func New(opts map[string]any) (core.Agent, error) {
 	mode = strings.TrimSpace(mode)
 
 	return &Agent{
-		workDir:     workDir,
-		command:     cmdStr,
-		args:        args,
-		staticEnv:   staticEnv,
-		extraEnv:    extra,
-		authMethod:  authMethod,
-		displayName: displayName,
-		mode:        mode,
+		workDir:       workDir,
+		command:       cmdStr,
+		args:          args,
+		staticEnv:     staticEnv,
+		extraEnv:      extra,
+		authMethod:    authMethod,
+		displayName:   displayName,
+		mode:          mode,
+		localSessions: make(map[string]*localSessionInfo),
 	}, nil
 }
 
@@ -228,6 +264,7 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	workDir := a.workDir
 	authMethod := a.authMethod
 	pendingMode := a.mode
+	pendingModel := a.model
 	extra := append([]string(nil), a.extraEnv...)
 	extra = append(extra, a.sessionEnv...)
 	a.mu.RUnlock()
@@ -240,6 +277,7 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 		resumeSessionID: sessionID,
 		authMethod:      authMethod,
 		initialMode:     pendingMode,
+		initialModel:    pendingModel,
 		callbacks:       a,
 	})
 }
@@ -369,4 +407,123 @@ func (a *Agent) reportListSupported(supported bool) {
 	} else {
 		a.listUnsupported.Store(false)
 	}
+}
+
+// recordSessionStart logs a session ID + cwd so /list can still return
+// something useful when the ACP server does not implement
+// session/list (e.g. CodeBuddy). Safe to call multiple times for the
+// same id — only the UpdatedAt is refreshed.
+func (a *Agent) recordSessionStart(sessionID, cwd string) {
+	if sessionID == "" {
+		return
+	}
+	a.localSessionsMu.Lock()
+	defer a.localSessionsMu.Unlock()
+	if a.localSessions == nil {
+		a.localSessions = make(map[string]*localSessionInfo)
+	}
+	if info, ok := a.localSessions[sessionID]; ok {
+		info.CWD = cwd
+		info.UpdatedAt = time.Now()
+		return
+	}
+	a.localSessions[sessionID] = &localSessionInfo{
+		SessionID: sessionID,
+		CWD:       cwd,
+		UpdatedAt: time.Now(),
+	}
+}
+
+// recordSessionTitle fills in an auto-extracted title for a session
+// entry created by recordSessionStart. Called when the first
+// agent_message_chunk arrives. No-op if the session is unknown to us
+// (e.g. created externally) or the title is already set.
+func (a *Agent) recordSessionTitle(sessionID, title string) {
+	if sessionID == "" || title == "" {
+		return
+	}
+	a.localSessionsMu.Lock()
+	defer a.localSessionsMu.Unlock()
+	if a.localSessions == nil {
+		return
+	}
+	info, ok := a.localSessions[sessionID]
+	if !ok || info.Title != "" {
+		return
+	}
+	info.Title = title
+	info.UpdatedAt = time.Now()
+}
+
+// listLocalSessions returns a copy of the locally tracked sessions,
+// optionally filtered by cwd. Used as a fallback when the ACP server
+// does not implement session/list.
+func (a *Agent) listLocalSessions(cwdFilter string) []core.AgentSessionInfo {
+	a.localSessionsMu.RLock()
+	defer a.localSessionsMu.RUnlock()
+	out := make([]core.AgentSessionInfo, 0, len(a.localSessions))
+	for _, info := range a.localSessions {
+		if cwdFilter != "" && info.CWD != "" &&
+			!strings.EqualFold(filepath.Clean(info.CWD), filepath.Clean(cwdFilter)) {
+			continue
+		}
+		out = append(out, core.AgentSessionInfo{
+			ID:         info.SessionID,
+			Summary:    info.Title,
+			ModifiedAt: info.UpdatedAt,
+		})
+	}
+	return out
+}
+
+// -- ModelSwitcher impl --
+
+// SetModel stores a model id to apply to future sessions started via
+// StartSession. The engine's switchModelOnAgent calls this, then
+// closes the current session; the next StartSession will apply the
+// new model via session/set_model after handshake.
+func (a *Agent) SetModel(model string) {
+	a.mu.Lock()
+	a.model = strings.TrimSpace(model)
+	a.mu.Unlock()
+	slog.Info("acp: model changed for future sessions", "model", model)
+}
+
+// GetModel returns the model cc-connect will treat as "current" for
+// the next StartSession. Falls back to whatever the server advertised
+// as currentModelId during the last handshake.
+func (a *Agent) GetModel() string {
+	a.mu.RLock()
+	pending := a.model
+	a.mu.RUnlock()
+	if pending != "" {
+		return pending
+	}
+	a.modelsMu.RLock()
+	defer a.modelsMu.RUnlock()
+	return a.modelsCurrent
+}
+
+// AvailableModels returns the models this ACP agent offers. The list
+// is populated from the latest configOptions(models)/models observed
+// on session/new or session/load; before the first successful
+// handshake it returns an empty slice.
+func (a *Agent) AvailableModels(_ context.Context) []core.ModelOption {
+	a.modelsMu.RLock()
+	defer a.modelsMu.RUnlock()
+	out := make([]core.ModelOption, len(a.modelsCache))
+	copy(out, a.modelsCache)
+	return out
+}
+
+// reportModels caches the model list reported by the server in
+// session/new or session/load responses so AvailableModels can answer
+// without a probe.
+func (a *Agent) reportModels(current string, available []core.ModelOption) {
+	a.modelsMu.Lock()
+	a.modelsCurrent = current
+	if available != nil {
+		a.modelsCache = append(a.modelsCache[:0], available...)
+	}
+	a.modelsMu.Unlock()
 }

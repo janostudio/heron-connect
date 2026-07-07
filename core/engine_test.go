@@ -5800,6 +5800,8 @@ type controllableAgentSession struct {
 	report          *UsageReport
 	contextUsage    *ContextUsage
 	usageErr        error
+	cancelMu        sync.Mutex
+	cancelCount     int
 }
 
 func newControllableSession(id string) *controllableAgentSession {
@@ -5839,7 +5841,17 @@ func (s *controllableAgentSession) Close() error {
 	return nil
 }
 
-func (s *controllableAgentSession) CancelTurn() {}
+func (s *controllableAgentSession) CancelTurn() {
+	s.cancelMu.Lock()
+	s.cancelCount++
+	s.cancelMu.Unlock()
+}
+
+func (s *controllableAgentSession) cancelCalls() int {
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
+	return s.cancelCount
+}
 
 // controllableAgent lets tests control which session is returned by StartSession.
 type controllableAgent struct {
@@ -7708,6 +7720,145 @@ func TestAutoCompress_TriggerAfterResult(t *testing.T) {
 	sess.sendMu.Unlock()
 	if last != "/compact" {
 		t.Fatalf("expected /compact auto-compress, got %q", last)
+	}
+}
+
+// TestCmdCancel_StopsTurnAndKeepsSessionAlive verifies that /cancel makes the
+// running event loop stop relaying events (no more platform messages after
+// cancel), calls CancelTurn on the agent backend, and leaves the interactive
+// session alive for the next message.
+func TestCmdCancel_StopsTurnAndKeepsSessionAlive(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	sess := newControllableSession("cancel-session")
+	agent := &controllableAgent{}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+	key := "test:user1"
+	state := &interactiveState{
+		agentSession: sess,
+		platform:     p,
+		replyCtx:     "ctx",
+	}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = state
+	e.interactiveMu.Unlock()
+
+	session := e.sessions.GetOrCreateActive(key)
+
+	loopDone := make(chan struct{})
+	go func() {
+		e.processInteractiveEvents(state, session, e.sessions, key, "msg1", time.Now(), func() {}, nil, "ctx")
+		close(loopDone)
+	}()
+
+	// Push one event so the loop is definitely running and cancelCh is set.
+	sess.events <- Event{Type: EventText, Content: "partial answer"}
+
+	// Wait until the loop has registered its cancelCh.
+	deadline := time.After(2 * time.Second)
+	for {
+		state.mu.Lock()
+		ready := state.cancelCh != nil
+		state.mu.Unlock()
+		if ready {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for turn to start (cancelCh not set)")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	p.clearSent()
+	e.cmdCancel(p, &Message{SessionKey: key, Content: "/cancel", ReplyCtx: "ctx"})
+
+	// The event loop should exit promptly.
+	select {
+	case <-loopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("event loop did not exit after /cancel")
+	}
+
+	// CancelTurn must have been sent to the agent backend.
+	if got := sess.cancelCalls(); got != 1 {
+		t.Fatalf("expected CancelTurn called once, got %d", got)
+	}
+
+	// A cancellation notice should have been sent.
+	foundNotice := false
+	for _, s := range p.getSent() {
+		if strings.Contains(s, e.i18n.T(MsgTurnCancelled)) {
+			foundNotice = true
+			break
+		}
+	}
+	if !foundNotice {
+		t.Fatalf("expected MsgTurnCancelled reply, got %v", p.getSent())
+	}
+
+	// Events buffered/arriving after cancel must NOT be relayed to the platform.
+	p.clearSent()
+	sess.events <- Event{Type: EventText, Content: "leaked after cancel"}
+	sess.events <- Event{Type: EventResult, Content: "leaked final", Done: true}
+	time.Sleep(50 * time.Millisecond)
+	if got := p.getSent(); len(got) != 0 {
+		t.Fatalf("expected no messages after cancel, got %v", got)
+	}
+
+	// Session must stay alive and eventsNeedResync must be set so the next
+	// turn drains these leaked events instead of the unsolicited reader
+	// picking them up.
+	if !sess.Alive() {
+		t.Fatal("agent session should stay alive after /cancel")
+	}
+	state.mu.Lock()
+	needResync := state.eventsNeedResync
+	stillTracked := e.interactiveStates[key] == state
+	state.mu.Unlock()
+	if !needResync {
+		t.Fatal("expected eventsNeedResync=true after /cancel")
+	}
+	if !stillTracked {
+		t.Fatal("interactive state should remain tracked after /cancel")
+	}
+}
+
+// TestCmdCancel_NoTurnInProgress verifies /cancel replies "no turn in progress"
+// when no event loop is running, and that a second /cancel after a real cancel
+// does not panic (no double-close of cancelCh).
+func TestCmdCancel_NoTurnInProgress(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	sess := newControllableSession("cancel-idle")
+	agent := &controllableAgent{}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+	key := "test:user1"
+	state := &interactiveState{
+		agentSession: sess,
+		platform:     p,
+		replyCtx:     "ctx",
+	}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = state
+	e.interactiveMu.Unlock()
+
+	// No processInteractiveEvents running → cancelCh is nil.
+	e.cmdCancel(p, &Message{SessionKey: key, Content: "/cancel", ReplyCtx: "ctx"})
+
+	found := false
+	for _, s := range p.getSent() {
+		if strings.Contains(s, e.i18n.T(MsgNoTurnInProgress)) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected MsgNoTurnInProgress, got %v", p.getSent())
+	}
+	if got := sess.cancelCalls(); got != 0 {
+		t.Fatalf("expected CancelTurn not called when no turn in progress, got %d", got)
 	}
 }
 
@@ -12778,5 +12929,109 @@ func TestBtwAlias_ResolvesToPs(t *testing.T) {
 	id2 := matchPrefix("ps", builtinCommands)
 	if id2 != "ps" {
 		t.Fatalf("matchPrefix(\"ps\") = %q, want \"ps\"", id2)
+	}
+}
+
+// ─── mergeStreamDisplayContent ──────────────────────────────────────
+
+func TestMergeStreamDisplayContent_streamIsPrefixOfFinal(t *testing.T) {
+	stream := "哈哈，你好！有什么我可以帮你的吗？"
+	final := "哈哈，你好！有什么我可以帮你的吗？\n\n*model · usage · path*"
+	got := mergeStreamDisplayContent(stream, "", final)
+	if got != final {
+		t.Fatalf("got %q, want final (stream is prefix, should return final as-is)", got)
+	}
+}
+
+func TestMergeStreamDisplayContent_streamStartsWithFinal(t *testing.T) {
+	stream := "hello world\n\nmore content"
+	final := "hello world"
+	got := mergeStreamDisplayContent(stream, "", final)
+	if got != stream {
+		t.Fatalf("got %q, want stream (final is prefix, should return stream as-is)", got)
+	}
+}
+
+func TestMergeStreamDisplayContent_exactMatch(t *testing.T) {
+	text := "hello world"
+	got := mergeStreamDisplayContent(text, "", text)
+	if got != text {
+		t.Fatalf("got %q, want %q", got, text)
+	}
+}
+
+func TestMergeStreamDisplayContent_streamEmpty(t *testing.T) {
+	got := mergeStreamDisplayContent("", "", "final only")
+	if got != "final only" {
+		t.Fatalf("got %q, want 'final only'", got)
+	}
+}
+
+func TestMergeStreamDisplayContent_finalEmpty(t *testing.T) {
+	got := mergeStreamDisplayContent("stream only", "", "")
+	if got != "stream only" {
+		t.Fatalf("got %q, want 'stream only'", got)
+	}
+}
+
+func TestMergeStreamDisplayContent_noMatchConcat(t *testing.T) {
+	stream := "thinking..."
+	final := "final answer"
+	got := mergeStreamDisplayContent(stream, "", final)
+	if got != "thinking...\n\nfinal answer" {
+		t.Fatalf("got %q, want concatenation", got)
+	}
+}
+
+func TestMergeStreamDisplayContent_lastAssistantDedup(t *testing.T) {
+	// When streamContent and finalResponse are the same, Dedup 1
+	// (HasPrefix) fires first and returns final as-is.
+	stream := "hello\nworld"
+	lastSegment := "world"
+	final := "hello\nworld"
+	got := mergeStreamDisplayContent(stream, lastSegment, final)
+	if got != final {
+		t.Fatalf("got %q, want %q (stream and final are identical)", got, final)
+	}
+}
+
+func TestMergeStreamDisplayContent_lastAssistantIsEverything(t *testing.T) {
+	stream := "hello world"
+	lastSegment := "hello world"
+	final := "hello world"
+	got := mergeStreamDisplayContent(stream, lastSegment, final)
+	if got != final {
+		t.Fatalf("got %q, want final (stream is all lastSegment)", got)
+	}
+}
+
+func TestMergeStreamDisplayContent_withTrailingNewlines(t *testing.T) {
+	stream := "hello\n\n\n"
+	final := "hello"
+	got := mergeStreamDisplayContent(stream, "", final)
+	if got != "hello" {
+		t.Fatalf("got %q, want 'hello' (exact match after trim)", got)
+	}
+}
+
+func TestMergeStreamDisplayContent_withTrailingSpaces(t *testing.T) {
+	stream := "hello   "
+	final := "hello"
+	got := mergeStreamDisplayContent(stream, "", final)
+	if got != "hello" {
+		t.Fatalf("got %q, want 'hello' (exact match after trim)", got)
+	}
+}
+
+func TestMergeStreamDisplayContent_realWorldCase(t *testing.T) {
+	// Reproduces the actual bug from the log.
+	stream := "哈哈，你好！有什么我可以帮你的吗？"
+	final := "哈哈，你好！有什么我可以帮你的吗？\n\n*deepseek-v4-pro-ioa · 剩余 97% · …/workspace/auto_bugfix*"
+	got := mergeStreamDisplayContent(stream, "", final)
+	if got != final {
+		t.Fatalf("got %q, want final (stream is prefix of final with metadata)", got)
+	}
+	if strings.Contains(got, "哈哈，你好！有什么我可以帮你的吗？\n\n哈哈，你好") {
+		t.Fatalf("duplicate detected in output: %q", got)
 	}
 }

@@ -296,15 +296,22 @@ type queuedMessage struct {
 
 // interactiveState tracks a running interactive agent session and its permission state.
 type interactiveState struct {
-	agentSession           AgentSession
-	platform               Platform
-	replyCtx               any
-	currentMessageID       string
-	workspaceDir           string
-	agent                  Agent
-	mu                     sync.Mutex
-	stopCh                 chan struct{}
-	stopped                bool
+	agentSession     AgentSession
+	platform         Platform
+	replyCtx         any
+	currentMessageID string
+	workspaceDir     string
+	agent            Agent
+	mu               sync.Mutex
+	stopCh           chan struct{}
+	stopped          bool
+	// cancelCh signals cmdCancel that the running foreground turn should stop
+	// relaying further events to the platform. Created fresh at the start of
+	// each processInteractiveEvents call, cleared (under mu) when the turn
+	// ends. nil means no turn is currently in progress. Unlike stopCh (which
+	// tears down the whole interactive state), cancelCh is scoped to a single
+	// turn so the session stays alive for the next message.
+	cancelCh               chan struct{}
 	pending                *pendingPermission
 	pendingMessages        []queuedMessage // messages queued while session was busy
 	approveAll             bool            // when true, auto-approve all permission requests for this session
@@ -441,6 +448,7 @@ func NewEngine(name string, ag Agent, platforms []Platform, sessionStorePath str
 
 	return e
 }
+
 // ExecuteHeartbeat runs a heartbeat check by injecting a synthetic message
 // into the main session, similar to cron but designed for periodic awareness.
 func (e *Engine) ExecuteHeartbeat(sessionKey, prompt string, silent bool) error {

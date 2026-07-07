@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 )
+
 func (e *Engine) cmdModel(p Platform, msg *Message, args []string) {
 	agent, sessions, interactiveKey, err := e.commandContext(p, msg)
 	if err != nil {
@@ -49,6 +50,15 @@ func (e *Engine) cmdModel(p Platform, msg *Message, args []string) {
 			}
 			sb.WriteString("\n")
 			sb.WriteString(e.i18n.T(MsgModelListTitle))
+			if len(models) == 0 {
+				// No models available — common cause: the agent
+				// exposes its model list only after the first
+				// session handshake (e.g. ACP agents like
+				// CodeBuddy). Tell the user to start a session first.
+				sb.WriteString(e.i18n.T(MsgModelListEmptyHint))
+				e.reply(p, msg.ReplyCtx, sb.String())
+				return
+			}
 			var buttons [][]ButtonOption
 			var row []ButtonOption
 			for i, m := range models {
@@ -520,25 +530,34 @@ func (e *Engine) cmdCancel(p Platform, msg *Message) {
 	iKey := e.interactiveKeyForSessionKey(msg.SessionKey)
 	e.interactiveMu.Lock()
 	state, ok := e.interactiveStates[iKey]
+	e.interactiveMu.Unlock()
 	if !ok || state == nil {
-		e.interactiveMu.Unlock()
 		slog.Info("cancel: no interactive session", "session_key", msg.SessionKey)
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgNoTurnInProgress))
 		return
 	}
+
+	// cancelCh is non-nil only while a turn's event loop is running. Claim it
+	// (set to nil under the lock) so a racing second /cancel sees no turn in
+	// progress instead of double-closing the channel.
 	state.mu.Lock()
 	agentSession := state.agentSession
+	cancelCh := state.cancelCh
+	state.cancelCh = nil
 	state.mu.Unlock()
-	e.interactiveMu.Unlock()
 
-	if agentSession == nil {
-		slog.Info("cancel: no agent session", "session_key", msg.SessionKey)
+	if agentSession == nil || cancelCh == nil {
+		slog.Info("cancel: no turn in progress", "session_key", msg.SessionKey)
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgNoTurnInProgress))
 		return
 	}
+
 	sid := agentSession.CurrentSessionID()
 	slog.Info("cancel: sending CancelTurn", "session_key", msg.SessionKey, "agent_session_id", sid)
+	// Best-effort: ask the agent backend to stop generating server-side.
 	agentSession.CancelTurn()
+	// Authoritative: stop the local event loop from relaying anything further.
+	close(cancelCh)
 	e.reply(p, msg.ReplyCtx, e.i18n.T(MsgTurnCancelled))
 }
 
@@ -793,4 +812,3 @@ func (e *Engine) drainQueuedMessagesAfterCompress(state *interactiveState, sessi
 		*unlocked = true
 	}
 }
-

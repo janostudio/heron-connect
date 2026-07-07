@@ -54,6 +54,12 @@ type acpSession struct {
 	availableModes []acpModeInfo
 	currentMode    string
 
+	// usageMu guards the latest usage_update snapshot received from
+	// the server. Populated by maybeAbsorbUsageUpdate and read by
+	// GetContextUsage to power the /usage command.
+	usageMu       sync.RWMutex
+	usageSnapshot *core.ContextUsage
+
 	callbacks sessionCallbacks // may be nil (tests, integration harness)
 }
 
@@ -74,6 +80,7 @@ type acpSessionConfig struct {
 	resumeSessionID string
 	authMethod      string
 	initialMode     string           // if non-empty, applied via session/set_mode after session/new
+	initialModel    string           // if non-empty, applied via session/set_model after session/new
 	callbacks       sessionCallbacks // may be nil
 }
 
@@ -150,6 +157,11 @@ func newACPSession(ctx context.Context, cfg acpSessionConfig) (*acpSession, erro
 		return nil, err
 	}
 
+	// Record this session for local /list fallback.
+	if s.callbacks != nil {
+		s.callbacks.recordSessionStart(s.currentACPSessionID(), s.workDir)
+	}
+
 	// Apply the agent-level mode preference now that we have a session
 	// id. If set_mode fails (e.g. modeId unknown to this backend) we
 	// log and carry on with whatever mode the server defaulted to —
@@ -164,12 +176,27 @@ func newACPSession(ctx context.Context, cfg acpSessionConfig) (*acpSession, erro
 		}
 	}
 
+	// Apply the agent-level model preference. session/set_model is a
+	// CodeBuddy extension (and an older ACP draft RPC) that changes
+	// the active model on the running session. Failure is logged but
+	// non-fatal — the server will keep using its default model.
+	if strings.TrimSpace(cfg.initialModel) != "" {
+		if err := s.SetModel(cfg.initialModel); err != nil {
+			slog.Warn("acp: initial model could not be applied",
+				"model", cfg.initialModel,
+				"session_id", s.currentACPSessionID(),
+				"error", err,
+			)
+		}
+	}
+
 	return s, nil
 }
 
 // handshake runs initialize → optional authenticate → session/load or
-// session/new, and caches any modes the server advertises so
-// SetLiveMode / PermissionModes can answer correctly.
+// session/new, and caches any modes/models the server advertises so
+// SetLiveMode / PermissionModes / SetModel / AvailableModels can
+// answer correctly.
 func (s *acpSession) handshake(resumeSessionID string, authMethod string) error {
 	initParams := map[string]any{
 		"protocolVersion": 1,
@@ -182,7 +209,8 @@ func (s *acpSession) handshake(resumeSessionID string, authMethod string) error 
 		},
 		"clientInfo": map[string]any{
 			"name":    "cc-connect",
-			"version": "1.0.0",
+			"title":   "cc-connect",
+			"version": "1.4.6",
 		},
 	}
 	res, err := s.tr.call(s.ctx, "initialize", initParams)
@@ -225,12 +253,15 @@ func (s *acpSession) handshake(resumeSessionID string, authMethod string) error 
 			slog.Warn("acp: session/load failed, starting new session", "error", err)
 		} else {
 			var lr struct {
-				SessionID string         `json:"sessionId"`
-				Modes     *acpModesBlock `json:"modes"`
+				SessionID     string            `json:"sessionId"`
+				Modes         *acpModesBlock    `json:"modes"`
+				ConfigOptions []acpConfigOption `json:"configOptions"`
+				Models        *acpModelsBlock   `json:"models"`
 			}
 			if json.Unmarshal(loadRes, &lr) == nil && lr.SessionID != "" {
 				s.setACPSessionID(lr.SessionID)
 				s.absorbModes(lr.Modes)
+				s.absorbConfigOptions(lr.ConfigOptions, lr.Models)
 				return nil
 			}
 		}
@@ -245,8 +276,10 @@ func (s *acpSession) handshake(resumeSessionID string, authMethod string) error 
 		return fmt.Errorf("acp: session/new: %w", err)
 	}
 	var sn struct {
-		SessionID string         `json:"sessionId"`
-		Modes     *acpModesBlock `json:"modes"`
+		SessionID     string            `json:"sessionId"`
+		Modes         *acpModesBlock    `json:"modes"`
+		ConfigOptions []acpConfigOption `json:"configOptions"`
+		Models        *acpModelsBlock   `json:"models"`
 	}
 	if err := json.Unmarshal(newRes, &sn); err != nil {
 		return fmt.Errorf("acp: parse session/new: %w", err)
@@ -256,7 +289,23 @@ func (s *acpSession) handshake(resumeSessionID string, authMethod string) error 
 	}
 	s.setACPSessionID(sn.SessionID)
 	s.absorbModes(sn.Modes)
+	s.absorbConfigOptions(sn.ConfigOptions, sn.Models)
 	return nil
+}
+
+// absorbConfigOptions parses both the new configOptions (category:
+// "model") and the legacy models block from session/new/session/load
+// responses, and reports the model list to the parent agent via
+// callbacks. Either source may be present; when both are,
+// configOptions wins.
+func (s *acpSession) absorbConfigOptions(configOptions []acpConfigOption, legacy *acpModelsBlock) {
+	current, available := parseModels(configOptions, legacy)
+	if len(available) == 0 && current == "" {
+		return
+	}
+	if s.callbacks != nil {
+		s.callbacks.reportModels(current, available)
+	}
 }
 
 // absorbModes copies a modes block into the session's cache and fans
@@ -353,6 +402,55 @@ func (s *acpSession) SetLiveMode(mode string) bool {
 	return true
 }
 
+// SetModel changes the active model on the running session via
+// `session/set_model` (a CodeBuddy extension / older ACP draft RPC).
+// Returns an error if the call fails; nil means the server accepted
+// the change. If the server returns method-not-found we try the
+// newer `session/set_config_option` (configId: "model") as a fallback.
+func (s *acpSession) SetModel(modelID string) error {
+	if !s.alive.Load() {
+		return fmt.Errorf("acp: session closed")
+	}
+	sid := s.currentACPSessionID()
+	if sid == "" {
+		return fmt.Errorf("acp: no agent session id")
+	}
+	params := map[string]any{
+		"sessionId": sid,
+		"modelId":   modelID,
+	}
+	if _, err := s.tr.call(s.ctx, "session/set_model", params); err == nil {
+		slog.Info("acp: model applied via session/set_model",
+			"model", modelID, "session_id", sid)
+		if s.callbacks != nil {
+			s.callbacks.reportModels(modelID, nil)
+		}
+		return nil
+	} else if rpcErr, ok := err.(*rpcErrPayload); ok && (rpcErr.Code == -32601 || rpcErr.Code == -32600) {
+		// Method not found — fall through to session/set_config_option.
+		slog.Debug("acp: session/set_model unsupported, trying session/set_config_option",
+			"error", err)
+	} else {
+		return fmt.Errorf("acp: session/set_model: %w", err)
+	}
+
+	// Fallback: session/set_config_option (configId: "model")
+	params2 := map[string]any{
+		"sessionId": sid,
+		"configId":  "model",
+		"value":     modelID,
+	}
+	if _, err := s.tr.call(s.ctx, "session/set_config_option", params2); err != nil {
+		return fmt.Errorf("acp: session/set_config_option (model): %w", err)
+	}
+	slog.Info("acp: model applied via session/set_config_option",
+		"model", modelID, "session_id", sid)
+	if s.callbacks != nil {
+		s.callbacks.reportModels(modelID, nil)
+	}
+	return nil
+}
+
 // matchAvailableMode resolves a user-typed mode string to a known ACP
 // modeId from the cached availableModes list. Matching is case-
 // insensitive on both id and display name to accommodate IM input.
@@ -381,10 +479,142 @@ func (s *acpSession) onNotification(method string, params json.RawMessage) {
 	}
 	s.cacheToolCallInput(params)
 	s.maybeAbsorbCurrentModeUpdate(params)
+	s.maybeAbsorbConfigOptionUpdate(params)
+	s.maybeAbsorbSessionInfoUpdate(params)
+	s.maybeAbsorbUsageUpdate(params)
+	s.maybeExtractSessionTitle(params)
 	sid := s.currentACPSessionID()
 	for _, ev := range mapSessionUpdate(sid, params) {
 		s.emit(ev)
 	}
+}
+
+// maybeExtractSessionTitle watches the first agent_message_chunk for
+// a session and uses it as the session title for the local /list
+// fallback. Subsequent chunks are ignored — we only want the first
+// message to act as an auto-generated summary.
+func (s *acpSession) maybeExtractSessionTitle(params json.RawMessage) {
+	var wrap struct {
+		Update json.RawMessage `json:"update"`
+	}
+	if json.Unmarshal(params, &wrap) != nil || len(wrap.Update) == 0 {
+		return
+	}
+	var head struct {
+		Kind string `json:"sessionUpdate"`
+	}
+	if json.Unmarshal(wrap.Update, &head) != nil || head.Kind != "agent_message_chunk" {
+		return
+	}
+	var u struct {
+		Content struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(wrap.Update, &u) != nil {
+		return
+	}
+	text := strings.TrimSpace(u.Content.Text)
+	if text == "" || s.callbacks == nil {
+		return
+	}
+	// Truncate to ~60 runes for a readable /list entry.
+	r := []rune(text)
+	if len(r) > 60 {
+		text = string(r[:60]) + "…"
+	}
+	s.callbacks.recordSessionTitle(s.currentACPSessionID(), text)
+}
+
+// maybeAbsorbConfigOptionUpdate watches for config_option_update
+// notifications and re-publishes model/mode changes so the Agent
+// caches stay in sync. Only the "model" category is mapped today;
+// "mode" is already handled by current_mode_update above.
+func (s *acpSession) maybeAbsorbConfigOptionUpdate(params json.RawMessage) {
+	var wrap struct {
+		Update json.RawMessage `json:"update"`
+	}
+	if json.Unmarshal(params, &wrap) != nil || len(wrap.Update) == 0 {
+		return
+	}
+	var head struct {
+		Kind          string            `json:"sessionUpdate"`
+		ConfigOptions []acpConfigOption `json:"configOptions"`
+	}
+	if json.Unmarshal(wrap.Update, &head) != nil || head.Kind != "config_option_update" {
+		return
+	}
+	current, available := parseModels(head.ConfigOptions, nil)
+	if current == "" && len(available) == 0 {
+		return
+	}
+	if s.callbacks != nil {
+		s.callbacks.reportModels(current, available)
+	}
+}
+
+// maybeAbsorbSessionInfoUpdate watches for session_info_update
+// notifications and re-publishes the title so the locally tracked
+// session list stays in sync with what the server reports.
+func (s *acpSession) maybeAbsorbSessionInfoUpdate(params json.RawMessage) {
+	var wrap struct {
+		Update json.RawMessage `json:"update"`
+	}
+	if json.Unmarshal(params, &wrap) != nil || len(wrap.Update) == 0 {
+		return
+	}
+	var head struct {
+		Kind  string `json:"sessionUpdate"`
+		Title string `json:"title"`
+	}
+	if json.Unmarshal(wrap.Update, &head) != nil || head.Kind != "session_info_update" {
+		return
+	}
+	if head.Title == "" || s.callbacks == nil {
+		return
+	}
+	s.callbacks.recordSessionTitle(s.currentACPSessionID(), head.Title)
+}
+
+// maybeAbsorbUsageUpdate watches for usage_update notifications and
+// caches the latest snapshot so GetContextUsage can power /usage.
+// ACP's usage_update carries used/size token counts and an optional
+// cost; we map used → UsedTokens and size → ContextWindow.
+func (s *acpSession) maybeAbsorbUsageUpdate(params json.RawMessage) {
+	var wrap struct {
+		Update json.RawMessage `json:"update"`
+	}
+	if json.Unmarshal(params, &wrap) != nil || len(wrap.Update) == 0 {
+		return
+	}
+	var head struct {
+		Kind string `json:"sessionUpdate"`
+		Used int    `json:"used"`
+		Size int    `json:"size"`
+	}
+	if json.Unmarshal(wrap.Update, &head) != nil || head.Kind != "usage_update" {
+		return
+	}
+	s.usageMu.Lock()
+	s.usageSnapshot = &core.ContextUsage{
+		UsedTokens:    head.Used,
+		ContextWindow: head.Size,
+		TotalTokens:   head.Used,
+	}
+	s.usageMu.Unlock()
+}
+
+// GetContextUsage implements core.ContextUsageReporter so the engine's
+// /usage command can surface server-reported token usage for ACP
+// sessions. Returns nil if the server hasn't sent a usage_update yet.
+func (s *acpSession) GetContextUsage() *core.ContextUsage {
+	s.usageMu.RLock()
+	defer s.usageMu.RUnlock()
+	if s.usageSnapshot == nil {
+		return nil
+	}
+	out := *s.usageSnapshot
+	return &out
 }
 
 // maybeAbsorbCurrentModeUpdate watches session/update notifications

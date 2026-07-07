@@ -295,6 +295,7 @@ const (
 	MsgModelDefault               MsgKey = "model_default"
 	MsgModelListTitle             MsgKey = "model_list_title"
 	MsgModelUsage                 MsgKey = "model_usage"
+	MsgModelListEmptyHint         MsgKey = "model_list_empty_hint"
 	MsgReasoningDefault           MsgKey = "reasoning_default"
 	MsgReasoningListTitle         MsgKey = "reasoning_list_title"
 	MsgReasoningUsage             MsgKey = "reasoning_usage"
@@ -1339,11 +1340,11 @@ var messages = map[MsgKey]map[Language]string{
 		LangSpanish:            "**Sesiones de %s** (%d) · Página %d/%d\n\n",
 	},
 	MsgListEmpty: {
-		LangEnglish:            "No sessions found for this project.",
-		LangChinese:            "未找到此项目的会话。",
-		LangTraditionalChinese: "未找到此項目的會話。",
-		LangJapanese:           "このプロジェクトのセッションが見つかりません。",
-		LangSpanish:            "No se encontraron sesiones para este proyecto.",
+		LangEnglish:            "No sessions found for this project.\n\nTip: Send a message to start a new session, then /list will show it here.",
+		LangChinese:            "未找到此项目的会话。\n\n提示：请先发送一条消息启动新会话，之后 /list 会显示在这里。",
+		LangTraditionalChinese: "未找到此項目的會話。\n\n提示：請先發送一條訊息啟動新會話，之後 /list 會顯示在這裡。",
+		LangJapanese:           "このプロジェクトのセッションが見つかりません。\n\nヒント：メッセージを送信して新しいセッションを開始すると、/list に表示されます。",
+		LangSpanish:            "No se encontraron sesiones para este proyecto.\n\nConsejo: Envía un mensaje para iniciar una nueva sesión, luego /list la mostrará aquí.",
 	},
 	MsgListMore: {
 		LangEnglish:            "\n... and %d more\n",
@@ -2217,6 +2218,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "用法: `/model switch <序號>` 或 `/model switch <模型名>`",
 		LangJapanese:           "使い方: `/model switch <番号>` または `/model switch <モデル名>`",
 		LangSpanish:            "Uso: `/model switch <número>` o `/model switch <nombre_modelo>`",
+	},
+	MsgModelListEmptyHint: {
+		LangEnglish:            "(No models available yet. Send a message to start a session, then the model list will be loaded from the agent.)\n",
+		LangChinese:            "（暂无可用模型。请先发送一条消息启动会话，模型列表将从 Agent 加载。）\n",
+		LangTraditionalChinese: "（暫無可用模型。請先發送一條訊息啟動會話，模型列表將從 Agent 加載。）\n",
+		LangJapanese:           "（利用可能なモデルがありません。メッセージを送信してセッションを開始すると、モデルリストがエージェントから読み込まれます。）\n",
+		LangSpanish:            "(No hay modelos disponibles aún. Envía un mensaje para iniciar una sesión y la lista de modelos se cargará desde el agente.)\n",
 	},
 	MsgReasoningDefault: {
 		LangEnglish:            "Current reasoning effort: (not set, using Codex default)\n",

@@ -571,6 +571,72 @@ func TestFilterOwnedSessions_EmptyKnownReturnsAll(t *testing.T) {
 	}
 }
 
+func TestSessionsFromSessionManager_returnsTrackedSessions(t *testing.T) {
+	dir := t.TempDir()
+	sm := NewSessionManager(dir + "/sessions.json")
+	userKey := "user:alice"
+
+	s1 := sm.GetOrCreateActive(userKey)
+	s1.SetAgentInfo("agent-sid-1", "acp", "First session")
+
+	s2 := sm.GetOrCreateActive(userKey + ":bob")
+	s2.SetAgentInfo("agent-sid-2", "acp", "Second session")
+
+	got := sessionsFromSessionManager(sm, "acp")
+	if len(got) != 2 {
+		t.Fatalf("sessionsFromSessionManager len = %d, want 2", len(got))
+	}
+	ids := map[string]bool{got[0].ID: true, got[1].ID: true}
+	if !ids["agent-sid-1"] || !ids["agent-sid-2"] {
+		t.Fatalf("missing expected ids, got = %+v", got)
+	}
+}
+
+func TestSessionsFromSessionManager_filtersByAgentName(t *testing.T) {
+	dir := t.TempDir()
+	sm := NewSessionManager(dir + "/sessions.json")
+	userKey := "user:alice"
+
+	s1 := sm.GetOrCreateActive(userKey)
+	s1.SetAgentInfo("agent-acp-1", "acp", "ACP session")
+
+	s2 := sm.GetOrCreateActive(userKey + ":bob")
+	s2.SetAgentInfo("agent-cc-1", "claudecode", "Claude session")
+
+	got := sessionsFromSessionManager(sm, "acp")
+	if len(got) != 1 || got[0].ID != "agent-acp-1" {
+		t.Fatalf("sessionsFromSessionManager(acp) = %+v, want [agent-acp-1]", got)
+	}
+}
+
+func TestSessionsFromSessionManager_ignoresEmptySessionID(t *testing.T) {
+	dir := t.TempDir()
+	sm := NewSessionManager(dir + "/sessions.json")
+	userKey := "user:alice"
+
+	// Session without agent session id
+	s1 := sm.GetOrCreateActive(userKey)
+	s1.SetAgentInfo("", "acp", "No agent id")
+
+	// Session with continue sentinel
+	s2 := sm.GetOrCreateActive(userKey + ":bob")
+	s2.SetAgentInfo(ContinueSession, "acp", "Continue sentinel")
+
+	got := sessionsFromSessionManager(sm, "acp")
+	if len(got) != 0 {
+		t.Fatalf("sessionsFromSessionManager = %+v, want empty", got)
+	}
+}
+
+func TestSessionsFromSessionManager_emptyManager(t *testing.T) {
+	dir := t.TempDir()
+	sm := NewSessionManager(dir + "/sessions.json")
+	got := sessionsFromSessionManager(sm, "acp")
+	if len(got) != 0 {
+		t.Fatalf("sessionsFromSessionManager on empty = %d, want 0", len(got))
+	}
+}
+
 func TestSwitchToAgentSession_PreservesOldSession(t *testing.T) {
 	dir := t.TempDir()
 	sm := NewSessionManager(dir + "/sessions.json")

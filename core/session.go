@@ -118,6 +118,13 @@ func (s *Session) GetName() string {
 	return s.Name
 }
 
+// GetAgentName atomically reads the agent type (e.g. "claudecode", "acp").
+func (s *Session) GetAgentName() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.AgentType
+}
+
 func (s *Session) GetUpdatedAt() time.Time {
 	s.mu.Lock()
 	defer s.mu.Unlock()

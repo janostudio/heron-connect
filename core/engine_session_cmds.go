@@ -84,6 +84,32 @@ const listPageSize = 20
 // dirCardPageSize is the max directory history rows per card page (Feishu / other card UIs).
 const dirCardPageSize = 20
 
+// sessionsFromSessionManager builds a fallback session list from
+// cc-connect's own SessionManager. Used when the agent backend does
+// not report sessions (e.g. ACP servers without session/list support
+// like CodeBuddy). Only sessions with a non-empty AgentSessionID and
+// matching the given agent name are included.
+func sessionsFromSessionManager(sm *SessionManager, agentName string) []AgentSessionInfo {
+	all := sm.AllSessions()
+	out := make([]AgentSessionInfo, 0, len(all))
+	for _, s := range all {
+		agentSID := s.GetAgentSessionID()
+		if agentSID == "" || agentSID == ContinueSession {
+			continue
+		}
+		if name := s.GetAgentName(); name != "" && name != agentName {
+			continue
+		}
+		info := AgentSessionInfo{
+			ID:         agentSID,
+			Summary:    s.GetName(),
+			ModifiedAt: s.GetUpdatedAt(),
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
 func (e *Engine) cmdList(p Platform, msg *Message, args []string) {
 	agent, sessions, _, err := e.commandContext(p, msg)
 	if err != nil {
@@ -98,6 +124,13 @@ func (e *Engine) cmdList(p Platform, msg *Message, args []string) {
 			return
 		}
 		agentSessions = e.applySessionFilter(agentSessions, sessions)
+		// Fallback: when the agent backend doesn't report sessions
+		// (e.g. ACP servers like CodeBuddy that don't implement
+		// session/list), surface sessions tracked by cc-connect's own
+		// SessionManager so /list and /switch still work.
+		if len(agentSessions) == 0 {
+			agentSessions = sessionsFromSessionManager(sessions, agent.Name())
+		}
 		if len(agentSessions) == 0 {
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgListEmpty))
 			return
@@ -598,6 +631,20 @@ func mergeStreamDisplayContent(streamContent, lastAssistantSegment, finalRespons
 		return streamContent
 	}
 
+	// Dedup 1: when finalResponse starts with the streamed content,
+	// the stream was just a prefix (e.g. metadata appended after the
+	// answer, like "model · usage · path"). Return finalResponse as-is.
+	if strings.HasPrefix(finalResponse, streamContent) {
+		return finalResponse
+	}
+	// Dedup 2: when streamContent starts with finalResponse, the
+	// stream has already been delivered in full; no need to append.
+	if strings.HasPrefix(streamContent, finalResponse) {
+		return streamContent
+	}
+	// Dedup 3: remove the last assistant segment from streamContent
+	// if it appears as a suffix, so we don't duplicate the final
+	// chunk that the assistant already echoed.
 	lastAssistantSegment = strings.TrimSpace(lastAssistantSegment)
 	if lastAssistantSegment != "" {
 		trimmedStream := strings.TrimSpace(streamContent)
@@ -613,6 +660,7 @@ func mergeStreamDisplayContent(streamContent, lastAssistantSegment, finalRespons
 		}
 	}
 
+	// Dedup 4: exact match after trim
 	if strings.TrimSpace(streamContent) == finalResponse {
 		return streamContent
 	}

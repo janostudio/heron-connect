@@ -1,5 +1,51 @@
 # Changelog
 
+## v1.4.6 (2026-07-07)
+
+Personal fork `/cancel` fix for `@qinghuangniao/cc-connect-qhn`. Fixes the bug where output kept streaming to the user after `/cancel` was issued.
+
+### Notes
+- Fix `/cancel` continuing to relay output after cancellation. Previously `cmdCancel` only sent `agentSession.CancelTurn()` (a fire-and-forget `session/cancel` notification to the agent backend) without touching any engine-local state, so the foreground event loop in `processInteractiveEvents` kept reading and relaying already-buffered chunks from the events channel (cap 128), plus any chunks the ACP server emitted between receiving the cancel and actually stopping. The loop's `select` only recognized `stopCh` (`/stop`) and `e.ctx.Done()` — there was no cancel path. A second leak: even if the loop returned, without `eventsNeedResync=true` the unsolicited reader would pick up the leftover chunks and relay them as "background" events.
+- Add a per-turn `cancelCh` to `interactiveState`, created fresh at the start of each `processInteractiveEvents` call and cleared on exit (scoped to the running turn, unlike `stopCh` which tears down the whole interactive state). `cmdCancel` now closes `cancelCh` (authoritative local stop) in addition to `CancelTurn()` (best-effort server-side stop), and the event loop checks `cancelCh` with priority so cancellation is deterministic rather than racing buffered chunks. `handleCancel` finalizes the progress card, discards the streaming preview, and sets `eventsNeedResync=true` so leftover events are drained before the next turn and are not picked up by the unsolicited reader.
+- `cmdCancel` now uses `cancelCh` presence (not just `agentSession != nil`) to decide whether a turn is actually in progress, and claims the channel under `state.mu` (setting it to nil) so a racing second `/cancel` sees "no turn in progress" instead of double-closing. The session stays alive after `/cancel` — the next message reuses the same `agentSession`. Bump `clientInfo.version` to `1.4.6`.
+
+### Tests
+- 2 new unit tests in `core/engine_test.go`: `TestCmdCancel_StopsTurnAndKeepsSessionAlive` (loop exits promptly, `CancelTurn` called once, `MsgTurnCancelled` sent, post-cancel events are NOT relayed, session stays alive, `eventsNeedResync` set) and `TestCmdCancel_NoTurnInProgress` (replies `MsgNoTurnInProgress` and does not call `CancelTurn` when idle; no double-close panic).
+- Full suite: `core` pass (short + `-race`), cancel tests pass under `-race -count=50`.
+
+## v1.4.5 (2026-07-01)
+
+Personal fork streaming dedup fix for `@qinghuangniao/cc-connect-qhn`.
+
+### Notes
+- Fix `mergeStreamDisplayContent` duplicate output bug in `displayModeStream` mode. When `finalResponse` includes metadata (e.g. `*model · usage · path*`) appended after the answer text, the old comparison (`TrimSpace(streamContent) == finalResponse`) always failed, causing `streamContent + "\n\n" + finalResponse` which duplicated the answer. Added prefix-based dedup: if `finalResponse` starts with `streamContent` (the stream was just a prefix), return `finalResponse` as-is; if `streamContent` starts with `finalResponse`, return `streamContent` as-is. Bump `clientInfo.version` to `1.4.5`.
+
+### Tests
+- 11 new unit tests in `core/engine_test.go` covering: stream-is-prefix-of-final, final-is-prefix-of-stream, exact match, empty inputs, no-match concatenation, last-assistant dedup, trailing newlines/spaces, and the real-world bug scenario from production logs.
+
+## v1.4.4 (2026-07-01)
+
+Personal fork ACP protocol alignment for `@qinghuangniao/cc-connect-qhn`. Brings the generic ACP agent adapter in line with the latest [Agent Client Protocol](https://agentclientprotocol.com/) spec so commands like `/list` and `/model` work against ACP servers (e.g. CodeBuddy) that previously returned "未找到此项目的会话" / "当前 Agent 不支持模型切换".
+
+### Notes
+- Implement local session tracking as a fallback for `/list` when the ACP server does not advertise `sessionCapabilities.list`. Sessions started by cc-connect are recorded locally with their cwd and an auto-extracted title (first `agent_message_chunk`), and surfaced via `ListSessions` whenever the server-side probe is unsupported or fails. This makes `/list` and `/switch` usable against CodeBuddy without any server-side changes.
+- Add engine-level fallback in `cmdList`: when `agent.ListSessions()` returns empty, build the list from cc-connect's own `SessionManager.AllSessions()` so previously started sessions remain visible even if the agent backend doesn't track them. This fixes the case where `/list` returns "未找到此项目的会话" on first run against an ACP server without `session/list` support.
+- Implement `core.ModelSwitcher` on the ACP agent. Model lists are parsed from both the new `configOptions` (category `model`, the v2 ACP way) and the legacy `models` field returned by `session/new` / `session/load`. `SetModel` is applied on the next `StartSession` via `session/set_model`, with a fallback to `session/set_config_option` (configId `model`) when the server returns method-not-found. This unblocks `/model` and `/model switch <id>` on CodeBuddy.
+- Fix legacy `models` field parsing: CodeBuddy returns `modelId` (not `id`) as the identifier in `availableModels` entries. Introduced dedicated `acpModelEntry` type with `json:"modelId"` tag so model IDs are correctly extracted.
+- Add user-facing hint when `/model` is invoked before any session has started (model list is empty because it's only populated after the first `session/new` handshake). New i18n key `MsgModelListEmptyHint` in 5 languages.
+- Handle `config_option_update` notifications so the cached model list stays in sync when the server changes the active model (e.g. after a rate-limit fallback).
+- Handle `session_info_update` notifications so the locally tracked session title stays in sync with server-reported metadata.
+- Handle `usage_update` notifications and implement `core.ContextUsageReporter` on `acpSession` so the `/usage` command can surface server-reported token usage for ACP sessions.
+- Add `title` field to `clientInfo` in `initialize` requests (both handshake and probe paths) per the ACP spec recommendation, and bump the reported version to `1.4.4`.
+
+### Tests
+- 30 new unit tests in `agent/acp/feature_test.go` covering: local session tracking & ListSessions fallback, ModelSwitcher interface & GetModel precedence, parseModels from configOptions / legacy models / mixed inputs, session/set_model RPC success & fallback to session/set_config_option, config_option_update / session_info_update / usage_update notification handling, auto-extracted title truncation & no-overwrite guard, interface compliance assertions for `ModelSwitcher` / `ContextUsageReporter` / `sessionCallbacks`.
+- 4 new unit tests in `core/session_test.go` covering `sessionsFromSessionManager` fallback (returns tracked sessions, filters by agent name, ignores empty/sentinel session IDs, empty manager).
+- Full suite: `agent/acp` 71 pass, `core` 740 pass (short mode), 0 failures.
+
+### Docs
+- `.codebuddy/plans/acp-command-support-plan.md` — implementation plan with gap analysis against the latest ACP protocol spec, 4 phases, and file-level change matrix.
+
 ## v1.4.0 (2026-07-01)
 
 Personal fork WeCom streaming display alignment with openclaw progress-draft design for `@qinghuangniao/cc-connect-qhn`.
