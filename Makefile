@@ -219,10 +219,11 @@ release:
 #
 #   make publish                   # full release (build + upload + publish)
 #   make publish-dry-run           # build + verify, no actual publish
-#   make npm-auth NPM_TOKEN=npm_x  # write npm/.npmrc from template
+#   make npm-auth                  # write npm/.npmrc from $NPM_TOKEN env var
+#   make npm-auth NPM_TOKEN=npm_x  # ...or override with explicit token
 #
 # Prerequisites:
-#   1. npm/.npmrc exists (run `make npm-auth NPM_TOKEN=...` once)
+#   1. NPM_TOKEN env var set (in ~/.zshrc) OR npm/.npmrc exists
 #   2. gh CLI authenticated (gh auth login)
 #   3. npm/package.json version bumped BEFORE running make publish
 #
@@ -230,9 +231,12 @@ release:
 # GitHub Release tag is derived from it (v<version>).
 # ---------------------------------------------------------------------------
 
+# NPM_TOKEN: prefer command-line arg, fall back to env var.
+NPM_TOKEN ?= $(shell echo $$NPM_TOKEN)
+
 # Write npm/.npmrc from template with the given token.
 npm-auth:
-	@test -n "$(NPM_TOKEN)" || { echo "Usage: make npm-auth NPM_TOKEN=npm_xxxxx"; exit 1; }
+	@test -n "$(NPM_TOKEN)" || { echo "ERROR: NPM_TOKEN not set."; echo "Set it in ~/.zshrc:  export NPM_TOKEN=npm_xxxxx"; echo "Or pass explicitly:  make npm-auth NPM_TOKEN=npm_xxxxx"; exit 1; }
 	@sed 's|<TOKEN>|$(NPM_TOKEN)|g' npm/.npmrc.template > npm/.npmrc
 	@chmod 600 npm/.npmrc
 	@echo "Wrote npm/.npmrc (token length: $$(echo -n "$(NPM_TOKEN)" | wc -c | tr -d ' '))"
@@ -250,9 +254,21 @@ publish-dry-run: pre-test
 	@echo "Dry-run complete. To publish for real, run: make publish"
 
 # Full release: build → GitHub Release → npm publish.
+# Auto-writes npm/.npmrc from $NPM_TOKEN if not already present.
 publish: pre-test
-	@echo "==> Verifying npm/.npmrc exists..."
-	@test -f npm/.npmrc || { echo "ERROR: npm/.npmrc not found. Run: make npm-auth NPM_TOKEN=npm_xxxxx"; exit 1; }
+	@echo "==> Verifying npm auth..."
+	@if [ ! -f npm/.npmrc ]; then \
+		if [ -n "$(NPM_TOKEN)" ]; then \
+			echo "  npm/.npmrc missing — writing from \$$NPM_TOKEN"; \
+			$(MAKE) npm-auth; \
+		else \
+			echo "ERROR: npm/.npmrc not found and NPM_TOKEN not set."; \
+			echo "Set NPM_TOKEN in ~/.zshrc or run: make npm-auth NPM_TOKEN=npm_xxxxx"; \
+			exit 1; \
+		fi; \
+	else \
+		echo "  npm/.npmrc exists (OK)"; \
+	fi
 	@echo "==> Verifying gh CLI auth..."
 	@gh auth status > /dev/null 2>&1 || { echo "ERROR: gh not authenticated. Run: gh auth login"; exit 1; }
 	@echo "==> Current npm package version: $$(node -p "require('./npm/package.json').version")"
