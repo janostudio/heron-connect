@@ -68,7 +68,7 @@ endif
 _BUILD_TAGS := $(strip $(_EXCLUDE_TAGS))
 _TAGS_FLAG  := $(if $(_BUILD_TAGS),-tags '$(_BUILD_TAGS)',)
 
-.PHONY: build build-local build-noweb run clean test test-fast test-full test-smoke test-e2e test-release test-release-local test-performance pre-test lint release release-all web npm-auth publish publish-dry-run
+.PHONY: build build-local build-noweb run clean test test-fast test-full test-smoke test-e2e test-release test-release-local test-performance pre-test lint release release-all web publish publish-dry-run
 
 web:
 	@if [ ! -d web/node_modules ]; then cd web && npm install; fi
@@ -217,13 +217,11 @@ release:
 #
 # One-command release: build → upload to GitHub Release → npm publish.
 #
-#   make publish                   # full release (build + upload + publish)
-#   make publish-dry-run           # build + verify, no actual publish
-#   make npm-auth                  # write npm/.npmrc from $NPM_TOKEN env var
-#   make npm-auth NPM_TOKEN=npm_x  # ...or override with explicit token
+#   make publish           # full release (build + upload + publish)
+#   make publish-dry-run   # build + verify, no actual publish
 #
 # Prerequisites:
-#   1. NPM_TOKEN env var set (in ~/.zshrc) OR npm/.npmrc exists
+#   1. NPM_TOKEN env var set (in ~/.zshenv)
 #   2. gh CLI authenticated (gh auth login)
 #   3. npm/package.json version bumped BEFORE running make publish
 #
@@ -234,14 +232,6 @@ release:
 # NPM_TOKEN: prefer command-line arg, fall back to env var.
 NPM_TOKEN ?= $(shell echo $$NPM_TOKEN)
 
-# Write npm/.npmrc from template with the given token.
-npm-auth:
-	@test -n "$(NPM_TOKEN)" || { echo "ERROR: NPM_TOKEN not set."; echo "Set it in ~/.zshrc:  export NPM_TOKEN=npm_xxxxx"; echo "Or pass explicitly:  make npm-auth NPM_TOKEN=npm_xxxxx"; exit 1; }
-	@sed 's|<TOKEN>|$(NPM_TOKEN)|g' npm/.npmrc.template > npm/.npmrc
-	@chmod 600 npm/.npmrc
-	@echo "Wrote npm/.npmrc (token length: $$(echo -n "$(NPM_TOKEN)" | wc -c | tr -d ' '))"
-	@git check-ignore npm/.npmrc > /dev/null && echo "OK: npm/.npmrc is gitignored" || echo "WARNING: npm/.npmrc is NOT gitignored!"
-
 # Dry-run: build + verify release assets, but don't publish to npm.
 publish-dry-run: pre-test
 	@echo "==> [1/3] Running release-local tests..."
@@ -249,6 +239,7 @@ publish-dry-run: pre-test
 	@echo "==> [2/3] Building release assets..."
 	cd npm && node release-assets.js build
 	@echo "==> [3/3] Verifying npm auth (dry-run publish)..."
+	@test -n "$(NPM_TOKEN)" || { echo "ERROR: NPM_TOKEN not set in env (~/.zshenv)"; exit 1; }
 	cd npm && npm publish --dry-run --access public
 	@echo ""
 	@echo "Dry-run complete. To publish for real, run: make publish"
@@ -260,10 +251,12 @@ publish: pre-test
 	@if [ ! -f npm/.npmrc ]; then \
 		if [ -n "$(NPM_TOKEN)" ]; then \
 			echo "  npm/.npmrc missing — writing from \$$NPM_TOKEN"; \
-			$(MAKE) npm-auth; \
+			sed 's|<TOKEN>|$(NPM_TOKEN)|g' npm/.npmrc.template > npm/.npmrc; \
+			chmod 600 npm/.npmrc; \
+			echo "  Wrote npm/.npmrc (OK, gitignored)"; \
 		else \
 			echo "ERROR: npm/.npmrc not found and NPM_TOKEN not set."; \
-			echo "Set NPM_TOKEN in ~/.zshrc or run: make npm-auth NPM_TOKEN=npm_xxxxx"; \
+			echo "Set NPM_TOKEN in ~/.zshenv:  export NPM_TOKEN=npm_xxxxx"; \
 			exit 1; \
 		fi; \
 	else \
