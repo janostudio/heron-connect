@@ -122,14 +122,26 @@ func (e *Engine) cmdModel(p Platform, msg *Message, args []string) {
 		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgModelChangeFailed, err))
 		return
 	}
-	e.cleanupInteractiveState(interactiveKey)
+
+	// Try a live in-process model switch first (ACP supports this via
+	// session/set_model). On success we keep the running subprocess alive;
+	// on failure we fall back to killing it so the next turn respawns with
+	// the new --model + --resume <id> (context is preserved by the CLI).
+	appliedLive := e.applyLiveModelChange(msg.SessionKey, target)
+	if !appliedLive {
+		e.cleanupInteractiveState(interactiveKey)
+	}
 
 	// Keep the existing agent session ID so the next StartSession uses
 	// --resume <id> --model <new>, which lets the CLI agent restore context
 	// natively without replaying history (no extra token cost).
 	sessions.Save()
 
-	e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgModelChanged, target))
+	reply := e.i18n.Tf(MsgModelChanged, target)
+	if appliedLive {
+		reply += "\n\n" + e.i18n.T(MsgModelChangedLive)
+	}
+	e.reply(p, msg.ReplyCtx, reply)
 }
 
 // resolveModelAlias resolves a user-supplied string to a model name.
@@ -428,6 +440,33 @@ func (e *Engine) applyLiveModeChange(sessionKey, mode string) bool {
 		return false
 	}
 	return switcher.SetLiveMode(mode)
+}
+
+// applyLiveModelChange attempts to switch the model on the currently running
+// agent session without respawning the subprocess. Returns true if the live
+// switch succeeded (in which case the caller skips cleanupInteractiveState).
+// Returns false if there is no live session, the session doesn't implement
+// LiveModelSwitcher, or the switch failed — in those cases the caller falls
+// back to killing the subprocess and letting the next turn respawn with the
+// new model + --resume <id>.
+func (e *Engine) applyLiveModelChange(sessionKey, model string) bool {
+	iKey := e.interactiveKeyForSessionKey(sessionKey)
+	e.interactiveMu.Lock()
+	state, ok := e.interactiveStates[iKey]
+	e.interactiveMu.Unlock()
+	if !ok || state == nil || state.agentSession == nil || !state.agentSession.Alive() {
+		return false
+	}
+	switcher, ok := state.agentSession.(LiveModelSwitcher)
+	if !ok {
+		return false
+	}
+	if err := switcher.SetLiveModel(model); err != nil {
+		slog.Warn("live model switch failed, falling back to respawn",
+			"session_key", sessionKey, "model", model, "error", err)
+		return false
+	}
+	return true
 }
 
 func (e *Engine) cmdQuiet(p Platform, msg *Message, args []string) {

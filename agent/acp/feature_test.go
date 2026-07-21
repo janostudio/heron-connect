@@ -528,6 +528,13 @@ func TestACPSession_implementsContextUsageReporter(t *testing.T) {
 	var _ core.ContextUsageReporter = (*acpSession)(nil)
 }
 
+// TestACPSession_implementsLiveModelSwitcher ensures *acpSession satisfies
+// core.LiveModelSwitcher so /model can hot-swap the model on a running ACP
+// subprocess without respawn (via session/set_model RPC).
+func TestACPSession_implementsLiveModelSwitcher(t *testing.T) {
+	var _ core.LiveModelSwitcher = (*acpSession)(nil)
+}
+
 // ─── ensure sessionCallbacks interface is complete ──────────────────
 
 func TestAgent_implementsSessionCallbacks(t *testing.T) {

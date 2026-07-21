@@ -434,6 +434,31 @@ func (s *stubLiveModeSession) SetLiveMode(mode string) bool {
 	return true
 }
 
+// stubLiveModelSession implements LiveModelSwitcher for /model tests.
+type stubLiveModelSession struct {
+	stubAgentSession
+	mu       sync.Mutex
+	models   []string
+	liveErr  error
+	aliveFlg bool
+}
+
+func (s *stubLiveModelSession) SetLiveModel(model string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.liveErr != nil {
+		return s.liveErr
+	}
+	s.models = append(s.models, model)
+	return nil
+}
+
+func (s *stubLiveModelSession) Alive() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.aliveFlg
+}
+
 func (a *stubModelModeAgent) SetModel(model string) {
 	a.model = model
 }
@@ -4849,6 +4874,157 @@ func TestCmdMode_AppliesLiveModeWithoutReset(t *testing.T) {
 	}
 	if got := agent.GetMode(); got != "yolo" {
 		t.Fatalf("agent mode = %q, want yolo", got)
+	}
+}
+
+// TestCmdModel_AppliesLiveModelWithoutReset verifies that when the running
+// agent session implements LiveModelSwitcher (e.g. ACP), /model applies the
+// change in-process via SetLiveModel and does NOT tear down the interactive
+// state. The session ID and history are preserved because the subprocess
+// stays alive.
+func TestCmdModel_AppliesLiveModelWithoutReset(t *testing.T) {
+	p := &stubPlatformEngine{n: "plain"}
+	agent := &stubModelModeAgent{
+		model: "gpt-4.1-mini",
+		providers: []ProviderConfig{
+			{
+				Name:   "openai",
+				Model:  "gpt-4.1-mini",
+				Models: []ModelOption{{Name: "gpt-4.1", Alias: "gpt"}, {Name: "gpt-4.1-mini", Alias: "mini"}},
+			},
+		},
+	}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+	key := "test:user1"
+	live := &stubLiveModelSession{aliveFlg: true}
+	state := &interactiveState{agentSession: live, platform: p, replyCtx: "ctx"}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = state
+	e.interactiveMu.Unlock()
+
+	session := e.sessions.GetOrCreateActive(key)
+	session.SetAgentSessionID("existing-session", "stub")
+	session.AddHistory("user", "hello")
+
+	e.cmdModel(p, &Message{SessionKey: key, ReplyCtx: "ctx"}, []string{"switch", "gpt"})
+
+	live.mu.Lock()
+	gotModels := append([]string(nil), live.models...)
+	live.mu.Unlock()
+	if len(gotModels) != 1 || gotModels[0] != "gpt-4.1" {
+		t.Fatalf("live SetLiveModel calls = %v, want [gpt-4.1]", gotModels)
+	}
+	if got := session.GetAgentSessionID(); got != "existing-session" {
+		t.Fatalf("agent session id = %q, want existing-session", got)
+	}
+	if len(session.GetHistory(0)) != 1 {
+		t.Fatalf("history len = %d, want 1", len(session.GetHistory(0)))
+	}
+	if len(p.sent) != 1 || !strings.Contains(p.sent[0], "Current session updated immediately") {
+		t.Fatalf("sent = %v, want live model update reply mentioning immediate switch", p.sent)
+	}
+	if got := agent.GetModel(); got != "gpt-4.1" {
+		t.Fatalf("agent model = %q, want gpt-4.1", got)
+	}
+	// Interactive state must still be present (no respawn).
+	e.interactiveMu.Lock()
+	_, stillThere := e.interactiveStates[key]
+	e.interactiveMu.Unlock()
+	if !stillThere {
+		t.Fatalf("interactive state was torn down; live switch should keep it alive")
+	}
+}
+
+// TestCmdModel_FallsBackToRespawnWhenLiveFails verifies that when
+// SetLiveModel returns an error, /model falls back to the legacy
+// kill-and-respawn path: interactive state is cleaned up, session ID is
+// preserved for --resume, and the reply omits the "live" hint.
+func TestCmdModel_FallsBackToRespawnWhenLiveFails(t *testing.T) {
+	p := &stubPlatformEngine{n: "plain"}
+	agent := &stubModelModeAgent{
+		model: "gpt-4.1-mini",
+		providers: []ProviderConfig{
+			{
+				Name:   "openai",
+				Model:  "gpt-4.1-mini",
+				Models: []ModelOption{{Name: "gpt-4.1", Alias: "gpt"}, {Name: "gpt-4.1-mini", Alias: "mini"}},
+			},
+		},
+	}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+	key := "test:user1"
+	live := &stubLiveModelSession{aliveFlg: true, liveErr: errors.New("server rejected model")}
+	state := &interactiveState{agentSession: live, platform: p, replyCtx: "ctx"}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = state
+	e.interactiveMu.Unlock()
+
+	session := e.sessions.GetOrCreateActive(key)
+	session.SetAgentSessionID("existing-session", "stub")
+
+	e.cmdModel(p, &Message{SessionKey: key, ReplyCtx: "ctx"}, []string{"switch", "gpt"})
+
+	// Session ID preserved for resume (not cleared).
+	if got := session.GetAgentSessionID(); got != "existing-session" {
+		t.Fatalf("agent session id = %q, want existing-session (preserved for resume)", got)
+	}
+	// Interactive state torn down (respawn path).
+	e.interactiveMu.Lock()
+	_, stillThere := e.interactiveStates[key]
+	e.interactiveMu.Unlock()
+	if stillThere {
+		t.Fatalf("interactive state should be torn down on live-switch failure")
+	}
+	// Reply must NOT contain the live hint.
+	if len(p.sent) != 1 {
+		t.Fatalf("sent = %v, want exactly one reply", p.sent)
+	}
+	if strings.Contains(p.sent[0], "Current session updated immediately") {
+		t.Fatalf("reply should not mention immediate switch when live failed: %q", p.sent[0])
+	}
+	if got := agent.GetModel(); got != "gpt-4.1" {
+		t.Fatalf("agent model = %q, want gpt-4.1 (agent-level switch still applied)", got)
+	}
+}
+
+// TestCmdModel_FallsBackToRespawnWhenNoLiveSession verifies that when there
+// is no running interactive state (or it doesn't implement
+// LiveModelSwitcher), /model uses the legacy kill-and-respawn path. This is
+// the non-ACP code path (opencode, codex, etc.).
+func TestCmdModel_FallsBackToRespawnWhenNoLiveSession(t *testing.T) {
+	p := &stubPlatformEngine{n: "plain"}
+	agent := &stubModelModeAgent{
+		model: "gpt-4.1-mini",
+		providers: []ProviderConfig{
+			{
+				Name:   "openai",
+				Model:  "gpt-4.1-mini",
+				Models: []ModelOption{{Name: "gpt-4.1", Alias: "gpt"}, {Name: "gpt-4.1-mini", Alias: "mini"}},
+			},
+		},
+	}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+	key := "test:user1"
+	// No interactiveState registered — simulates no running subprocess.
+	session := e.sessions.GetOrCreateActive(key)
+	session.SetAgentSessionID("existing-session", "stub")
+
+	e.cmdModel(p, &Message{SessionKey: key, ReplyCtx: "ctx"}, []string{"switch", "gpt"})
+
+	if got := session.GetAgentSessionID(); got != "existing-session" {
+		t.Fatalf("agent session id = %q, want existing-session (preserved for resume)", got)
+	}
+	if len(p.sent) != 1 {
+		t.Fatalf("sent = %v, want exactly one reply", p.sent)
+	}
+	if strings.Contains(p.sent[0], "Current session updated immediately") {
+		t.Fatalf("reply should not mention immediate switch when no live session: %q", p.sent[0])
+	}
+	if got := agent.GetModel(); got != "gpt-4.1" {
+		t.Fatalf("agent model = %q, want gpt-4.1", got)
 	}
 }
 

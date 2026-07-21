@@ -222,7 +222,7 @@ func (s *acpSession) handshake(resumeSessionID string, authMethod string) error 
 		"clientInfo": map[string]any{
 			"name":    "cc-connect",
 			"title":   "cc-connect",
-			"version": "1.4.6",
+			"version": "1.4.7",
 		},
 	}
 	res, err := s.tr.call(s.ctx, "initialize", initParams)
@@ -461,6 +461,14 @@ func (s *acpSession) SetModel(modelID string) error {
 		s.callbacks.reportModels(modelID, nil)
 	}
 	return nil
+}
+
+// SetLiveModel implements core.LiveModelSwitcher. It applies a model change
+// to the running session immediately via session/set_model, without
+// restarting the subprocess. Called by the engine's /model command on live
+// ACP sessions; on success the subprocess is kept alive (no respawn).
+func (s *acpSession) SetLiveModel(model string) error {
+	return s.SetModel(model)
 }
 
 // matchAvailableMode resolves a user-typed mode string to a known ACP
@@ -864,13 +872,23 @@ func (s *acpSession) Send(prompt string, images []core.ImageAttachment, files []
 	}
 
 	slog.Info("acp: session/prompt start", "session_id", sid, "prompt_len", len(prompt), "images", len(images), "files", len(files))
-	_, err := s.tr.call(s.ctx, "session/prompt", params)
+	res, err := s.tr.call(s.ctx, "session/prompt", params)
 	if err != nil {
 		slog.Error("acp: session/prompt failed", "session_id", sid, "error", err)
 		s.emit(core.Event{Type: core.EventError, Error: err})
 		return fmt.Errorf("acp: session/prompt: %w", err)
 	}
 	slog.Info("acp: session/prompt done", "session_id", sid)
+
+	// CodeBuddy wraps model-side failures (quota exceeded, 500, etc.) in a
+	// JSON-RPC success envelope with stopReason="refusal" and the real error
+	// in _meta["codebuddy.ai/errorMessage"]. Surface that to the user instead
+	// of letting the turn complete as an empty response.
+	if msg := extractACPReturnError(res); msg != "" {
+		slog.Warn("acp: session/prompt returned refusal", "session_id", sid, "error", msg)
+		s.emit(core.Event{Type: core.EventError, Error: fmt.Errorf("%s", msg), SessionID: sid})
+		return nil
+	}
 
 	// Text was streamed via session/update; engine aggregates EventText.
 	s.emit(core.Event{
@@ -879,6 +897,54 @@ func (s *acpSession) Send(prompt string, images []core.ImageAttachment, files []
 		Done:      true,
 	})
 	return nil
+}
+
+// extractACPReturnError inspects a session/prompt result envelope for a
+// CodeBuddy refusal/error. Returns the raw error payload (original
+// errorMessage, including error code / statusCode context in the message)
+// so that unmatched errors get passed through to the user verbatim instead
+// of becoming an empty response. Returns "" if the result is a normal
+// completion.
+func extractACPReturnError(result json.RawMessage) string {
+	if len(result) == 0 {
+		return ""
+	}
+	var env struct {
+		StopReason string            `json:"stopReason"`
+		Meta       map[string]string `json:"_meta"`
+	}
+	if err := json.Unmarshal(result, &env); err != nil {
+		return ""
+	}
+	if env.StopReason != "refusal" && env.StopReason != "error" {
+		return ""
+	}
+	// errorMessage is a JSON-encoded rpcErrPayload-ish string. Return its
+	// `message` field (e.g. "Quota exceeded: 429 You have exceeded the
+	// 5-hour usage quota. It will reset at ...") verbatim so the user
+	// sees the real error instead of an empty reply.
+	raw := env.Meta["codebuddy.ai/errorMessage"]
+	if raw == "" {
+		// No structured message — return a fallback string so the user
+		// still sees *something* rather than an empty reply.
+		return fmt.Sprintf("agent %s (no error message)", env.StopReason)
+	}
+	var payload struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			StatusCode int    `json:"statusCode"`
+			Category   string `json:"category"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return raw // unparseable — give the user the raw blob
+	}
+	if payload.Message != "" {
+		return payload.Message
+	}
+	// Message empty — fall back to the raw blob so we never return "".
+	return raw
 }
 
 func (s *acpSession) appendImageRefs(prompt string, images []core.ImageAttachment) string {

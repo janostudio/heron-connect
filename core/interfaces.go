@@ -527,6 +527,15 @@ type LiveModeSwitcher interface {
 	SetLiveMode(mode string) bool
 }
 
+// LiveModelSwitcher is an optional interface for running agent sessions that
+// can apply a model change immediately without restarting the process.
+// ACP agents implement this via session/set_model; non-ACP agents (which bake
+// the model into a --model CLI flag) do not implement it and fall back to
+// subprocess respawn + session resume.
+type LiveModelSwitcher interface {
+	SetLiveModel(model string) error
+}
+
 // PermissionModeInfo describes a permission mode for display.
 type PermissionModeInfo struct {
 	Key    string

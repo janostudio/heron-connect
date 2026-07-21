@@ -142,9 +142,15 @@ func (e *Engine) handleModelCardAction(args, sessionKey string) *Card {
 	}
 
 	resolved, err := e.switchModelOnAgent(agent, target, agent == e.agent)
-	e.cleanupInteractiveState(e.interactiveKeyForSessionKey(sessionKey))
 	if err == nil {
+		// Try a live in-process switch first; fall back to respawn if the
+		// running session doesn't support LiveModelSwitcher or it fails.
+		if !e.applyLiveModelChange(sessionKey, resolved) {
+			e.cleanupInteractiveState(e.interactiveKeyForSessionKey(sessionKey))
+		}
 		sessions.Save()
+	} else {
+		e.cleanupInteractiveState(e.interactiveKeyForSessionKey(sessionKey))
 	}
 
 	return e.renderModelSwitchResultCard(resolved, err)
@@ -736,7 +742,13 @@ func (e *Engine) performModelSwitchAsync(sessionKey string, state *interactiveSt
 		state.mu.Unlock()
 	}
 	e.pushModelSwitchResultCard(sessionKey, resultCard)
-	e.cleanupInteractiveState(e.interactiveKeyForSessionKey(sessionKey), state)
+
+	// Try a live in-process switch; if it succeeds, keep the running
+	// subprocess alive. Otherwise fall back to respawn (which preserves
+	// conversation context via --resume <id>).
+	if err != nil || !e.applyLiveModelChange(sessionKey, resolved) {
+		e.cleanupInteractiveState(e.interactiveKeyForSessionKey(sessionKey), state)
+	}
 }
 
 func (e *Engine) pushModelSwitchResultCard(sessionKey string, card *Card) {

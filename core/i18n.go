@@ -143,6 +143,7 @@ const (
 	MsgToolAllowedNew            MsgKey = "tool_allowed_new"
 	MsgError                     MsgKey = "error"
 	MsgSessionNotFound           MsgKey = "session_not_found"
+	MsgModelQuotaExceeded        MsgKey = "model_quota_exceeded"
 	MsgFailedToStartAgentSession MsgKey = "failed_to_start_agent_session"
 	MsgFailedToDeleteSession     MsgKey = "failed_to_delete_session"
 	MsgEmptyResponse             MsgKey = "empty_response"
@@ -256,6 +257,7 @@ const (
 	MsgReplyFooterRemaining MsgKey = "reply_footer_remaining"
 	MsgModelCurrent          MsgKey = "model_current"
 	MsgModelChanged          MsgKey = "model_changed"
+	MsgModelChangedLive      MsgKey = "model_changed_live"
 	MsgModelChangeFailed     MsgKey = "model_change_failed"
 	MsgModelCardSwitching    MsgKey = "model_card_switching"
 	MsgModelCardSwitched     MsgKey = "model_card_switched"
@@ -751,6 +753,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "⚠️ 會話已過期，請發送 /new 開始新會話",
 		LangJapanese:           "⚠️ セッションが期限切れです。/new で新しい会話を開始してください。",
 		LangSpanish:            "⚠️ Sesión expirada. Usa /new para iniciar una nueva conversación.",
+	},
+	MsgModelQuotaExceeded: {
+		LangEnglish:            "⚠️ The AI service is temporarily unavailable: usage quota exceeded. Please try again later.",
+		LangChinese:            "⚠️ AI 服务暂时不可用：使用额度已耗尽，请稍后再试。",
+		LangTraditionalChinese: "⚠️ AI 服務暫時不可用：使用額度已耗盡，請稍後再試。",
+		LangJapanese:           "⚠️ AIサービスが一時的に利用できません：利用枠を超過しました。後でもう一度お試しください。",
+		LangSpanish:            "⚠️ El servicio de IA no está disponible temporalmente: cuota de uso excedida. Inténtalo de nuevo más tarde.",
 	},
 	MsgFailedToStartAgentSession: {
 		LangEnglish:            "❌ Error: failed to start agent session",
@@ -1958,6 +1967,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "模型已切換為 `%s`，新會話將使用此模型。",
 		LangJapanese:           "モデルを `%s` に切り替えました。新しいセッションで使用されます。",
 		LangSpanish:            "Modelo cambiado a `%s`. Las nuevas sesiones usarán este modelo.",
+	},
+	MsgModelChangedLive: {
+		LangEnglish:            "✅ Current session updated immediately.",
+		LangChinese:            "✅ 当前会话已即时切换。",
+		LangTraditionalChinese: "✅ 當前會話已即時切換。",
+		LangJapanese:           "✅ 現在のセッションに即座に適用されました。",
+		LangSpanish:            "✅ Sesión actual actualizada inmediatamente.",
 	},
 	MsgModelChangeFailed: {
 		LangEnglish:            "❌ Failed to change model: %v",
