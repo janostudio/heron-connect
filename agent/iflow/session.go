@@ -54,6 +54,7 @@ type iflowSession struct {
 	wg             sync.WaitGroup
 	alive          atomic.Bool
 	turnActive     atomic.Bool
+	osCmd          *exec.Cmd // for force-kill on Close timeout
 }
 
 type iflowTurn struct {
@@ -187,6 +188,11 @@ func (s *iflowSession) Send(prompt string, images []core.ImageAttachment, files 
 
 	cmd := exec.CommandContext(turnCtx, s.cmd, args...)
 	cmd.Dir = s.workDir
+	// Note: do NOT call core.PrepareCmdForKill here. pty.Start() internally
+	// calls setsid() which creates a new session and process group; setting
+	// Setpgid=true on top of that causes "operation not permitted" on some
+	// platforms. The PTY's session leader semantics already give us process
+	// group isolation.
 	env := os.Environ()
 	if len(s.extraEnv) > 0 {
 		env = core.MergeEnv(env, s.extraEnv)
@@ -198,6 +204,7 @@ func (s *iflowSession) Send(prompt string, images []core.ImageAttachment, files 
 		s.turnActive.Store(false)
 		return fmt.Errorf("iflowSession: start pty: %w", err)
 	}
+	s.osCmd = cmd
 
 	s.sentOnce.Store(true)
 	s.wg.Add(1)
@@ -898,7 +905,7 @@ func (s *iflowSession) Close() error {
 	select {
 	case <-done:
 	case <-time.After(8 * time.Second):
-		slog.Warn("iflowSession: close timed out, abandoning wg.Wait")
+		_ = core.ForceKillProcessGroup(s.osCmd)
 	}
 	close(s.events)
 	return nil

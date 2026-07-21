@@ -5841,6 +5841,17 @@ func (s *controllableAgentSession) Close() error {
 	return nil
 }
 
+// closedClosed returns true if the closed signal channel has been closed
+// (i.e. Close() has been called at least once).
+func (s *controllableAgentSession) closedClosed() bool {
+	select {
+	case <-s.closed:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *controllableAgentSession) CancelTurn() {
 	s.cancelMu.Lock()
 	s.cancelCount++
@@ -11758,7 +11769,7 @@ func TestUnsolicitedReader_PermissionDeny(t *testing.T) {
 
 	sess := newControllableSession("unsol-perm")
 	permRecorder := &permRecordingSession{
-		controllableAgentSession: *sess,
+		controllableAgentSession: sess,
 	}
 
 	sessions := e.sessions
@@ -11810,7 +11821,7 @@ func TestUnsolicitedReader_PermissionDeny(t *testing.T) {
 
 // permRecordingSession wraps controllableAgentSession and records permission responses.
 type permRecordingSession struct {
-	controllableAgentSession
+	*controllableAgentSession
 	mu             sync.Mutex
 	permCalls      int
 	lastPermResult PermissionResult

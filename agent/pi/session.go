@@ -36,6 +36,7 @@ type piSession struct {
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	alive     atomic.Bool
+	osCmd     *exec.Cmd // for force-kill on Close timeout
 
 	thinkingBuf strings.Builder // accumulates thinking_delta chunks
 }
@@ -110,6 +111,7 @@ func (s *piSession) Send(prompt string, images []core.ImageAttachment, files []c
 
 	cmd := exec.CommandContext(s.ctx, s.cmd, args...)
 	cmd.Dir = s.workDir
+	core.PrepareCmdForKill(cmd)
 	env := os.Environ()
 	if len(s.extraEnv) > 0 {
 		env = core.MergeEnv(env, s.extraEnv)
@@ -127,6 +129,7 @@ func (s *piSession) Send(prompt string, images []core.ImageAttachment, files []c
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("piSession: start: %w", err)
 	}
+	s.osCmd = cmd
 
 	s.wg.Add(1)
 	go s.readLoop(cmd, stdout, &stderrBuf)
@@ -398,7 +401,7 @@ func (s *piSession) Close() error {
 	select {
 	case <-done:
 	case <-time.After(8 * time.Second):
-		slog.Warn("piSession: close timed out, abandoning wg.Wait")
+		_ = core.ForceKillProcessGroup(s.osCmd)
 	}
 	close(s.events)
 	return nil

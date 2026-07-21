@@ -257,6 +257,13 @@ type Engine struct {
 	interactiveMu     sync.Mutex
 	interactiveStates map[string]*interactiveState // key = sessionKey
 
+	// turnWg tracks all in-flight processInteractiveMessageWith goroutines.
+	// Engine.Stop() waits on it (bounded) so that turn goroutines finish
+	// their session.Save() / session.Unlock() before the engine tears down
+	// — without this, t.TempDir() cleanup can race with a late Save() and
+	// report "directory not empty".
+	turnWg sync.WaitGroup
+
 	platformLifecycleMu sync.Mutex
 	platformReady       map[Platform]bool
 	stopping            bool
@@ -586,11 +593,65 @@ func (e *Engine) Stop() error {
 	}
 	e.interactiveMu.Unlock()
 
+	// Close all agent sessions in parallel. Each close may take up to 130s
+	// (Stop hooks + SIGTERM + SIGKILL); serialising them would make restart
+	// unacceptably slow and risk leaving subprocesses alive when
+	// syscall.Exec fires (they'd become orphans with PPID=1).
+	//
+	// We bound the whole batch with an overall timeout so a single stuck
+	// session can't block shutdown indefinitely. Sessions that don't
+	// finish in time are abandoned — their goroutines continue in the
+	// background but the process will be replaced by syscall.Exec.
+	const stopBatchTimeout = 180 * time.Second
+	var wg sync.WaitGroup
 	for key, state := range states {
-		if state.agentSession != nil {
-			slog.Debug("engine.Stop: closing agent session", "session", key)
-			state.agentSession.Close()
+		if state.agentSession == nil {
+			continue
 		}
+		wg.Add(1)
+		go func(k string, st *interactiveState) {
+			defer wg.Done()
+			slog.Debug("engine.Stop: closing agent session", "session", k)
+			// Stop the unsolicited reader and mark stopped so any
+			// goroutine waiting on stopCh/pending unblocks promptly.
+			e.stopUnsolicitedReader(st)
+			st.markStopped()
+			st.mu.Lock()
+			pending := st.pending
+			st.pending = nil
+			st.mu.Unlock()
+			if pending != nil {
+				pending.resolve()
+			}
+			e.closeAgentSessionWithTimeout(k, st.agentSession)
+		}(key, state)
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(stopBatchTimeout):
+		slog.Error("engine.Stop: close all agent sessions timed out, abandoning",
+			"timeout", stopBatchTimeout, "sessions", len(states))
+	}
+
+	// Wait for in-flight turn goroutines to finish. Closing agent sessions
+	// (above) causes their event loops to exit via channelClosed / ctx.Done,
+	// but the goroutine may still be in session.Save() or session.Unlock().
+	// Waiting a short, bounded time prevents races where TempDir cleanup
+	// (or the next test) collides with a late Save().
+	turnDone := make(chan struct{})
+	go func() {
+		e.turnWg.Wait()
+		close(turnDone)
+	}()
+	select {
+	case <-turnDone:
+	case <-time.After(10 * time.Second):
+		slog.Warn("engine.Stop: turn goroutines did not finish in 10s, abandoning")
 	}
 
 	if e.rateLimiter != nil {
@@ -1133,7 +1194,11 @@ sessionLocked:
 		"session", session.ID,
 	)
 
-	go e.processInteractiveMessageWith(p, msg, session, agent, sessions, interactiveKey, resolvedWorkspace, msg.SessionKey)
+	e.turnWg.Add(1)
+	go func() {
+		defer e.turnWg.Done()
+		e.processInteractiveMessageWith(p, msg, session, agent, sessions, interactiveKey, resolvedWorkspace, msg.SessionKey)
+	}()
 }
 
 func (e *Engine) maybeAutoResetSessionOnIdle(p Platform, msg *Message, sessions *SessionManager, interactiveKey string, session *Session) *Session {
@@ -1864,6 +1929,31 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 		e.closeAgentSessionWithTimeout(sessionKey, state.agentSession)
 		delete(e.interactiveStates, sessionKey)
 		ok = false // prevent reading stale settings below
+	} else if ok && state != nil && (state.agentSession == nil || !state.agentSession.Alive()) {
+		// Defensive cleanup: a previous session died but was never cleaned
+		// up (e.g. the EventError path in processInteractiveEvents didn't
+		// run cleanupInteractiveState, or the process died without emitting
+		// an error). Without this, the dead state would be silently
+		// overwritten below and Close() would never be called on the old
+		// agent session — leaking the subprocess (issue: orphaned --acp
+		// processes accumulating as PPID=1).
+		slog.Warn("found dead agent session on new message, cleaning up defensively",
+			"session_key", sessionKey,
+			"agent_session_nil", state.agentSession == nil)
+		e.stopUnsolicitedReader(state)
+		state.markStopped()
+		state.mu.Lock()
+		pending := state.pending
+		state.pending = nil
+		state.mu.Unlock()
+		if pending != nil {
+			pending.resolve()
+		}
+		if state.agentSession != nil {
+			e.closeAgentSessionWithTimeout(sessionKey, state.agentSession)
+		}
+		delete(e.interactiveStates, sessionKey)
+		ok = false
 	}
 
 	// Select the agent to use for this session

@@ -36,6 +36,7 @@ type kimiSession struct {
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	alive     atomic.Bool
+	osCmd     *exec.Cmd // for force-kill on Close timeout
 
 	pendingMsgs []string // buffered assistant text messages
 }
@@ -166,6 +167,7 @@ func (ks *kimiSession) Send(prompt string, images []core.ImageAttachment, files 
 	cmd := exec.CommandContext(ctx, ks.cmd, args...)
 	cmd.WaitDelay = 1 * time.Second
 	cmd.Dir = ks.workDir
+	core.PrepareCmdForKill(cmd)
 	env := os.Environ()
 	if len(ks.extraEnv) > 0 {
 		env = core.MergeEnv(env, ks.extraEnv)
@@ -183,6 +185,7 @@ func (ks *kimiSession) Send(prompt string, images []core.ImageAttachment, files 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("kimiSession: start: %w", err)
 	}
+	ks.osCmd = cmd
 
 	started = true
 	ks.wg.Add(1)
@@ -462,7 +465,7 @@ func (ks *kimiSession) Close() error {
 	select {
 	case <-done:
 	case <-time.After(8 * time.Second):
-		slog.Warn("kimiSession: close timed out, abandoning wg.Wait")
+		_ = core.ForceKillProcessGroup(ks.osCmd)
 	}
 	close(ks.events)
 	return nil

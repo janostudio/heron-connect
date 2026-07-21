@@ -1449,13 +1449,20 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				}
 				e.send(p, replyCtx, userMsg)
 			}
-			// Only drop queued messages if the agent session is dead.
-			// Some agents (e.g. Codex) emit EventError for per-turn failures
-			// while keeping the session alive for subsequent turns.
-			if state.agentSession == nil || !state.agentSession.Alive() {
-				e.notifyDroppedQueuedMessages(state, event.Error)
-			}
-			return
+		// Only drop queued messages if the agent session is dead.
+		// Some agents (e.g. Codex) emit EventError for per-turn failures
+		// while keeping the session alive for subsequent turns.
+		if state.agentSession == nil || !state.agentSession.Alive() {
+			// Session is dead — run full cleanup so the old subprocess
+			// (and its stdin pipe) is torn down. Without this, the dead
+			// interactiveState lingers in the map until the next message
+			// replaces it, and Close() is never called — leaking the
+			// agent process (issue: orphaned --acp processes PPID=1).
+			// cleanupInteractiveState will call notifyDroppedQueuedMessages
+			// internally, so we don't call it here.
+			e.cleanupInteractiveState(sessionKey, state)
+		}
+		return
 		}
 	}
 

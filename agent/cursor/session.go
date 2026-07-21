@@ -33,6 +33,7 @@ type cursorSession struct {
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 	alive    atomic.Bool
+	osCmd    *exec.Cmd // for force-kill on Close timeout
 
 	thinkingBuf strings.Builder // accumulate thinking deltas
 }
@@ -101,6 +102,7 @@ func (cs *cursorSession) Send(prompt string, images []core.ImageAttachment, file
 
 	cmd := exec.CommandContext(cs.ctx, cs.cmd, args...)
 	cmd.Dir = cs.workDir
+	core.PrepareCmdForKill(cmd)
 	env := os.Environ()
 	if len(cs.extraEnv) > 0 {
 		env = core.MergeEnv(env, cs.extraEnv)
@@ -118,6 +120,7 @@ func (cs *cursorSession) Send(prompt string, images []core.ImageAttachment, file
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("cursorSession: start: %w", err)
 	}
+	cs.osCmd = cmd
 
 	cs.wg.Add(1)
 	go cs.readLoop(cmd, stdout, &stderrBuf)
@@ -465,7 +468,7 @@ func (cs *cursorSession) Close() error {
 	select {
 	case <-done:
 	case <-time.After(8 * time.Second):
-		slog.Warn("cursorSession: close timed out, abandoning wg.Wait")
+		_ = core.ForceKillProcessGroup(cs.osCmd)
 	}
 	close(cs.events)
 	return nil

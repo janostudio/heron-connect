@@ -145,6 +145,9 @@ func newClaudeSession(ctx context.Context, workDir, cliBin string, cliExtraArgs 
 	}
 	cmd := core.BuildSpawnCommand(sessionCtx, spawnOpts, cliBin, allArgs...)
 	cmd.Dir = workDir
+	// Put the child in its own process group so SIGKILL can reach
+	// grandchildren (shell, npm, git, ...) that the CLI may spawn.
+	core.PrepareCmdForKill(cmd)
 	// Filter out CLAUDECODE env var to prevent "nested session" detection,
 	// since cc-connect is a bridge, not a nested Claude Code session.
 	env := filterEnv(os.Environ(), "CLAUDECODE")
@@ -718,8 +721,9 @@ func (cs *claudeSession) Close() error {
 
 	// Phase 2: SIGTERM — gives the process a second chance to run
 	// cleanup handlers that respond to signals but not stdin EOF.
+	// Signal the whole process group so grandchildren also terminate.
 	if cs.cmd != nil && cs.cmd.Process != nil {
-		_ = cs.cmd.Process.Signal(syscall.SIGTERM)
+		_ = core.SignalProcessGroup(cs.cmd, syscall.SIGTERM)
 	}
 
 	select {
@@ -730,10 +734,11 @@ func (cs *claudeSession) Close() error {
 		slog.Warn("claudeSession: SIGTERM timed out, sending SIGKILL")
 	}
 
-	// Phase 3: SIGKILL — last resort.
+	// Phase 3: SIGKILL — last resort. Kill the entire process group so
+	// grandchildren (shell tools, npm, git, ...) are reaped too.
 	cs.cancel()
 	if cs.cmd != nil && cs.cmd.Process != nil {
-		_ = cs.cmd.Process.Kill()
+		_ = core.ForceKillProcessGroup(cs.cmd)
 	}
 	<-cs.done
 	return nil

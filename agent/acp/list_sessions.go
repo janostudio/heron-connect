@@ -143,6 +143,9 @@ func (a *Agent) probeSpawn(ctx context.Context, cwd string) (*transport, *bytes.
 	cmd := exec.CommandContext(ctx, a.command, a.args...)
 	cmd.Dir = cwd
 	cmd.Env = core.MergeEnv(os.Environ(), a.extraEnv)
+	// Put the probe process in its own group so teardown can kill it
+	// reliably (including any grandchildren it spawns).
+	core.PrepareCmdForKill(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -187,10 +190,15 @@ func (a *Agent) probeSpawn(ctx context.Context, cwd string) (*transport, *bytes.
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
+			// Kill the entire process group, not just the main process,
+			// so grandchildren (e.g. shell tools the CLI spawned) are
+			// reaped too.
+			_ = core.ForceKillProcessGroup(cmd)
+			select {
+			case <-done:
+			case <-time.After(1 * time.Second):
+				// Last resort: abandon the wait goroutine.
 			}
-			<-done
 		}
 	}
 	return tr, &stderrBuf, teardown, nil

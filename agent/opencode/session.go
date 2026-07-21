@@ -36,6 +36,11 @@ type opencodeSession struct {
 	wg       sync.WaitGroup
 	alive    atomic.Bool
 	expectingContinue atomic.Bool // true when compaction_continue received, waiting for next step
+
+	// osCmd holds the running *exec.Cmd so Close() can force-kill the
+	// entire process group (including grandchildren) when graceful
+	// shutdown times out.
+	osCmd *exec.Cmd
 }
 
 func newOpencodeSession(ctx context.Context, cmd, workDir, model, mode, resumeID string, extraEnv []string) (*opencodeSession, error) {
@@ -82,6 +87,9 @@ func (s *opencodeSession) Send(prompt string, images []core.ImageAttachment, fil
 
 	cmd := exec.CommandContext(s.ctx, s.cmd, args...)
 	cmd.Dir = s.workDir
+	// Put the child in its own process group so SIGKILL can reach
+	// grandchildren the CLI may spawn.
+	core.PrepareCmdForKill(cmd)
 	env := os.Environ()
 	if len(s.extraEnv) > 0 {
 		env = core.MergeEnv(env, s.extraEnv)
@@ -99,6 +107,7 @@ func (s *opencodeSession) Send(prompt string, images []core.ImageAttachment, fil
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("opencodeSession: start: %w", err)
 	}
+	s.osCmd = cmd
 
 	s.wg.Add(1)
 	go s.readLoop(cmd, stdout, &stderrBuf)
@@ -485,7 +494,10 @@ func (s *opencodeSession) Close() error {
 	select {
 	case <-done:
 	case <-time.After(8 * time.Second):
-		slog.Warn("opencodeSession: close timed out, abandoning wg.Wait")
+		slog.Warn("opencodeSession: close timed out, force-killing process group")
+		// Force-kill the entire process group so grandchildren (shell,
+		// npm, git, ...) are reaped too, not just the main CLI process.
+		_ = core.ForceKillProcessGroup(s.osCmd)
 	}
 	close(s.events)
 	return nil

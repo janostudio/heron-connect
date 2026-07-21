@@ -31,6 +31,15 @@ type acpSession struct {
 	wg      sync.WaitGroup
 	alive   atomic.Bool
 
+	// closeOnce ensures s.events is closed exactly once, even if Close() is
+	// called concurrently or multiple times (engine cleanup + Engine.Stop).
+	// Closing the events channel is required so the engine's event loop can
+	// detect session termination via the channelClosed path — without it,
+	// a dead ACP session lingers in the interactiveStates map and its
+	// subprocess is never reaped, leading to orphaned `codebuddy --acp`
+	// processes (issue: orphaned --acp processes accumulating as PPID=1).
+	closeOnce sync.Once
+
 	cmd   *exec.Cmd
 	tr    *transport
 	stdin io.WriteCloser // retained for graceful shutdown (close stdin → agent exits)
@@ -110,6 +119,9 @@ func newACPSession(ctx context.Context, cfg acpSessionConfig) (*acpSession, erro
 	cmd := exec.CommandContext(sessionCtx, cfg.command, cfg.args...)
 	cmd.Dir = absWorkDir
 	cmd.Env = core.MergeEnv(os.Environ(), cfg.extraEnv)
+	// Put the child in its own process group so we can kill the entire
+	// group (including grandchildren the CLI may spawn) on shutdown.
+	core.PrepareCmdForKill(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -969,6 +981,11 @@ func (s *acpSession) CancelTurn() {
 
 func (s *acpSession) Close() error {
 	if !s.alive.Load() {
+		// Already dead: ensure events channel is still closed (idempotent
+		// via closeOnce) so the engine's channelClosed path can observe
+		// termination even if Close() was never called before the process
+		// died on its own.
+		s.closeEvents()
 		return nil
 	}
 	s.alive.Store(false)
@@ -1004,35 +1021,59 @@ func (s *acpSession) Close() error {
 	case <-done:
 		slog.Info("acpSession: exited cleanly after session/cancel + stdin close")
 		s.cancel()
+		s.closeEvents()
 		return nil
 	case <-time.After(8 * time.Second):
 		slog.Warn("acpSession: graceful stop timed out, sending SIGTERM")
 	}
 
-	// ── Phase 2: SIGTERM ──
+	// ── Phase 2: SIGTERM the whole process group ──
+	// Signal the group so grandchildren (shell, npm, git, ...) also get
+	// the terminate signal.
 	if s.cmd != nil && s.cmd.Process != nil {
-		_ = s.cmd.Process.Signal(syscall.SIGTERM)
+		_ = core.SignalProcessGroup(s.cmd, syscall.SIGTERM)
 	}
 	select {
 	case <-done:
 		slog.Info("acpSession: exited after SIGTERM")
 		s.cancel()
+		s.closeEvents()
 		return nil
 	case <-time.After(5 * time.Second):
 		slog.Warn("acpSession: SIGTERM timed out, sending SIGKILL")
 	}
 
-	// ── Phase 3: SIGKILL ──
+	// ── Phase 3: SIGKILL the whole process group ──
 	if s.cmd != nil && s.cmd.Process != nil {
-		_ = s.cmd.Process.Kill()
+		_ = core.ForceKillProcessGroup(s.cmd)
 	}
 	s.cancel()
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
-		slog.Error("acpSession: SIGKILL timed out, abandoning")
+		slog.Error("acpSession: SIGKILL timed out, abandoning goroutine; events channel will close when readLoop finally exits")
+		// Even if the goroutine is stuck (e.g. process in D-state), defer
+		// the events channel close to when the goroutine eventually exits.
+		// Without this, the engine's channelClosed path would never fire
+		// and the interactiveState would leak.
+		go func() {
+			<-done
+			s.closeEvents()
+		}()
+		return nil
 	}
+	s.closeEvents()
 	return nil
+}
+
+// closeEvents closes the events channel exactly once. Safe to call from
+// multiple goroutines and multiple times. After this returns, consumers
+// reading from Events() will observe a closed channel and can run their
+// channelClosed cleanup path.
+func (s *acpSession) closeEvents() {
+	s.closeOnce.Do(func() {
+		close(s.events)
+	})
 }
 
 // summarizeACPToolInput extracts a human-readable summary from ACP tool rawInput.

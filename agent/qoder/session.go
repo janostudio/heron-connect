@@ -33,6 +33,7 @@ type qoderSession struct {
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	alive     atomic.Bool
+	osCmd     *exec.Cmd // for force-kill on Close timeout
 }
 
 func newQoderSession(ctx context.Context, workDir, model, mode, resumeID string, extraEnv []string) (*qoderSession, error) {
@@ -87,6 +88,7 @@ func (qs *qoderSession) Send(prompt string, images []core.ImageAttachment, files
 
 	cmd := exec.CommandContext(qs.ctx, "qodercli", args...)
 	cmd.Dir = qs.workDir
+	core.PrepareCmdForKill(cmd)
 	if len(qs.extraEnv) > 0 {
 		cmd.Env = core.MergeEnv(os.Environ(), qs.extraEnv)
 	}
@@ -102,6 +104,7 @@ func (qs *qoderSession) Send(prompt string, images []core.ImageAttachment, files
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("qoderSession: start: %w", err)
 	}
+	qs.osCmd = cmd
 
 	qs.wg.Add(1)
 	go qs.readLoop(cmd, stdout, &stderrBuf)
@@ -345,7 +348,7 @@ func (qs *qoderSession) Close() error {
 	select {
 	case <-done:
 	case <-time.After(8 * time.Second):
-		slog.Warn("qoderSession: close timed out, abandoning wg.Wait")
+		_ = core.ForceKillProcessGroup(qs.osCmd)
 	}
 	close(qs.events)
 	return nil

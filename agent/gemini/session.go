@@ -38,6 +38,10 @@ type geminiSession struct {
 	wg       sync.WaitGroup
 	alive    atomic.Bool
 
+	// osCmd holds the running *exec.Cmd so Close() can force-kill the
+	// entire process group (including grandchildren) on timeout.
+	osCmd *exec.Cmd
+
 	pendingMsgs []string // buffered assistant messages awaiting classification
 }
 
@@ -173,6 +177,9 @@ func (gs *geminiSession) Send(prompt string, images []core.ImageAttachment, file
 	// Set a short WaitDelay to ensure I/O goroutines don't block for long after the context is done
 	cmd.WaitDelay = 1 * time.Second
 	cmd.Dir = gs.workDir
+	// Put the child in its own process group so SIGKILL can reach
+	// grandchildren the CLI may spawn.
+	core.PrepareCmdForKill(cmd)
 	env := os.Environ()
 	if len(gs.extraEnv) > 0 {
 		env = core.MergeEnv(env, gs.extraEnv)
@@ -191,6 +198,7 @@ func (gs *geminiSession) Send(prompt string, images []core.ImageAttachment, file
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("geminiSession: start: %w", err)
 	}
+	gs.osCmd = cmd
 
 	started = true
 	gs.wg.Add(1)
@@ -482,7 +490,8 @@ func (gs *geminiSession) Close() error {
 	select {
 	case <-done:
 	case <-time.After(8 * time.Second):
-		slog.Warn("geminiSession: close timed out, abandoning wg.Wait")
+		slog.Warn("geminiSession: close timed out, force-killing process group")
+		_ = core.ForceKillProcessGroup(gs.osCmd)
 	}
 	close(gs.events)
 	return nil
