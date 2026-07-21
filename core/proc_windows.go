@@ -44,9 +44,10 @@ func ForceKillProcessGroup(cmd *exec.Cmd) error {
 	}
 	if killErr := cmd.Process.Kill(); killErr == nil || errors.Is(killErr, os.ErrProcessDone) {
 		return nil
+	} else {
+		return fmt.Errorf("taskkill failed: %w: %s; process kill fallback failed: %w",
+			err, processKillOutput(output), killErr)
 	}
-	return fmt.Errorf("taskkill failed: %w: %s; process kill fallback failed: %w",
-		err, processKillOutput(output), killErr)
 }
 
 // SignalProcessGroup is a no-op on Windows; signal semantics don't translate.
