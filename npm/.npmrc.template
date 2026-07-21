@@ -1,0 +1,12 @@
+# npm publish auth template — copy to .npmrc and replace <TOKEN> with your npm token.
+# Usage:
+#   cp npm/.npmrc.template npm/.npmrc
+#   # edit npm/.npmrc, replace <TOKEN>
+# OR:
+#   make npm-auth NPM_TOKEN=npm_xxxxx
+#
+# Get your token from: https://www.npmjs.com/settings/<username>/tokens
+# Use a "Publish" or "Automation" token (classic) or a granular token with publish permission.
+#
+# SECURITY: .npmrc (without .template) is in .gitignore — never commit real tokens.
+//registry.npmjs.org/:_authToken=<TOKEN>
