@@ -222,7 +222,7 @@ func (s *acpSession) handshake(resumeSessionID string, authMethod string) error 
 		"clientInfo": map[string]any{
 			"name":    "cc-connect",
 			"title":   "cc-connect",
-			"version": "1.4.7",
+			"version": "1.4.8",
 		},
 	}
 	res, err := s.tr.call(s.ctx, "initialize", initParams)

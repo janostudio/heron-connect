@@ -3,6 +3,7 @@ package core
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -576,19 +577,89 @@ func TestSessionsFromSessionManager_returnsTrackedSessions(t *testing.T) {
 	sm := NewSessionManager(dir + "/sessions.json")
 	userKey := "user:alice"
 
+	// Two sessions for the same user.
 	s1 := sm.GetOrCreateActive(userKey)
 	s1.SetAgentInfo("agent-sid-1", "acp", "First session")
-
-	s2 := sm.GetOrCreateActive(userKey + ":bob")
+	s2 := sm.NewSession(userKey, "second")
 	s2.SetAgentInfo("agent-sid-2", "acp", "Second session")
 
-	got := sessionsFromSessionManager(sm, "acp")
+	got := sessionsFromSessionManager(sm, "acp", userKey)
 	if len(got) != 2 {
 		t.Fatalf("sessionsFromSessionManager len = %d, want 2", len(got))
 	}
 	ids := map[string]bool{got[0].ID: true, got[1].ID: true}
 	if !ids["agent-sid-1"] || !ids["agent-sid-2"] {
 		t.Fatalf("missing expected ids, got = %+v", got)
+	}
+}
+
+func TestSessionsFromSessionManager_userIsolation(t *testing.T) {
+	dir := t.TempDir()
+	sm := NewSessionManager(dir + "/sessions.json")
+	alice := "user:alice"
+	bob := "user:bob"
+
+	sa := sm.GetOrCreateActive(alice)
+	sa.SetAgentInfo("agent-alice", "acp", "Alice session")
+
+	sb := sm.GetOrCreateActive(bob)
+	sb.SetAgentInfo("agent-bob", "acp", "Bob session")
+
+	got := sessionsFromSessionManager(sm, "acp", alice)
+	if len(got) != 1 || got[0].ID != "agent-alice" {
+		t.Fatalf("alice should see only her session, got = %+v", got)
+	}
+	got = sessionsFromSessionManager(sm, "acp", bob)
+	if len(got) != 1 || got[0].ID != "agent-bob" {
+		t.Fatalf("bob should see only his session, got = %+v", got)
+	}
+}
+
+func TestSessionsFromSessionManager_fillsSummaryAndCount(t *testing.T) {
+	dir := t.TempDir()
+	sm := NewSessionManager(dir + "/sessions.json")
+	userKey := "user:alice"
+
+	s := sm.GetOrCreateActive(userKey)
+	s.SetAgentInfo("agent-sid", "acp", "test")
+	s.AddHistory("assistant", "hello there")
+	s.AddHistory("user", "帮我看看这个报错")
+	s.AddHistory("assistant", "正在分析")
+
+	got := sessionsFromSessionManager(sm, "acp", userKey)
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	if got[0].MessageCount != 3 {
+		t.Errorf("MessageCount = %d, want 3", got[0].MessageCount)
+	}
+	want := "帮我看看这个报错"
+	if got[0].Summary != want {
+		t.Errorf("Summary = %q, want %q", got[0].Summary, want)
+	}
+}
+
+func TestSessionsFromSessionManager_summaryTruncates(t *testing.T) {
+	dir := t.TempDir()
+	sm := NewSessionManager(dir + "/sessions.json")
+	userKey := "user:alice"
+
+	longMsg := strings.Repeat("一二三", 20) // 60 runes
+	s := sm.GetOrCreateActive(userKey)
+	s.SetAgentInfo("agent-sid", "acp", "test")
+	s.AddHistory("user", longMsg)
+
+	got := sessionsFromSessionManager(sm, "acp", userKey)
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	r := []rune(got[0].Summary)
+	// 30 runes + "…" = 31
+	if len(r) != 31 {
+		t.Errorf("Summary rune count = %d, want 31 (30 + ellipsis)", len(r))
+	}
+	if !strings.HasSuffix(got[0].Summary, "…") {
+		t.Errorf("Summary should end with ellipsis, got %q", got[0].Summary)
 	}
 }
 
@@ -600,10 +671,10 @@ func TestSessionsFromSessionManager_filtersByAgentName(t *testing.T) {
 	s1 := sm.GetOrCreateActive(userKey)
 	s1.SetAgentInfo("agent-acp-1", "acp", "ACP session")
 
-	s2 := sm.GetOrCreateActive(userKey + ":bob")
+	s2 := sm.NewSession(userKey, "cc")
 	s2.SetAgentInfo("agent-cc-1", "claudecode", "Claude session")
 
-	got := sessionsFromSessionManager(sm, "acp")
+	got := sessionsFromSessionManager(sm, "acp", userKey)
 	if len(got) != 1 || got[0].ID != "agent-acp-1" {
 		t.Fatalf("sessionsFromSessionManager(acp) = %+v, want [agent-acp-1]", got)
 	}
@@ -619,10 +690,10 @@ func TestSessionsFromSessionManager_ignoresEmptySessionID(t *testing.T) {
 	s1.SetAgentInfo("", "acp", "No agent id")
 
 	// Session with continue sentinel
-	s2 := sm.GetOrCreateActive(userKey + ":bob")
+	s2 := sm.NewSession(userKey, "cont")
 	s2.SetAgentInfo(ContinueSession, "acp", "Continue sentinel")
 
-	got := sessionsFromSessionManager(sm, "acp")
+	got := sessionsFromSessionManager(sm, "acp", userKey)
 	if len(got) != 0 {
 		t.Fatalf("sessionsFromSessionManager = %+v, want empty", got)
 	}
@@ -631,7 +702,7 @@ func TestSessionsFromSessionManager_ignoresEmptySessionID(t *testing.T) {
 func TestSessionsFromSessionManager_emptyManager(t *testing.T) {
 	dir := t.TempDir()
 	sm := NewSessionManager(dir + "/sessions.json")
-	got := sessionsFromSessionManager(sm, "acp")
+	got := sessionsFromSessionManager(sm, "acp", "user:nobody")
 	if len(got) != 0 {
 		t.Fatalf("sessionsFromSessionManager on empty = %d, want 0", len(got))
 	}

@@ -147,6 +147,9 @@ const (
 	MsgFailedToStartAgentSession MsgKey = "failed_to_start_agent_session"
 	MsgFailedToDeleteSession     MsgKey = "failed_to_delete_session"
 	MsgEmptyResponse             MsgKey = "empty_response"
+	MsgAgentInternalError        MsgKey = "agent_internal_error"
+	MsgAgentProcessExited        MsgKey = "agent_process_exited"
+	MsgAgentUnsupportedMethod    MsgKey = "agent_unsupported_method"
 	MsgPermissionPrompt          MsgKey = "permission_prompt"
 	MsgPermissionAllowed         MsgKey = "permission_allowed"
 	MsgPermissionApproveAll      MsgKey = "permission_approve_all"
@@ -253,8 +256,8 @@ const (
 	MsgCronBtnUnmute    MsgKey = "cron_btn_unmute"
 	MsgCronBtnDelete    MsgKey = "cron_btn_delete"
 
-	MsgStatusTitle          MsgKey = "status_title"
-	MsgReplyFooterRemaining MsgKey = "reply_footer_remaining"
+	MsgStatusTitle           MsgKey = "status_title"
+	MsgReplyFooterRemaining  MsgKey = "reply_footer_remaining"
 	MsgModelCurrent          MsgKey = "model_current"
 	MsgModelChanged          MsgKey = "model_changed"
 	MsgModelChangedLive      MsgKey = "model_changed_live"
@@ -448,10 +451,10 @@ const (
 	MsgCommandDisabled   MsgKey = "command_disabled"
 	MsgAdminRequired     MsgKey = "admin_required"
 	MsgRateLimited       MsgKey = "rate_limited"
-	MsgPsSent       MsgKey = "ps_sent"
-	MsgPsSendFailed MsgKey = "ps_send_failed"
-	MsgPsEmpty      MsgKey = "ps_empty"
-	MsgPsNoSession  MsgKey = "ps_no_session"
+	MsgPsSent            MsgKey = "ps_sent"
+	MsgPsSendFailed      MsgKey = "ps_send_failed"
+	MsgPsEmpty           MsgKey = "ps_empty"
+	MsgPsNoSession       MsgKey = "ps_no_session"
 
 	MsgWhoamiTitle     MsgKey = "whoami_title"
 	MsgWhoamiCardTitle MsgKey = "whoami_card_title"
@@ -781,6 +784,27 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "(空回應)",
 		LangJapanese:           "（空のレスポンス）",
 		LangSpanish:            "(respuesta vacía)",
+	},
+	MsgAgentInternalError: {
+		LangEnglish:            "❌ Error: agent encountered an internal error. Please try again later.",
+		LangChinese:            "❌ 错误: Agent 内部错误，请稍后再试。",
+		LangTraditionalChinese: "❌ 錯誤: Agent 內部錯誤，請稍後再試。",
+		LangJapanese:           "❌ エラー: Agent内部エラーが発生しました。後でもう一度お試しください。",
+		LangSpanish:            "❌ Error: el agente encontró un error interno. Inténtalo de nuevo más tarde.",
+	},
+	MsgAgentProcessExited: {
+		LangEnglish:            "❌ Error: agent process exited unexpectedly. Please try again.",
+		LangChinese:            "❌ 错误: Agent 进程异常退出，请重试。",
+		LangTraditionalChinese: "❌ 錯誤: Agent 進程異常退出，請重試。",
+		LangJapanese:           "❌ エラー: Agentプロセスが予期せず終了しました。もう一度お試しください。",
+		LangSpanish:            "❌ Error: el proceso del agente finalizó inesperadamente. Inténtalo de nuevo.",
+	},
+	MsgAgentUnsupportedMethod: {
+		LangEnglish:            "❌ Error: agent does not support the requested operation.",
+		LangChinese:            "❌ 错误: Agent 不支持请求的操作。",
+		LangTraditionalChinese: "❌ 錯誤: Agent 不支持請求的操作。",
+		LangJapanese:           "❌ エラー: Agentが要求された操作をサポートしていません。",
+		LangSpanish:            "❌ Error: el agente no admite la operación solicitada.",
 	},
 	MsgPermissionPrompt: {
 		LangEnglish:            "⚠️ **Permission Request**\n\nAgent wants to use **%s**:\n\n```\n%s\n```\n\nReply **allow** / **deny** / **allow all** (skip all future prompts this session).",

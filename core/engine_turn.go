@@ -324,7 +324,7 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 			case EventError:
 				if event.Error != nil {
 					slog.Error("unsolicited agent error", "error", event.Error, "session", sessionKey)
-					e.send(p, replyCtx, fmt.Sprintf(e.i18n.T(MsgError), event.Error))
+					e.send(p, replyCtx, e.sanitizeAgentError(event.Error.Error()))
 				}
 				state.mu.Lock()
 				state.eventsNeedResync = true
@@ -340,9 +340,55 @@ type agentErrorHandler struct {
 	msgKey   MsgKey
 }
 
+// contains values are lowercase because matching is case-insensitive.
 var agentErrorHandlers = []agentErrorHandler{
-	{"Session not found", MsgSessionNotFound},
-	{"Quota exceeded", MsgModelQuotaExceeded},
+	{"session not found", MsgSessionNotFound},
+	{"unknown session", MsgSessionNotFound},
+	{"invalid session", MsgSessionNotFound},
+	{"quota exceeded", MsgModelQuotaExceeded},
+	{"usage quota", MsgModelQuotaExceeded},
+	{"rate limit", MsgModelQuotaExceeded},
+	{"too many requests", MsgModelQuotaExceeded},
+	{"method not found", MsgAgentUnsupportedMethod},
+	{"not implemented", MsgAgentUnsupportedMethod},
+	{"unsupported method", MsgAgentUnsupportedMethod},
+	{"agent process exited", MsgAgentProcessExited},
+	{"process exited", MsgAgentProcessExited},
+	{"broken pipe", MsgAgentProcessExited},
+	{"connection reset", MsgAgentProcessExited},
+	{"signal: killed", MsgAgentProcessExited},
+}
+
+// sanitizeAgentError returns a localized, user-facing error without exposing
+// raw stderr, stack traces, RPC payloads, filesystem paths, or unknown
+// provider data to IM users. Raw details remain available in logs and hooks.
+func (e *Engine) sanitizeAgentError(errMsg string) string {
+	return sanitizeAgentErrorMessage(errMsg, e.i18n)
+}
+
+// sanitizeAgentErrorMessage is the stateless core used by tests.
+func sanitizeAgentErrorMessage(errMsg string, lang *I18n) string {
+	t := func(k MsgKey) string { return lang.T(k) }
+	normalized := strings.ToLower(strings.TrimSpace(errMsg))
+
+	for _, h := range agentErrorHandlers {
+		if strings.Contains(normalized, h.contains) {
+			return t(h.msgKey)
+		}
+	}
+
+	if strings.Contains(normalized, "-32601") || strings.Contains(normalized, "-32600") {
+		return t(MsgAgentUnsupportedMethod)
+	}
+
+	if strings.Count(errMsg, "\n") >= 2 || strings.Contains(normalized, "exit status") ||
+		strings.Contains(normalized, "unexpected eof") {
+		return t(MsgAgentProcessExited)
+	}
+
+	// Default-deny: unknown agent errors may contain tokens, internal paths,
+	// JSON-RPC payloads, or provider diagnostics. Never relay them verbatim.
+	return t(MsgAgentInternalError)
 }
 
 func (e *Engine) processInteractiveEvents(state *interactiveState, session *Session, sessions *SessionManager, sessionKey string, msgID string, turnStart time.Time, stopTypingFn func(), sendDone <-chan error, replyCtx any) {
@@ -510,7 +556,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				state.mu.Lock()
 				p := state.platform
 				state.mu.Unlock()
-				e.send(p, replyCtx, fmt.Sprintf(e.i18n.T(MsgError), err))
+				e.send(p, replyCtx, e.sanitizeAgentError(err.Error()))
 				return
 			}
 			continue
@@ -1441,29 +1487,22 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					Platform:   p.Name(),
 					Error:      event.Error.Error(),
 				})
-				userMsg := fmt.Sprintf(e.i18n.T(MsgError), errMsg)
-				for _, h := range agentErrorHandlers {
-					if strings.Contains(errMsg, h.contains) {
-						userMsg = e.i18n.T(h.msgKey)
-						break
-					}
-				}
-				e.send(p, replyCtx, userMsg)
+				e.send(p, replyCtx, e.sanitizeAgentError(errMsg))
 			}
-		// Only drop queued messages if the agent session is dead.
-		// Some agents (e.g. Codex) emit EventError for per-turn failures
-		// while keeping the session alive for subsequent turns.
-		if state.agentSession == nil || !state.agentSession.Alive() {
-			// Session is dead — run full cleanup so the old subprocess
-			// (and its stdin pipe) is torn down. Without this, the dead
-			// interactiveState lingers in the map until the next message
-			// replaces it, and Close() is never called — leaking the
-			// agent process (issue: orphaned --acp processes PPID=1).
-			// cleanupInteractiveState will call notifyDroppedQueuedMessages
-			// internally, so we don't call it here.
-			e.cleanupInteractiveState(sessionKey, state)
-		}
-		return
+			// Only drop queued messages if the agent session is dead.
+			// Some agents (e.g. Codex) emit EventError for per-turn failures
+			// while keeping the session alive for subsequent turns.
+			if state.agentSession == nil || !state.agentSession.Alive() {
+				// Session is dead — run full cleanup so the old subprocess
+				// (and its stdin pipe) is torn down. Without this, the dead
+				// interactiveState lingers in the map until the next message
+				// replaces it, and Close() is never called — leaking the
+				// agent process (issue: orphaned --acp processes PPID=1).
+				// cleanupInteractiveState will call notifyDroppedQueuedMessages
+				// internally, so we don't call it here.
+				e.cleanupInteractiveState(sessionKey, state)
+			}
+			return
 		}
 	}
 
@@ -1583,7 +1622,7 @@ func (e *Engine) notifyDroppedQueuedMessages(state *interactiveState, reason err
 	state.pendingMessages = nil
 	state.mu.Unlock()
 	for _, q := range remaining {
-		e.send(q.platform, q.replyCtx, fmt.Sprintf(e.i18n.T(MsgError), reason))
+		e.send(q.platform, q.replyCtx, e.sanitizeAgentError(reason.Error()))
 	}
 }
 

@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.4.8 (2026-07-23)
+
+Personal fork session switch / list fix, error sanitization, and `/list` fallback hardening for `@qinghuangniao/cc-connect-qhn`.
+
+### Notes
+- **Fix `/list` and `/switch` user isolation**: `sessionsFromSessionManager` previously used `AllSessions()` (cross-user). Changed to `ListSessions(userKey)`, scoped to `msg.SessionKey`. Added the same fallback in `cmdSwitch` so `/switch` works after restart when the agent backend reports no sessions (ACP without `session/list`).
+- **`/list` shows last user message as summary**: fallback path now fills `MessageCount=len(History)` and `Summary` from the last `role=="user"` entry (truncated to 30 runes), making sessions distinguishable after restart.
+- **EventError desensitization**: all 4 code paths that relay agent errors to IM users (foreground EventError, unsolicited EventError, `Send` error, dropped-queue notifications) now route through `sanitizeAgentError` → `sanitizeAgentErrorMessage`. The function returns localized i18n messages for known patterns (`Session not found` → `MsgSessionNotFound`, quota/rate-limit → `MsgModelQuotaExceeded`, ACP internal errors → `MsgAgentInternalError`, process exits → `MsgAgentProcessExited`) and default-denies everything else to a generic `MsgAgentInternalError`. Raw errors remain in logs and hooks only.
+- 3 new i18n keys: `MsgAgentInternalError`, `MsgAgentProcessExited`, `MsgAgentUnsupportedMethod` (5 languages each).
+- **Fix pre-existing flaky `TestGetModelAndReasoningEffort_FromRuntimeConfigWhenUnset`**: shell mock pattern `*"method":"initialize"*` incorrectly matched `"initialized"` notification, spawning unnecessary `printf|sed` subprocesses under load. Changed patterns to `*"method":"initialize","*` / `*"method":"config/read","*` and moved `id` extraction inside case branches. Bumped test timeout to 5 s.
+
+### Tests
+- `TestSessionsFromSessionManager_*` updated for `userKey` parameter, plus 4 new tests: `_userIsolation`, `_fillsSummaryAndCount`, `_summaryTruncates`.
+- `TestSanitizeAgentErrorMessage` (17 cases covering known-friendly, ACP-internal, stderr, stack traces, path-like, unknown).
+- `tests/release_local/engine_matrix/restart_persistence_test.go` (5 restart-scenario tests with a fake ACP agent).
+
+### Docs
+- `.codebuddy/plans/toasty-vortex-einstein-liQoVUJT.md`
+
 ## v1.4.7 (2026-07-21)
 
 Personal fork `/model` live switch, ACP refusal error surfacing, and orphaned subprocess cleanup for `@qinghuangniao/cc-connect-qhn`.

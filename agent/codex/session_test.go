@@ -119,6 +119,15 @@ func TestBuildExecArgs_ResumeOmitsCdFlag(t *testing.T) {
 }
 
 func TestGetModelAndReasoningEffort_FromRuntimeConfigWhenUnset(t *testing.T) {
+	// Bump the timeout to give the fake shell script headroom when many
+	// test packages run in parallel (go test ./...).  The pattern-match
+	// fix in the script avoids wasted `printf|sed` subprocesses on the
+	// initialized notification, but the handshake still forks a process
+	// and two subprocesses per request, which can be slow under load.
+	prevTimeout := codexRuntimeConfigTimeout
+	codexRuntimeConfigTimeout = 5 * time.Second
+	defer func() { codexRuntimeConfigTimeout = prevTimeout }()
+
 	workDir := t.TempDir()
 	binDir := filepath.Join(workDir, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -127,12 +136,13 @@ func TestGetModelAndReasoningEffort_FromRuntimeConfigWhenUnset(t *testing.T) {
 
 	script := `#!/bin/sh
 while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":[[:space:]]*\([0-9][0-9]*\).*/\1/p')
   case "$line" in
-    *'"method":"initialize"'*)
+    *'"method":"initialize","'*)
+      id=$(printf '%s' "$line" | sed -n 's/.*"id":[[:space:]]*\([0-9][0-9]*\).*/\1/p')
       printf '{"id":%s,"result":{"protocolVersion":"2"}}\n' "$id"
       ;;
-    *'"method":"config/read"'*)
+    *'"method":"config/read","'*)
+      id=$(printf '%s' "$line" | sed -n 's/.*"id":[[:space:]]*\([0-9][0-9]*\).*/\1/p')
       printf '{"id":%s,"result":{"config":{"model":"gpt-5.4","model_reasoning_effort":"xhigh"},"origins":{}}}\n' "$id"
       ;;
   esac
@@ -140,9 +150,9 @@ done
 `
 	powershellScript := `
 while (($line = [Console]::In.ReadLine()) -ne $null) {
-  if ($line -like '*"method":"initialize"*') {
+  if ($line -like '*"method":"initialize","*') {
     [Console]::Out.WriteLine('{"id":1,"result":{"protocolVersion":"2"}}')
-  } elseif ($line -like '*"method":"config/read"*') {
+  } elseif ($line -like '*"method":"config/read","*') {
     [Console]::Out.WriteLine('{"id":2,"result":{"config":{"model":"gpt-5.4","model_reasoning_effort":"xhigh"},"origins":{}}}')
   }
 }

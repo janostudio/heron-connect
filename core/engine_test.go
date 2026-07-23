@@ -11922,17 +11922,20 @@ func TestUnsolicitedReader_SetsResyncOnEventError(t *testing.T) {
 		t.Error("expected eventsNeedResync=true after EventError")
 	}
 
-	// Verify error was relayed to platform.
+	// Verify a sanitized error was relayed to the platform without exposing
+	// the raw provider error.
 	sent := p.getSent()
 	found := false
 	for _, s := range sent {
-		if strings.Contains(s, "something broke") {
+		if s == e.i18n.T(MsgAgentInternalError) {
 			found = true
-			break
+		}
+		if strings.Contains(s, "something broke") {
+			t.Errorf("raw agent error must not be relayed to platform: %q", s)
 		}
 	}
 	if !found {
-		t.Errorf("expected error to be relayed to platform, got %v", sent)
+		t.Errorf("expected sanitized error to be relayed to platform, got %v", sent)
 	}
 }
 
@@ -13220,5 +13223,126 @@ func TestMergeStreamDisplayContent_realWorldCase(t *testing.T) {
 	}
 	if strings.Contains(got, "哈哈，你好！有什么我可以帮你的吗？\n\n哈哈，你好") {
 		t.Fatalf("duplicate detected in output: %q", got)
+	}
+}
+
+// TestSanitizeAgentErrorMessage covers the error desensitization logic.
+func TestSanitizeAgentErrorMessage(t *testing.T) {
+	lang := NewI18n(LangEnglish)
+
+	tests := []struct {
+		name   string
+		errMsg string
+		want   string
+	}{
+		// Known friendly errors — passed through.
+		{
+			name:   "session not found",
+			errMsg: "Session not found",
+			want:   lang.T(MsgSessionNotFound),
+		},
+		{
+			name:   "quota exceeded",
+			errMsg: "Quota exceeded: 429 You have exceeded the 5-hour usage quota",
+			want:   lang.T(MsgModelQuotaExceeded),
+		},
+
+		// ACP internal errors — desensitized.
+		{
+			name:   "acp RPC method not found",
+			errMsg: `acp: session/list: method not found: code=-32601`,
+			want:   lang.T(MsgAgentUnsupportedMethod),
+		},
+		{
+			name:   "acp RPC invalid request",
+			errMsg: `acp: invalid request: code=-32600`,
+			want:   lang.T(MsgAgentUnsupportedMethod),
+		},
+		{
+			name:   "acp pipe error",
+			errMsg: `acp: stdin pipe: broken pipe`,
+			want:   lang.T(MsgAgentProcessExited),
+		},
+		{
+			name:   "acp session/prompt error",
+			errMsg: `acp: session/prompt: session closed`,
+			want:   lang.T(MsgAgentInternalError),
+		},
+		{
+			name:   "acp parse error",
+			errMsg: `acp: parse initialize result: invalid character`,
+			want:   lang.T(MsgAgentInternalError),
+		},
+
+		// Multi-line / stderr blob.
+		{
+			name: "stderr blob multi-line",
+			errMsg: `Error: something went wrong
+	at file.go:42
+	at handler.go:100`,
+			want: lang.T(MsgAgentProcessExited),
+		},
+		{
+			name: "stderr with panic trace",
+			errMsg: `panic: runtime error: index out of range [3]
+goroutine 1 [running]:
+main.main()`,
+			want: lang.T(MsgAgentProcessExited),
+		},
+
+		// Stack traces.
+		{
+			name:   "go stack trace",
+			errMsg: `main.go:42: some error`,
+			want:   lang.T(MsgAgentInternalError),
+		},
+		{
+			name:   "goroutine dump",
+			errMsg: `goroutine 1 [running]: main.main()`,
+			want:   lang.T(MsgAgentInternalError),
+		},
+
+		// File paths.
+		{
+			name:   "file path in error",
+			errMsg: `cannot open /Users/foo/bar/config.go`,
+			want:   lang.T(MsgAgentInternalError),
+		},
+		{
+			name:   "json path in error",
+			errMsg: `failed to read /tmp/sessions.json`,
+			want:   lang.T(MsgAgentInternalError),
+		},
+
+		// Unknown errors default to a generic message; raw data stays in logs/hooks.
+		{
+			name:   "unknown short error",
+			errMsg: `request timeout after 30 seconds`,
+			want:   lang.T(MsgAgentInternalError),
+		},
+		{
+			name:   "provider rate limit",
+			errMsg: `API rate limit exceeded, retry in 60s`,
+			want:   lang.T(MsgModelQuotaExceeded),
+		},
+		{
+			name:   "mixed case quota",
+			errMsg: `TOO MANY REQUESTS from provider`,
+			want:   lang.T(MsgModelQuotaExceeded),
+		},
+		{
+			name:   "unknown JSON payload with token",
+			errMsg: `{"message":"failed","token":"secret-value"}`,
+			want:   lang.T(MsgAgentInternalError),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeAgentErrorMessage(tt.errMsg, lang)
+			if got != tt.want {
+				t.Errorf("sanitizeAgentErrorMessage(%q) = %q, want %q", tt.errMsg, got, tt.want)
+			}
+		})
 	}
 }

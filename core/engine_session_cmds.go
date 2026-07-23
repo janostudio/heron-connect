@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 )
+
 func (e *Engine) cmdNew(p Platform, msg *Message, args []string) {
 	_, sessions, interactiveKey, err := e.commandContext(p, msg)
 	if err != nil {
@@ -85,12 +86,17 @@ const listPageSize = 20
 const dirCardPageSize = 20
 
 // sessionsFromSessionManager builds a fallback session list from
-// cc-connect's own SessionManager. Used when the agent backend does
-// not report sessions (e.g. ACP servers without session/list support
-// like CodeBuddy). Only sessions with a non-empty AgentSessionID and
-// matching the given agent name are included.
-func sessionsFromSessionManager(sm *SessionManager, agentName string) []AgentSessionInfo {
-	all := sm.AllSessions()
+// cc-connect's own SessionManager, scoped to userKey. Used when the
+// agent backend does not report sessions (e.g. ACP servers without
+// session/list support like CodeBuddy). Only sessions with a non-empty
+// AgentSessionID and matching the given agent name are included.
+//
+// userKey is msg.SessionKey (NOT interactiveKey): the SessionManager is
+// already per-workspace in multi-workspace mode, and within it userKey
+// is the plain session key. This prevents one user from seeing another
+// user's sessions via the fallback path.
+func sessionsFromSessionManager(sm *SessionManager, agentName, userKey string) []AgentSessionInfo {
+	all := sm.ListSessions(userKey)
 	out := make([]AgentSessionInfo, 0, len(all))
 	for _, s := range all {
 		agentSID := s.GetAgentSessionID()
@@ -100,14 +106,37 @@ func sessionsFromSessionManager(sm *SessionManager, agentName string) []AgentSes
 		if name := s.GetAgentName(); name != "" && name != agentName {
 			continue
 		}
+		history := s.GetHistory(0)
 		info := AgentSessionInfo{
-			ID:         agentSID,
-			Summary:    s.GetName(),
-			ModifiedAt: s.GetUpdatedAt(),
+			ID:           agentSID,
+			Summary:      lastUserMessageSnippet(history, 30),
+			MessageCount: len(history),
+			ModifiedAt:   s.GetUpdatedAt(),
 		}
 		out = append(out, info)
 	}
 	return out
+}
+
+// lastUserMessageSnippet returns a truncated snippet of the last
+// user-role message in history, or "" if there is none.
+func lastUserMessageSnippet(history []HistoryEntry, maxRunes int) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role != "user" {
+			continue
+		}
+		text := strings.ReplaceAll(history[i].Content, "\n", " ")
+		text = strings.Join(strings.Fields(text), " ")
+		if text == "" {
+			return ""
+		}
+		r := []rune(text)
+		if len(r) > maxRunes {
+			return string(r[:maxRunes]) + "…"
+		}
+		return text
+	}
+	return ""
 }
 
 func (e *Engine) cmdList(p Platform, msg *Message, args []string) {
@@ -129,7 +158,7 @@ func (e *Engine) cmdList(p Platform, msg *Message, args []string) {
 		// session/list), surface sessions tracked by cc-connect's own
 		// SessionManager so /list and /switch still work.
 		if len(agentSessions) == 0 {
-			agentSessions = sessionsFromSessionManager(sessions, agent.Name())
+			agentSessions = sessionsFromSessionManager(sessions, agent.Name(), msg.SessionKey)
 		}
 		if len(agentSessions) == 0 {
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgListEmpty))
@@ -228,6 +257,13 @@ func (e *Engine) cmdSwitch(p Platform, msg *Message, args []string) {
 		return
 	}
 	agentSessions = e.applySessionFilter(agentSessions, sessions)
+	// Fallback: when the agent backend doesn't report sessions
+	// (e.g. ACP servers like CodeBuddy that don't implement
+	// session/list), surface sessions tracked by cc-connect's own
+	// SessionManager so /switch still works after restart.
+	if len(agentSessions) == 0 {
+		agentSessions = sessionsFromSessionManager(sessions, agent.Name(), msg.SessionKey)
+	}
 
 	matched := e.matchSession(agentSessions, sessions, query)
 	if matched == nil {
@@ -666,4 +702,3 @@ func mergeStreamDisplayContent(streamContent, lastAssistantSegment, finalRespons
 	}
 	return streamContent + "\n\n" + finalResponse
 }
-

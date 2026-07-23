@@ -380,6 +380,12 @@ func (a *Agent) storePersistentModelCache(snapshot opencodeModelDiscoverySnapsho
 		ContextKey:  modelDiscoveryContextKey(snapshot),
 	}
 
+	// Update in-memory cache first so callers see fresh data as soon as
+	// this goroutine finishes, even if disk I/O blocks or fails.
+	a.mu.Lock()
+	a.persistentModelCache = cache
+	a.mu.Unlock()
+
 	if snapshot.cachePath != "" {
 		if err := os.MkdirAll(filepath.Dir(snapshot.cachePath), 0o755); err != nil {
 			return err
@@ -392,10 +398,6 @@ func (a *Agent) storePersistentModelCache(snapshot opencodeModelDiscoverySnapsho
 			return err
 		}
 	}
-
-	a.mu.Lock()
-	a.persistentModelCache = cache
-	a.mu.Unlock()
 	return nil
 }
 
