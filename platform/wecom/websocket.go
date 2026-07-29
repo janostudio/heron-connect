@@ -41,6 +41,7 @@ type WSPlatform struct {
 	reqSeq      atomic.Int64 // monotonic counter for generating unique req_id
 	missedPong  atomic.Int32 // consecutive heartbeat acks not received
 	pendingAcks sync.Map     // req_id -> chan error, for sequential send with ack waiting
+	rateTracker *chatRateTracker
 }
 
 type wsStreamState struct {
@@ -168,6 +169,7 @@ func (p *WSPlatform) StreamPreviewMode() string { return "tool_hold" }
 func (p *WSPlatform) Start(handler core.MessageHandler) error {
 	p.handler = handler
 	p.ctx, p.cancel = context.WithCancel(context.Background())
+	p.rateTracker = &chatRateTracker{}
 
 	go p.connectLoop()
 	return nil
@@ -561,6 +563,23 @@ func (p *WSPlatform) Send(ctx context.Context, rctx any, content string) error {
 
 	chunks := splitByBytes(content, wecomStreamMaxBytes)
 	for i, chunk := range chunks {
+		// Rate limit check before each chunk send
+		if p.rateTracker != nil {
+			minCount, hourCount, needWait := p.rateTracker.check(rc.chatID)
+			if needWait > 0 {
+				slog.Warn("wecom-ws: rate limit approaching, throttling",
+					"chat_id", rc.chatID,
+					"minute_count", minCount,
+					"hour_count", hourCount,
+					"wait", needWait)
+				select {
+				case <-time.After(needWait):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+
 		reqID := p.generateReqID("aibot_send_msg")
 		frame := map[string]any{
 			"cmd":     "aibot_send_msg",
@@ -574,8 +593,17 @@ func (p *WSPlatform) Send(ctx context.Context, rctx any, content string) error {
 			},
 		}
 		if err := p.writeAndWaitAck(ctx, frame, reqID); err != nil {
-			slog.Error("wecom-ws: send failed", "user", rc.userID, "chunk", i, "error", err)
+			slog.Error("wecom-ws: send failed",
+				"user", rc.userID,
+				"chat_id", rc.chatID,
+				"chat_type", rc.chatType,
+				"chunk", i,
+				"error", err)
 			return err
+		}
+		// Record successful send
+		if p.rateTracker != nil {
+			p.rateTracker.record(rc.chatID)
 		}
 	}
 	slog.Debug("wecom-ws: message sent", "user", rc.userID, "chunks", len(chunks), "total_len", len(content))
@@ -624,24 +652,81 @@ func (p *WSPlatform) writeJSON(v any) error {
 
 // writeAndWaitAck sends a frame and waits for the server ack before returning.
 // Falls back to non-blocking on timeout to avoid deadlocks.
+// For 846607 (rate limit), retries with exponential backoff up to 3 times.
+// For 846608 (stream expired), returns the error immediately (no retry).
 func (p *WSPlatform) writeAndWaitAck(ctx context.Context, frame map[string]any, reqID string) error {
-	ch := make(chan error, 1)
-	p.pendingAcks.Store(reqID, ch)
+	const maxRetries = 3
 
-	if err := p.writeJSON(frame); err != nil {
-		p.pendingAcks.Delete(reqID)
-		return err
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(1<<uint(attempt-1)) * 3 * time.Second
+			slog.Warn("wecom-ws: rate limited, retrying",
+				"req_id", reqID,
+				"attempt", attempt,
+				"backoff", backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		ch := make(chan error, 1)
+		p.pendingAcks.Store(reqID, ch)
+
+		if err := p.writeJSON(frame); err != nil {
+			p.pendingAcks.Delete(reqID)
+			return err
+		}
+
+		var ackErr error
+		select {
+		case ackErr = <-ch:
+		case <-ctx.Done():
+			p.pendingAcks.Delete(reqID)
+			return ctx.Err()
+		case <-time.After(wsAckTimeout):
+			p.pendingAcks.Delete(reqID)
+			slog.Debug("wecom-ws: ack timeout, proceeding", "req_id", reqID)
+			return nil
+		}
+
+		if ackErr == nil {
+			return nil
+		}
+
+		lastErr = ackErr
+
+		// 846608: stream expired (>10 min), cannot retry with same stream
+		if isErrCode(ackErr, 846608) {
+			slog.Warn("wecom-ws: stream expired, cannot retry",
+				"req_id", reqID,
+				"error", ackErr)
+			return ackErr
+		}
+
+		// 846607: rate limited, retry with backoff
+		if isErrCode(ackErr, 846607) {
+			continue
+		}
+
+		// Other errors: don't retry
+		return ackErr
 	}
 
-	select {
-	case err := <-ch:
-		return err
-	case <-ctx.Done():
-		p.pendingAcks.Delete(reqID)
-		return ctx.Err()
-	case <-time.After(wsAckTimeout):
-		p.pendingAcks.Delete(reqID)
-		slog.Debug("wecom-ws: ack timeout, proceeding", "req_id", reqID)
-		return nil
+	slog.Error("wecom-ws: rate limit retries exhausted",
+		"req_id", reqID,
+		"attempts", maxRetries+1,
+		"last_error", lastErr)
+	return lastErr
+}
+
+// isErrCode checks if the given error contains a specific WeCom errcode.
+func isErrCode(err error, code int) bool {
+	if err == nil {
+		return false
 	}
+	target := fmt.Sprintf("errcode=%d", code)
+	return strings.Contains(err.Error(), target)
 }

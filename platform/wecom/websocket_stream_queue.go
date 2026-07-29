@@ -3,6 +3,7 @@ package wecom
 import (
 	"context"
 	"log/slog"
+	"time"
 )
 
 func (p *WSPlatform) enqueueLatestStreamSend(ctx context.Context, key string, state *wsStreamState, rc wsReplyContext, content string, finish bool) error {
@@ -115,9 +116,27 @@ func (p *WSPlatform) runStreamQueue(key string, state *wsStreamState, rc wsReply
 			continue
 		}
 
+		// Rate limit check before sending
+		if p.rateTracker != nil {
+			minCount, hourCount, needWait := p.rateTracker.check(rc.chatID)
+			if needWait > 0 {
+				slog.Warn("wecom-ws: rate limit approaching, throttling",
+					"chat_id", rc.chatID,
+					"minute_count", minCount,
+					"hour_count", hourCount,
+					"wait", needWait)
+				time.Sleep(needWait)
+			}
+		}
+
 		reqID, frame, err := p.buildStreamFrame(rc, rendered, req.finish)
 		if err == nil {
 			err = p.writeAndWaitAck(context.Background(), frame, reqID)
+		}
+		if err == nil {
+			if p.rateTracker != nil {
+				p.rateTracker.record(rc.chatID)
+			}
 		}
 		if err == nil && !req.finish {
 			state.mu.Lock()

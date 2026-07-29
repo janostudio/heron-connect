@@ -256,7 +256,8 @@ func (sp *streamPreview) flushLocked(text string) {
 
 	updater, ok := sp.platform.(MessageUpdater)
 	if !ok {
-		slog.Debug("stream preview: platform does not support UpdateMessage, degrading")
+		slog.Warn("stream preview: platform does not support UpdateMessage, degrading",
+			"platform", sp.platform.Name())
 		sp.degraded = true
 		return
 	}
@@ -267,7 +268,9 @@ func (sp *streamPreview) flushLocked(text string) {
 			slog.Debug("stream preview: sending first preview via SendPreviewStart", "text_len", len(text))
 			handle, err := starter.SendPreviewStart(sp.ctx, sp.replyCtx, text)
 			if err != nil {
-				slog.Debug("stream preview: start failed, degrading", "error", err)
+				slog.Warn("stream preview: start failed, degrading",
+					"error", err,
+					"platform", sp.platform.Name())
 				sp.degraded = true
 				return
 			}
@@ -289,7 +292,9 @@ func (sp *streamPreview) flushLocked(text string) {
 	// Update existing preview message
 	slog.Debug("stream preview: updating via UpdateMessage", "text_len", len(text))
 	if err := updater.UpdateMessage(sp.ctx, sp.previewMsgID, text); err != nil {
-		slog.Debug("stream preview: update failed, degrading", "error", err)
+		slog.Warn("stream preview: update failed, degrading",
+			"error", err,
+			"platform", sp.platform.Name())
 		sp.degraded = true
 		return
 	}
@@ -351,6 +356,105 @@ func (sp *streamPreview) discard() {
 
 	sp.previewMsgID = nil
 	sp.degraded = true
+}
+
+// hasPreview returns true if a streaming preview has been started for this turn.
+func (sp *streamPreview) hasPreview() bool {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	return sp.previewMsgID != nil && !sp.degraded
+}
+
+// ensurePreview sends a preview message if one hasn't been started yet.
+// If a preview already exists, it updates the existing preview with the given
+// content. Used for reassurance messages during long agent operations.
+func (sp *streamPreview) ensurePreview(content string) {
+	sp.mu.Lock()
+	if sp.degraded || !sp.cfg.Enabled {
+		sp.mu.Unlock()
+		return
+	}
+	if sp.previewMsgID != nil {
+		// Already have a preview, update it
+		sp.mu.Unlock()
+		sp.reassure(content)
+		return
+	}
+	sp.mu.Unlock()
+
+	// No preview yet, create one
+	updater, ok := sp.platform.(MessageUpdater)
+	if !ok {
+		sp.mu.Lock()
+		sp.degraded = true
+		sp.mu.Unlock()
+		return
+	}
+
+	transformed := content
+	if sp.transform != nil {
+		transformed = sp.transform(content)
+	}
+
+	if starter, ok := sp.platform.(PreviewStarter); ok {
+		handle, err := starter.SendPreviewStart(sp.ctx, sp.replyCtx, transformed)
+		if err != nil {
+			slog.Debug("stream preview: ensurePreview start failed", "error", err)
+			sp.mu.Lock()
+			sp.degraded = true
+			sp.mu.Unlock()
+			return
+		}
+		sp.mu.Lock()
+		sp.previewMsgID = handle
+		// Do NOT update lastSentText here — reassurance text is not real
+		// agent output. Keeping the old lastSentText ensures that when real
+		// content arrives via appendText, the delta calculation is correct.
+		sp.mu.Unlock()
+	} else {
+		_ = updater // suppress unused warning
+		sp.mu.Lock()
+		sp.degraded = true
+		sp.mu.Unlock()
+	}
+}
+
+// reassure updates the existing preview message with reassurance content.
+// Does nothing if no preview is active.
+func (sp *streamPreview) reassure(content string) {
+	sp.mu.Lock()
+	if sp.degraded || sp.previewMsgID == nil {
+		sp.mu.Unlock()
+		return
+	}
+	sp.mu.Unlock()
+
+	transformed := content
+	if sp.transform != nil {
+		transformed = sp.transform(content)
+	}
+
+	updater, ok := sp.platform.(MessageUpdater)
+	if !ok {
+		sp.mu.Lock()
+		sp.degraded = true
+		sp.mu.Unlock()
+		return
+	}
+
+	if err := updater.UpdateMessage(sp.ctx, sp.previewMsgID, transformed); err != nil {
+		slog.Debug("stream preview: reassure update failed", "error", err)
+		sp.mu.Lock()
+		sp.degraded = true
+		sp.mu.Unlock()
+		return
+	}
+
+	sp.mu.Lock()
+	// Do NOT update lastSentText — reassurance text should not affect
+	// the delta calculation when real agent output arrives.
+	sp.lastSentAt = time.Now()
+	sp.mu.Unlock()
 }
 
 // finish is called when the agent response is complete. It cancels any pending

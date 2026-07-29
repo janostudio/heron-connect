@@ -257,6 +257,10 @@ type Engine struct {
 	interactiveMu     sync.Mutex
 	interactiveStates map[string]*interactiveState // key = sessionKey
 
+	// Session reaper: periodically scans interactiveStates and kills sessions
+	// that have been idle (no agent events) for longer than resetOnIdle.
+	sessionReapCancel context.CancelFunc
+
 	// turnWg tracks all in-flight processInteractiveMessageWith goroutines.
 	// Engine.Stop() waits on it (bounded) so that turn goroutines finish
 	// their session.Save() / session.Unlock() before the engine tears down
@@ -342,6 +346,15 @@ type interactiveState struct {
 	// the next turn (e.g. after an abnormal exit). Defaults to true (safe);
 	// cleared to false only after a clean EventResult.
 	eventsNeedResync bool
+
+	// lastEventTime records when the last agent event was received for this
+	// session. Used by the session reaper to detect and kill sessions that
+	// have been idle (no agent output) for too long.
+	lastEventTime time.Time
+
+	// turnStartTime is set when a new foreground turn begins. Used as a
+	// fallback for lastEventTime when no events have been received yet.
+	turnStartTime time.Time
 }
 
 type pendingProviderAddState struct {
@@ -562,6 +575,7 @@ func (e *Engine) Start() error {
 	}
 
 	e.startObserver()
+	e.startSessionReaper()
 	return nil
 }
 
@@ -1056,7 +1070,8 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		channelKey := effectiveWorkspaceChannelKey(msg)
 		workspace, channelName, err := e.resolveWorkspace(p, channelID)
 		if err != nil {
-			slog.Error("workspace resolution failed", "err", err)
+			slog.Error("workspace resolution failed", "error", err,
+		"session_key", msg.SessionKey, "user", msg.UserID, "platform", msg.Platform)
 			e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgWsResolutionError, err))
 			return
 		}
@@ -1086,7 +1101,9 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 			var effectiveWorkspace string
 			wsAgent, wsSessions, _, effectiveWorkspace, err = e.workspaceContext(workspace, msg.SessionKey)
 			if err != nil {
-				slog.Error("failed to create workspace agent", "workspace", workspace, "err", err)
+				slog.Error("failed to create workspace agent",
+		"workspace", workspace, "error", err,
+		"session_key", msg.SessionKey, "user", msg.UserID)
 				e.reply(p, msg.ReplyCtx, fmt.Sprintf("Failed to initialize workspace: %v", err))
 				return
 			}
@@ -1386,7 +1403,13 @@ func (e *Engine) handleVoiceMessage(p Platform, msg *Message) {
 
 	text, err := TranscribeAudio(e.ctx, e.speech.STT, audio, e.speech.Language)
 	if err != nil {
-		slog.Error("speech transcription failed", "error", err)
+		slog.Error("speech transcription failed",
+			"error", err,
+			"session_key", msg.SessionKey,
+			"platform", p.Name(),
+			"user", msg.UserID,
+			"format", audio.Format,
+			"size", len(audio.Data))
 		e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgVoiceTranscribeFailed), err))
 		return
 	}
@@ -1453,7 +1476,12 @@ func (e *Engine) handlePendingPermission(p Platform, msg *Message, content strin
 			Behavior:     "allow",
 			UpdatedInput: updatedInput,
 		}); err != nil {
-			slog.Error("failed to send AskUserQuestion response", "error", err)
+			slog.Error("failed to send AskUserQuestion response",
+				"error", err,
+				"session_key", msg.SessionKey,
+				"platform", p.Name(),
+				"user", msg.UserID,
+				"request_id", pending.RequestID)
 			e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgError), err))
 		} else {
 			e.reply(p, msg.ReplyCtx, fmt.Sprintf("✅ %s: **%s**", q.Question, answer))
@@ -1477,7 +1505,13 @@ func (e *Engine) handlePendingPermission(p Platform, msg *Message, content strin
 			Behavior:     "allow",
 			UpdatedInput: pending.ToolInput,
 		}); err != nil {
-			slog.Error("failed to send permission response", "error", err)
+			slog.Error("failed to send permission response (approve-all)",
+				"error", err,
+				"session_key", msg.SessionKey,
+				"platform", p.Name(),
+				"user", msg.UserID,
+				"request_id", pending.RequestID,
+				"tool", pending.ToolName)
 			e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgError), err))
 		} else {
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPermissionApproveAll))
@@ -1487,7 +1521,13 @@ func (e *Engine) handlePendingPermission(p Platform, msg *Message, content strin
 			Behavior:     "allow",
 			UpdatedInput: pending.ToolInput,
 		}); err != nil {
-			slog.Error("failed to send permission response", "error", err)
+			slog.Error("failed to send permission response (allow)",
+				"error", err,
+				"session_key", msg.SessionKey,
+				"platform", p.Name(),
+				"user", msg.UserID,
+				"request_id", pending.RequestID,
+				"tool", pending.ToolName)
 			e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgError), err))
 		} else {
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPermissionAllowed))
@@ -1497,7 +1537,13 @@ func (e *Engine) handlePendingPermission(p Platform, msg *Message, content strin
 			Behavior: "deny",
 			Message:  "User denied this tool use.",
 		}); err != nil {
-			slog.Error("failed to send deny response", "error", err)
+			slog.Error("failed to send deny response",
+				"error", err,
+				"session_key", msg.SessionKey,
+				"platform", p.Name(),
+				"user", msg.UserID,
+				"request_id", pending.RequestID,
+				"tool", pending.ToolName)
 		}
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPermissionDenied))
 	} else {
@@ -2028,7 +2074,12 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 			}
 		}
 		if err != nil {
-			slog.Error("failed to start interactive session", "error", err, "elapsed", startElapsed)
+			slog.Error("failed to start interactive session",
+				"error", err,
+				"session_key", sessionKey,
+				"platform", p.Name(),
+				"agent", e.agent.Name(),
+				"elapsed", startElapsed)
 			e.hooks.Emit(HookEvent{
 				Event:      HookEventError,
 				SessionKey: sessionKey,
@@ -2226,7 +2277,11 @@ func (e *Engine) cmdPs(p Platform, msg *Message, args []string) {
 		return
 	}
 	if err := state.agentSession.Send(text, nil, nil); err != nil {
-		slog.Error("ps: send failed", "error", err)
+		slog.Error("ps: send failed",
+			"error", err,
+			"session_key", msg.SessionKey,
+			"platform", p.Name(),
+			"user", msg.UserID)
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsSendFailed))
 		return
 	}
@@ -2685,5 +2740,72 @@ func (e *Engine) handleWorkspaceCommand(p Platform, msg *Message, args []string)
 
 	default:
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgWsUsage))
+	}
+}
+
+// sessionReapInterval is how often the session reaper scans for idle sessions.
+const sessionReapInterval = 5 * time.Minute
+
+// startSessionReaper launches a background goroutine that periodically scans
+// interactiveStates and cleans up sessions whose agent process has been idle
+// (no agent events) for longer than resetOnIdle.
+func (e *Engine) startSessionReaper() {
+	if e.resetOnIdle <= 0 {
+		return
+	}
+	ctx, cancel := context.WithCancel(e.ctx)
+	e.sessionReapCancel = cancel
+
+	go func() {
+		ticker := time.NewTicker(sessionReapInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				e.reapIdleSessions()
+			}
+		}
+	}()
+}
+
+// reapIdleSessions scans interactiveStates and cleans up any session whose
+// agent process has been idle (no events) for longer than resetOnIdle.
+func (e *Engine) reapIdleSessions() {
+	if e.resetOnIdle <= 0 {
+		return
+	}
+
+	type reapTarget struct {
+		key   string
+		state *interactiveState
+	}
+
+	var targets []reapTarget
+	e.interactiveMu.Lock()
+	for key, state := range e.interactiveStates {
+		if state == nil || state.agentSession == nil || !state.agentSession.Alive() {
+			continue
+		}
+		lastEvent := state.lastEventTime
+		if lastEvent.IsZero() {
+			lastEvent = state.turnStartTime
+		}
+		if lastEvent.IsZero() {
+			continue
+		}
+		if time.Since(lastEvent) > e.resetOnIdle {
+			targets = append(targets, reapTarget{key: key, state: state})
+		}
+	}
+	e.interactiveMu.Unlock()
+
+	for _, t := range targets {
+		slog.Info("reaping idle agent session",
+			"session_key", t.key,
+			"idle_for", time.Since(t.state.lastEventTime),
+			"threshold", e.resetOnIdle)
+		e.cleanupInteractiveState(t.key, t.state)
 	}
 }

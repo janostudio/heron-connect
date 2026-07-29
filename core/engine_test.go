@@ -13346,3 +13346,191 @@ main.main()`,
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Session reaper tests
+// ---------------------------------------------------------------------------
+
+// fakeAgentSessionForReaper implements AgentSession just enough for the reaper.
+type fakeAgentSessionForReaper struct {
+	alive bool
+	name  string
+}
+
+func (f *fakeAgentSessionForReaper) Alive() bool                               { return f.alive }
+func (f *fakeAgentSessionForReaper) Close() error                              { f.alive = false; return nil }
+func (f *fakeAgentSessionForReaper) CancelTurn()                               {}
+func (f *fakeAgentSessionForReaper) CurrentSessionID() string                  { return "test-sid" }
+func (f *fakeAgentSessionForReaper) Events() <-chan Event                      { return nil }
+func (f *fakeAgentSessionForReaper) Send(prompt string, images []ImageAttachment, files []FileAttachment) error {
+	return nil
+}
+func (f *fakeAgentSessionForReaper) RespondPermission(requestID string, result PermissionResult) error {
+	return nil
+}
+
+func TestReapIdleSessions_KillsIdleSession(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetResetOnIdle(1 * time.Millisecond) // immediate
+
+	key := "test:user1"
+	session := &fakeAgentSessionForReaper{alive: true, name: "test-agent"}
+	e.interactiveMu.Lock()
+	e.interactiveStates = map[string]*interactiveState{
+		key: {
+			agentSession:  session,
+			lastEventTime: time.Now().Add(-10 * time.Minute), // well past the 1ms threshold
+			turnStartTime: time.Now().Add(-10 * time.Minute),
+		},
+	}
+	e.interactiveMu.Unlock()
+
+	e.reapIdleSessions()
+
+	// Session should have been cleaned up (removed from interactiveStates)
+	e.interactiveMu.Lock()
+	_, exists := e.interactiveStates[key]
+	e.interactiveMu.Unlock()
+
+	if exists {
+		t.Fatal("expected idle session to be reaped")
+	}
+}
+
+func TestReapIdleSessions_SkipsActiveSession(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetResetOnIdle(10 * time.Minute)
+
+	key := "test:user1"
+	session := &fakeAgentSessionForReaper{alive: true, name: "test-agent"}
+	e.interactiveMu.Lock()
+	e.interactiveStates = map[string]*interactiveState{
+		key: {
+			agentSession:  session,
+			lastEventTime: time.Now(), // just now
+			turnStartTime: time.Now(),
+		},
+	}
+	e.interactiveMu.Unlock()
+
+	e.reapIdleSessions()
+
+	e.interactiveMu.Lock()
+	_, exists := e.interactiveStates[key]
+	e.interactiveMu.Unlock()
+
+	if !exists {
+		t.Fatal("expected active session to NOT be reaped")
+	}
+}
+
+func TestReapIdleSessions_SkipsDeadSession(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetResetOnIdle(1 * time.Millisecond)
+
+	key := "test:user1"
+	session := &fakeAgentSessionForReaper{alive: false, name: "test-agent"}
+	e.interactiveMu.Lock()
+	e.interactiveStates = map[string]*interactiveState{
+		key: {
+			agentSession:  session,
+			lastEventTime: time.Now().Add(-10 * time.Minute),
+		},
+	}
+	e.interactiveMu.Unlock()
+
+	e.reapIdleSessions()
+
+	e.interactiveMu.Lock()
+	_, exists := e.interactiveStates[key]
+	e.interactiveMu.Unlock()
+
+	if !exists {
+		t.Fatal("expected dead session to be skipped (already handled elsewhere)")
+	}
+}
+
+func TestReapIdleSessions_SkipsNilAgentSession(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetResetOnIdle(1 * time.Millisecond)
+
+	key := "test:user1"
+	e.interactiveMu.Lock()
+	e.interactiveStates = map[string]*interactiveState{
+		key: {
+			agentSession:  nil, // no agent session
+			lastEventTime: time.Now().Add(-10 * time.Minute),
+		},
+	}
+	e.interactiveMu.Unlock()
+
+	// Should not panic
+	e.reapIdleSessions()
+
+	e.interactiveMu.Lock()
+	_, exists := e.interactiveStates[key]
+	e.interactiveMu.Unlock()
+
+	if !exists {
+		t.Fatal("expected session without agent to be skipped")
+	}
+}
+
+func TestReapIdleSessions_DisabledWhenResetOnIdleZero(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	// resetOnIdle is 0 by default (reaper disabled)
+
+	key := "test:user1"
+	session := &fakeAgentSessionForReaper{alive: true, name: "test-agent"}
+	e.interactiveMu.Lock()
+	e.interactiveStates = map[string]*interactiveState{
+		key: {
+			agentSession:  session,
+			lastEventTime: time.Now().Add(-10 * time.Minute),
+		},
+	}
+	e.interactiveMu.Unlock()
+
+	e.reapIdleSessions()
+
+	e.interactiveMu.Lock()
+	_, exists := e.interactiveStates[key]
+	e.interactiveMu.Unlock()
+
+	if !exists {
+		t.Fatal("expected session to remain when reaper is disabled")
+	}
+}
+
+func TestReapIdleSessions_FallsBackToTurnStartTime(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetResetOnIdle(1 * time.Millisecond)
+
+	key := "test:user1"
+	session := &fakeAgentSessionForReaper{alive: true, name: "test-agent"}
+	e.interactiveMu.Lock()
+	e.interactiveStates = map[string]*interactiveState{
+		key: {
+			agentSession:  session,
+			lastEventTime: time.Time{}, // zero = fallback to turnStartTime
+			turnStartTime: time.Now().Add(-10 * time.Minute),
+		},
+	}
+	e.interactiveMu.Unlock()
+
+	e.reapIdleSessions()
+
+	e.interactiveMu.Lock()
+	_, exists := e.interactiveStates[key]
+	e.interactiveMu.Unlock()
+
+	if exists {
+		t.Fatal("expected session to be reaped via turnStartTime fallback")
+	}
+}

@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.4.9 (2026-07-29)
+
+Personal fork session idle reaper, WeCom rate-limit tracking, reassurance messages, token usage fix, and log diagnostics hardening for `@qinghuangniao/cc-connect-qhn`.
+
+### Notes
+
+- **Session idle reaper (360min)**: Added background goroutine `startSessionReaper` that periodically scans `interactiveStates` and kills agent processes that have received no events for longer than `resetOnIdle` (default 360 min, configurable via `reset_on_idle_mins`). This prevents zombie ACP subprocesses from accumulating. The reaper uses `lastEventTime` (updated on every agent event) with `turnStartTime` fallback. Disabled when `resetOnIdleMins = 0`.
+
+- **WeCom per-chat rate-limit tracking**: Added `chatRateTracker` in `platform/wecom/rate_tracker.go` that counts sends per chatID with 1-min and 1-hour sliding windows. Before each `aibot_respond_msg` and `aibot_send_msg` call, the tracker checks against WeCom limits (30/min, 1000/hour per chat) with configurable buffer (5/min, 50/hour). If approaching limits, sends are throttled with a wait. After successful ack, the send is recorded.
+
+- **WeCom 846607 retry with exponential backoff**: `writeAndWaitAck` now retries rate-limited sends (errcode=846607) up to 3 times with 3s/6s/12s backoff. Error 846608 (stream expired) is detected and not retried — returns immediately.
+
+- **Reassurance messages during long waits**: Added a 1-minute timer in `processInteractiveEvents` that sends "⏳ 正在处理您的请求..." via stream preview when no agent output has been received. Uses WeCom's full-replacement stream semantics (`aibot_respond_msg`), so reassurance text is automatically replaced when real output arrives. No new messages are created — only existing stream content is updated.
+
+- **Token usage extraction fix**: `maybeAbsorbUsageUpdate` now parses `_meta.usage.prompt_tokens` → `InputTokens` and `_meta.usage.completion_tokens` → `OutputTokens` from ACP `usage_update` notifications. `acpSession.Send()` reads the `usageSnapshot` and populates `EventResult.InputTokens`/`OutputTokens` before emitting, so `turn complete` logs now show actual token counts instead of always 0.
+
+- **Graceful stop logging**: `acpSession.Close()` now logs per-phase elapsed time (stdin close, SIGTERM, SIGKILL) with `session_id`. Changed `process exited cleanly` from WARN to INFO (normal exit is not a warning).
+
+- **Log diagnostics hardening**: Added `session_key`, `platform`, `msg_id` to 15+ error/warn logs in `engine_turn.go` (agent error, prompt send, rich card send, streaming card finalize, channelClosed). Added `session_key`, `platform`, `user`, `request_id`, `tool` to permission error logs in `engine.go`. Added `chat_type` to WeCom send errors. Standardized `"err"` → `"error"` key naming across codebase. Upgraded streaming preview degradation from Debug to Warn with platform name.
+
+### Tests
+
+- `agent/acp/session_test.go`: 4 new tests (`TestMaybeAbsorbUsageUpdate_*`) — parses meta usage, legacy format, non-usage update, zero total_tokens fallback.
+- `core/engine_test.go`: 6 new tests (`TestReapIdleSessions_*`) — kills idle, skips active, skips dead, skips nil agent, disabled when zero, falls back to turnStartTime.
+- `platform/wecom/websocket_test.go`: 10 new tests (`TestChatRateTracker_*`, `TestWriteAndWaitAck_StreamExpiredNoRetry`, `TestIsErrCode`) — rate tracking, cleanup, concurrent access, error code detection, stream expired no-retry.
+
+### Docs
+
+- `docs/wecom-optimization.md`: Full optimization plan with problem analysis, implementation details, test cases, and configuration.
+- `.codebuddy/plans/stellar-thunder-newton-BxOjesy5.md`
+
 ## v1.4.8 (2026-07-23)
 
 Personal fork session switch / list fix, error sanitization, and `/list` fallback hardening for `@qinghuangniao/cc-connect-qhn`.

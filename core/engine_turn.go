@@ -482,6 +482,15 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 		idleCh = idleTimer.C
 	}
 
+	// Reassurance timer: sends a "still working" message via stream preview
+	// when no output has been received for too long (default 1 minute).
+	// Since WeCom uses full-replacement stream updates, the reassurance text
+	// is automatically replaced when real agent output arrives.
+	const defaultReassureInterval = 1 * time.Minute
+	reassureTimer := time.NewTimer(defaultReassureInterval)
+	defer reassureTimer.Stop()
+	var reassureSent bool
+
 	events := state.agentSession.Events()
 	stopCh := state.stopSignal()
 
@@ -492,6 +501,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	cancelCh := make(chan struct{})
 	state.mu.Lock()
 	state.cancelCh = cancelCh
+	state.lastEventTime = time.Time{} // reset for new turn
+	state.turnStartTime = time.Now()
 	state.mu.Unlock()
 	defer func() {
 		state.mu.Lock()
@@ -543,7 +554,14 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 		case err := <-pendingSend:
 			pendingSend = nil
 			if err != nil {
-				slog.Error("failed to send prompt", "error", err, "session_key", sessionKey)
+				state.mu.Lock()
+				pName := state.platform.Name()
+				state.mu.Unlock()
+				slog.Error("failed to send prompt",
+					"error", err,
+					"session_key", sessionKey,
+					"platform", pName,
+					"content_len", len(textParts))
 				sp.discard()
 				if stopTyping != nil {
 					stopTyping()
@@ -560,6 +578,18 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				return
 			}
 			continue
+		case <-reassureTimer.C:
+			msg := "⏳ 仍在处理中，请耐心等待..."
+			if !reassureSent {
+				msg = "⏳ 正在处理您的请求..."
+				reassureSent = true
+			}
+			if sp.hasPreview() {
+				sp.reassure(msg)
+			} else {
+				sp.ensurePreview(msg)
+			}
+			reassureTimer.Reset(defaultReassureInterval)
 		case <-idleCh:
 			slog.Error("agent session idle timeout: no events for too long, killing session",
 				"session_key", sessionKey, "timeout", e.eventIdleTimeout, "elapsed", time.Since(turnStart))
@@ -597,6 +627,20 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			}
 			idleTimer.Reset(e.eventIdleTimeout)
 		}
+
+		// Update lastEventTime for the session reaper
+		state.mu.Lock()
+		state.lastEventTime = time.Now()
+		state.mu.Unlock()
+
+		// Reset reassurance timer on every agent event
+		if !reassureTimer.Stop() {
+			select {
+			case <-reassureTimer.C:
+			default:
+			}
+		}
+		reassureTimer.Reset(defaultReassureInterval)
 
 		if !firstEventLogged {
 			firstEventLogged = true
@@ -1200,7 +1244,11 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				// Build final card content with full response
 				finalContent := buildCardContent(cardThinkingText, cardToolCalls, fullResponse)
 				if err := streamCard.Finalize(e.ctx, finalContent); err != nil {
-					slog.Error("streaming card finalize failed, sending fallback", "error", err)
+					slog.Error("streaming card finalize failed, sending fallback",
+						"error", err,
+						"session_key", sessionKey,
+						"platform", p.Name(),
+						"msg_id", msgID)
 					// Fallback: send the response as a normal message
 					for _, chunk := range splitMessage(deliverResponse, maxPlatformMessageLen) {
 						if err := sendWorkspaceWithError(p, replyCtx, chunk); err != nil {
@@ -1238,14 +1286,22 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						if err := updater.UpdateMessage(e.ctx, cardMessageID, finalCard); err != nil {
 							slog.Debug("rich card: final update failed, falling back to send", "platform", p.Name(), "error", err)
 							if err := p.Send(e.ctx, replyCtx, finalCard); err != nil {
-								slog.Error("failed to send rich card reply", "error", err)
+								slog.Error("failed to send rich card reply",
+									"error", err,
+									"session_key", sessionKey,
+									"platform", p.Name(),
+									"msg_id", msgID)
 								return
 							}
 						}
 					}
 				} else {
 					if err := p.Send(e.ctx, replyCtx, finalCard); err != nil {
-						slog.Error("failed to send rich card reply", "error", err)
+						slog.Error("failed to send rich card reply",
+							"error", err,
+							"session_key", sessionKey,
+							"platform", p.Name(),
+							"msg_id", msgID)
 						return
 					}
 				}
@@ -1480,7 +1536,11 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			}
 			if event.Error != nil {
 				errMsg := event.Error.Error()
-				slog.Error("agent error", "error", event.Error)
+				slog.Error("agent error",
+					"error", event.Error,
+					"session_key", sessionKey,
+					"platform", p.Name(),
+					"msg_id", msgID)
 				e.hooks.Emit(HookEvent{
 					Event:      HookEventError,
 					SessionKey: sessionKey,
@@ -1508,7 +1568,13 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 
 channelClosed:
 	// Channel closed - process exited unexpectedly
-	slog.Warn("agent process exited", "session_key", sessionKey)
+	state.mu.Lock()
+	pName := state.platform.Name()
+	state.mu.Unlock()
+	slog.Warn("agent process exited",
+		"session_key", sessionKey,
+		"platform", pName,
+		"msg_id", msgID)
 	state.mu.Lock()
 	state.eventsNeedResync = true
 	state.mu.Unlock()

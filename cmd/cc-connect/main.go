@@ -36,16 +36,15 @@ var (
 )
 
 // defaultResetOnIdleMins is applied when a project does not set
-// reset_on_idle_mins. After this many minutes of user inactivity, cc-connect
-// rotates to a fresh session for the next message instead of resuming the
-// previous transcript via --continue. This avoids "context drift" where stale
-// chat history (failed commands, debugging noise, abandoned tangents) is
-// repeatedly re-ingested and starts to dominate the model's attention. The
-// previous session is preserved and remains accessible via /list and /switch.
+// reset_on_idle_mins. After this many minutes of inactivity (both user and
+// agent), cc-connect kills the agent process and rotates to a fresh session
+// for the next message. This avoids "context drift" where stale chat history
+// and prevents zombie agent processes from accumulating. The previous session
+// is preserved and remains accessible via /list and /switch.
 //
 // Set reset_on_idle_mins = 0 in config.toml to opt out and restore the
 // previous behavior of always continuing the prior session.
-const defaultResetOnIdleMins = 0
+const defaultResetOnIdleMins = 360
 
 // resolveResetOnIdle returns the configured reset-on-idle duration for a
 // project, applying defaultResetOnIdleMins when the field is unset. The second
@@ -302,7 +301,7 @@ func main() {
 				baseDir = filepath.Join(home, baseDir[2:])
 			}
 			if err := os.MkdirAll(baseDir, 0o755); err != nil {
-				slog.Error("failed to create base_dir", "path", baseDir, "err", err)
+				slog.Error("failed to create base_dir", "path", baseDir, "error", err)
 				continue
 			}
 			bindingStore := filepath.Join(cfg.DataDir, "workspace_bindings.json")

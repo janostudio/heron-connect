@@ -159,7 +159,7 @@ func newACPSession(ctx context.Context, cfg acpSessionConfig) (*acpSession, erro
 				slog.Warn("acp: process exited", "error", waitErr)
 			}
 		} else {
-			slog.Warn("acp: process exited cleanly", "session_id", s.currentACPSessionID())
+			slog.Info("acp: process exited cleanly", "session_id", s.currentACPSessionID())
 		}
 		s.alive.Store(false)
 	}()
@@ -611,16 +611,31 @@ func (s *acpSession) maybeAbsorbUsageUpdate(params json.RawMessage) {
 		Kind string `json:"sessionUpdate"`
 		Used int    `json:"used"`
 		Size int    `json:"size"`
+		Meta *struct {
+			Usage *struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+				TotalTokens      int `json:"total_tokens"`
+			} `json:"usage"`
+		} `json:"_meta"`
 	}
 	if json.Unmarshal(wrap.Update, &head) != nil || head.Kind != "usage_update" {
 		return
 	}
-	s.usageMu.Lock()
-	s.usageSnapshot = &core.ContextUsage{
+	snap := &core.ContextUsage{
 		UsedTokens:    head.Used,
 		ContextWindow: head.Size,
 		TotalTokens:   head.Used,
 	}
+	if head.Meta != nil && head.Meta.Usage != nil {
+		snap.InputTokens = head.Meta.Usage.PromptTokens
+		snap.OutputTokens = head.Meta.Usage.CompletionTokens
+		if head.Meta.Usage.TotalTokens > 0 {
+			snap.TotalTokens = head.Meta.Usage.TotalTokens
+		}
+	}
+	s.usageMu.Lock()
+	s.usageSnapshot = snap
 	s.usageMu.Unlock()
 }
 
@@ -891,11 +906,19 @@ func (s *acpSession) Send(prompt string, images []core.ImageAttachment, files []
 	}
 
 	// Text was streamed via session/update; engine aggregates EventText.
-	s.emit(core.Event{
+	s.usageMu.RLock()
+	snap := s.usageSnapshot
+	s.usageMu.RUnlock()
+	evt := core.Event{
 		Type:      core.EventResult,
 		SessionID: sid,
 		Done:      true,
-	})
+	}
+	if snap != nil {
+		evt.InputTokens = snap.InputTokens
+		evt.OutputTokens = snap.OutputTokens
+	}
+	s.emit(evt)
 	return nil
 }
 
@@ -1083,14 +1106,19 @@ func (s *acpSession) Close() error {
 		s.wg.Wait()
 		close(done)
 	}()
+	phase1Start := time.Now()
 	select {
 	case <-done:
-		slog.Info("acpSession: exited cleanly after session/cancel + stdin close")
+		slog.Info("acpSession: exited after stdin close",
+			"session_id", sid,
+			"elapsed", time.Since(phase1Start))
 		s.cancel()
 		s.closeEvents()
 		return nil
 	case <-time.After(8 * time.Second):
-		slog.Warn("acpSession: graceful stop timed out, sending SIGTERM")
+		slog.Warn("acpSession: stdin close timeout, sending SIGTERM",
+			"session_id", sid,
+			"elapsed", time.Since(phase1Start))
 	}
 
 	// ── Phase 2: SIGTERM the whole process group ──
@@ -1099,14 +1127,19 @@ func (s *acpSession) Close() error {
 	if s.cmd != nil && s.cmd.Process != nil {
 		_ = core.SignalProcessGroup(s.cmd, syscall.SIGTERM)
 	}
+	phase2Start := time.Now()
 	select {
 	case <-done:
-		slog.Info("acpSession: exited after SIGTERM")
+		slog.Info("acpSession: exited after SIGTERM",
+			"session_id", sid,
+			"elapsed", time.Since(phase2Start))
 		s.cancel()
 		s.closeEvents()
 		return nil
 	case <-time.After(5 * time.Second):
-		slog.Warn("acpSession: SIGTERM timed out, sending SIGKILL")
+		slog.Warn("acpSession: SIGTERM timeout, sending SIGKILL",
+			"session_id", sid,
+			"elapsed", time.Since(phase2Start))
 	}
 
 	// ── Phase 3: SIGKILL the whole process group ──
@@ -1114,10 +1147,16 @@ func (s *acpSession) Close() error {
 		_ = core.ForceKillProcessGroup(s.cmd)
 	}
 	s.cancel()
+	phase3Start := time.Now()
 	select {
 	case <-done:
+		slog.Info("acpSession: exited after SIGKILL",
+			"session_id", sid,
+			"elapsed", time.Since(phase3Start))
 	case <-time.After(3 * time.Second):
-		slog.Error("acpSession: SIGKILL timed out, abandoning goroutine; events channel will close when readLoop finally exits")
+		slog.Error("acpSession: SIGKILL timeout, abandoning process",
+			"session_id", sid,
+			"elapsed", time.Since(phase3Start))
 		// Even if the goroutine is stuck (e.g. process in D-state), defer
 		// the events channel close to when the goroutine eventually exits.
 		// Without this, the engine's channelClosed path would never fire
