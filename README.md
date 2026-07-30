@@ -209,6 +209,25 @@ name = "frontend"
 type = "codex"
 [projects.agent.options]
 work_dir = "/path/to/frontend"
+mode = "full-auto"
+# model = "o3"                          # 可选：指定模型
+# reasoning_effort = "high"             # 可选：推理强度 minimal | low | medium | high | xhigh
+# args = ["--log-level", "debug"]       # 可选：传递给 codex exec 的额外 CLI 参数
+#
+# [[projects.agent.providers]]
+# name = "openai"
+# api_key = "sk-xxx"
+#
+# [[projects.agent.providers]]
+# name = "minimax"
+# api_key = "your-minimax-api-key"
+# base_url = "https://api.minimax.io/v1"
+# model = "MiniMax-M2.7"
+#
+# [[projects.platforms]]
+# type = "telegram"
+# [projects.platforms.options]
+# token = "your-telegram-bot-token"
 ```
 
 ### 定时任务

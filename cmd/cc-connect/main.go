@@ -57,163 +57,10 @@ func resolveResetOnIdle(configured *int) (time.Duration, bool) {
 	return time.Duration(defaultResetOnIdleMins) * time.Minute, true
 }
 
-type initialModelRefreshStarter interface {
-	StartInitialModelRefresh()
-}
 
-type providerWiringResult struct {
-	explicitProviderRequested bool
-	activeProviderApplied     bool
-	canStartInitialRefresh    bool
-}
-
-func main() {
-	checkUpdateAsync()
-
-	// Handle subcommands before flag parsing
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "config-example":
-			fmt.Print(ccconnect.ConfigExampleTOML)
-			return
-		case "config":
-			runConfig(os.Args[2:])
-			return
-		case "update":
-			runUpdate()
-			return
-		case "check-update":
-			checkUpdate()
-			return
-		case "provider":
-			runProviderCommand(os.Args[2:])
-			return
-		case "send":
-			runSend(os.Args[2:])
-			return
-		case "cron":
-			runCron(os.Args[2:])
-			return
-		case "relay":
-			runRelay(os.Args[2:])
-			return
-		case "sessions":
-			runSessions(os.Args[2:])
-			return
-		case "agent-sid":
-			runAgentSID(os.Args[2:])
-			return
-		case "daemon":
-			runDaemon(os.Args[2:])
-			return
-		case "feishu":
-			runFeishu(os.Args[2:])
-			return
-		case "weixin":
-			runWeixin(os.Args[2:])
-			return
-		case "doctor":
-			runDoctor(os.Args[2:])
-			return
-		case "web":
-			runWeb(os.Args[2:])
-			return
-		}
-	}
-
-	// When started as a daemon (CC_LOG_FILE set), redirect logs to a rotating file.
-	var logWriter io.Writer
-	var logCloser io.Closer
-	if logFile := os.Getenv("CC_LOG_FILE"); logFile != "" {
-		maxSize := int64(daemon.DefaultLogMaxSize)
-		if v := os.Getenv("CC_LOG_MAX_SIZE"); v != "" {
-			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-				maxSize = n
-			}
-		}
-		w, err := daemon.NewRotatingWriter(logFile, maxSize)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to open log file %s: %v\n", logFile, err)
-			os.Exit(1)
-		}
-		logWriter = w
-		logCloser = w
-		slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo})))
-	}
-
-	configFlag := flag.String("config", "", "path to config file (default: ./config.toml or ~/.cc-connect-qhn/config.toml)")
-	showVersion := flag.Bool("version", false, "print version and exit")
-	observeFlag := flag.Bool("observe", false, "observe native terminal Claude Code sessions and forward to Slack")
-	observeChannel := flag.String("observe-channel", "", "Slack channel ID to forward terminal observations to (requires --observe)")
-	forceFlag := flag.Bool("force", false, "kill any existing instance with the same config before starting")
-	flag.Usage = printUsage
-	flag.Parse()
-
-	if *showVersion {
-		fmt.Printf("cc-connect %s\ncommit:  %s\nbuilt:   %s\n", version, commit, buildTime)
-		return
-	}
-
-	core.VersionInfo = fmt.Sprintf("cc-connect %s\ncommit: %s\nbuilt: %s", version, commit, buildTime)
-	core.CurrentVersion = version
-	bridge.CurrentCommit = commit
-	bridge.CurrentBuildTime = buildTime
-
-	configPath := resolveConfigPath(*configFlag)
-
-	// Handle --force: kill any existing instance before we try to acquire the lock
-	if *forceFlag {
-		if KillExistingInstance(configPath) {
-			slog.Info("killed existing instance via --force")
-		}
-	}
-
-	// Acquire instance lock to prevent duplicate processes
-	instanceLock, err := AcquireInstanceLock(configPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Use --force to kill the existing instance.\n")
-		os.Exit(1)
-	}
-	slog.Info("acquired instance lock", "path", instanceLock.Path())
-
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		if err := bootstrapConfig(configPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating config: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Created default config at %s\n", configPath)
-		fmt.Println("Please edit this file to add your agent and platform credentials, then run cc-connect again.")
-		os.Exit(0)
-	}
-
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config (%s): %v\n", configPath, err)
-		os.Exit(1)
-	}
-
-	config.ConfigPath = configPath
-	slog.Info("config loaded", "path", configPath)
-
-	if len(cfg.Projects) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: no projects configured in %s\n", configPath)
-		fmt.Fprintln(os.Stderr, "Add at least one [[project]] section to your config.toml, or run:")
-		fmt.Fprintln(os.Stderr, "  cc-connect init")
-		os.Exit(1)
-	}
-
-	setupLogger(cfg.Log.Level, logWriter)
-
-	// run_as_user preflight + isolation audit. MUST run before any engine
-	// or agent is constructed. If any project fails, abort startup
-	// entirely — never half-spawn. See core/runas_check.go and
-	// core/runas_audit.go for the checks themselves.
-	if err := runRunAsUserStartupChecks(context.Background(), cfg); err != nil {
-		slog.Error("run_as_user: startup checks failed, refusing to start", "error", err)
-		os.Exit(1)
-	}
-
+// createProjectEngines creates engines for all projects in the config.
+// It returns the engines and their effective work directories.
+func createProjectEngines(cfg *config.Config, configPath string, observeFlag *bool, observeChannel *string) ([]*core.Engine, []string) {
 	engines := make([]*core.Engine, 0, len(cfg.Projects))
 	effectiveWorkDirs := make([]string, 0, len(cfg.Projects))
 
@@ -769,6 +616,170 @@ func main() {
 		effectiveWorkDirs = append(effectiveWorkDirs, effectiveWorkDir)
 	}
 
+	return engines, effectiveWorkDirs
+}
+
+
+type initialModelRefreshStarter interface {
+	StartInitialModelRefresh()
+}
+
+type providerWiringResult struct {
+	explicitProviderRequested bool
+	activeProviderApplied     bool
+	canStartInitialRefresh    bool
+}
+
+func main() {
+	checkUpdateAsync()
+
+	// Handle subcommands before flag parsing
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "config-example":
+			fmt.Print(ccconnect.ConfigExampleTOML)
+			return
+		case "config":
+			runConfig(os.Args[2:])
+			return
+		case "update":
+			runUpdate()
+			return
+		case "check-update":
+			checkUpdate()
+			return
+		case "provider":
+			runProviderCommand(os.Args[2:])
+			return
+		case "send":
+			runSend(os.Args[2:])
+			return
+		case "cron":
+			runCron(os.Args[2:])
+			return
+		case "relay":
+			runRelay(os.Args[2:])
+			return
+		case "sessions":
+			runSessions(os.Args[2:])
+			return
+		case "agent-sid":
+			runAgentSID(os.Args[2:])
+			return
+		case "daemon":
+			runDaemon(os.Args[2:])
+			return
+		case "feishu":
+			runFeishu(os.Args[2:])
+			return
+		case "weixin":
+			runWeixin(os.Args[2:])
+			return
+		case "doctor":
+			runDoctor(os.Args[2:])
+			return
+		case "web":
+			runWeb(os.Args[2:])
+			return
+		}
+	}
+
+	// When started as a daemon (CC_LOG_FILE set), redirect logs to a rotating file.
+	var logWriter io.Writer
+	var logCloser io.Closer
+	if logFile := os.Getenv("CC_LOG_FILE"); logFile != "" {
+		maxSize := int64(daemon.DefaultLogMaxSize)
+		if v := os.Getenv("CC_LOG_MAX_SIZE"); v != "" {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+				maxSize = n
+			}
+		}
+		w, err := daemon.NewRotatingWriter(logFile, maxSize)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to open log file %s: %v\n", logFile, err)
+			os.Exit(1)
+		}
+		logWriter = w
+		logCloser = w
+		slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	}
+
+	configFlag := flag.String("config", "", "path to config file (default: ./config.toml or ~/.cc-connect-qhn/config.toml)")
+	showVersion := flag.Bool("version", false, "print version and exit")
+	observeFlag := flag.Bool("observe", false, "observe native terminal Claude Code sessions and forward to Slack")
+	observeChannel := flag.String("observe-channel", "", "Slack channel ID to forward terminal observations to (requires --observe)")
+	forceFlag := flag.Bool("force", false, "kill any existing instance with the same config before starting")
+	flag.Usage = printUsage
+	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("cc-connect %s\ncommit:  %s\nbuilt:   %s\n", version, commit, buildTime)
+		return
+	}
+
+	core.VersionInfo = fmt.Sprintf("cc-connect %s\ncommit: %s\nbuilt: %s", version, commit, buildTime)
+	core.CurrentVersion = version
+	bridge.CurrentCommit = commit
+	bridge.CurrentBuildTime = buildTime
+
+	configPath := resolveConfigPath(*configFlag)
+
+	// Handle --force: kill any existing instance before we try to acquire the lock
+	if *forceFlag {
+		if KillExistingInstance(configPath) {
+			slog.Info("killed existing instance via --force")
+		}
+	}
+
+	// Acquire instance lock to prevent duplicate processes
+	instanceLock, err := AcquireInstanceLock(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Use --force to kill the existing instance.\n")
+		os.Exit(1)
+	}
+	slog.Info("acquired instance lock", "path", instanceLock.Path())
+
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		if err := bootstrapConfig(configPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating config: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Created default config at %s\n", configPath)
+		fmt.Println("Please edit this file to add your agent and platform credentials, then run cc-connect again.")
+		os.Exit(0)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config (%s): %v\n", configPath, err)
+		os.Exit(1)
+	}
+
+	config.ConfigPath = configPath
+	slog.Info("config loaded", "path", configPath)
+
+	if len(cfg.Projects) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: no projects configured in %s\n", configPath)
+		fmt.Fprintln(os.Stderr, "Add at least one [[project]] section to your config.toml, or run:")
+		fmt.Fprintln(os.Stderr, "  cc-connect init")
+		os.Exit(1)
+	}
+
+	setupLogger(cfg.Log.Level, logWriter)
+
+	// run_as_user preflight + isolation audit. MUST run before any engine
+	// or agent is constructed. If any project fails, abort startup
+	// entirely — never half-spawn. See core/runas_check.go and
+	// core/runas_audit.go for the checks themselves.
+	if err := runRunAsUserStartupChecks(context.Background(), cfg); err != nil {
+		slog.Error("run_as_user: startup checks failed, refusing to start", "error", err)
+		os.Exit(1)
+	}
+
+	engines, effectiveWorkDirs := createProjectEngines(cfg, configPath, observeFlag, observeChannel)
+
+	// Start cron scheduler
 	// Start cron scheduler
 	cronStore, err := core.NewCronStore(cfg.DataDir)
 	if err != nil {

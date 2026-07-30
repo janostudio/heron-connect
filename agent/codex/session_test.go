@@ -38,7 +38,7 @@ func TestAvailableReasoningEfforts_ExcludesMinimal(t *testing.T) {
 }
 
 func TestBuildExecArgs_IncludesReasoningEffort(t *testing.T) {
-	cs, err := newCodexSession(context.Background(), "codex", nil, "/tmp/project", "o3", "high", "full-auto", "", "", nil, "")
+	cs, err := newCodexSession(context.Background(), "codex", nil, nil, "/tmp/project", "o3", "high", "full-auto", "", "", nil, "")
 	if err != nil {
 		t.Fatalf("newCodexSession: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestBuildExecArgs_IncludesReasoningEffort(t *testing.T) {
 }
 
 func TestBuildExecArgs_IncludesBaseURL(t *testing.T) {
-	cs, err := newCodexSession(context.Background(), "codex", nil, "/tmp/project", "o3", "high", "full-auto", "", "https://custom.api.example.com", nil, "")
+	cs, err := newCodexSession(context.Background(), "codex", nil, nil, "/tmp/project", "o3", "high", "full-auto", "", "https://custom.api.example.com", nil, "")
 	if err != nil {
 		t.Fatalf("newCodexSession: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestBuildExecArgs_IncludesBaseURL(t *testing.T) {
 }
 
 func TestBuildExecArgs_IncludesModelProvider(t *testing.T) {
-	cs, err := newCodexSession(context.Background(), "codex", nil, "/tmp/project", "openai/gpt-5.3-codex", "", "full-auto", "", "https://router.example.com/api/v1", nil, "shengsuanyun")
+	cs, err := newCodexSession(context.Background(), "codex", nil, nil, "/tmp/project", "openai/gpt-5.3-codex", "", "full-auto", "", "https://router.example.com/api/v1", nil, "shengsuanyun")
 	if err != nil {
 		t.Fatalf("newCodexSession: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestBuildExecArgs_IncludesModelProvider(t *testing.T) {
 }
 
 func TestBuildExecArgs_ResumeOmitsCdFlag(t *testing.T) {
-	cs, err := newCodexSession(context.Background(), "codex", nil, "/tmp/project", "", "", "full-auto", "thread-abc", "", nil, "")
+	cs, err := newCodexSession(context.Background(), "codex", nil, nil, "/tmp/project", "", "", "full-auto", "thread-abc", "", nil, "")
 	if err != nil {
 		t.Fatalf("newCodexSession: %v", err)
 	}
@@ -161,7 +161,7 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
 
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	cs, err := newCodexSession(context.Background(), "codex", nil, workDir, "", "", "", "", "", nil, "")
+	cs, err := newCodexSession(context.Background(), "codex", nil, nil, workDir, "", "", "", "", "", nil, "")
 	if err != nil {
 		t.Fatalf("newCodexSession: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestRefreshContextUsageFromRollout_UsesLastTokenCount(t *testing.T) {
 		t.Fatalf("write rollout: %v", err)
 	}
 
-	cs, err := newCodexSession(context.Background(), "codex", nil, workDir, "", "", "", sessionID, "", []string{"CODEX_HOME=" + codexHome}, "")
+	cs, err := newCodexSession(context.Background(), "codex", nil, nil, workDir, "", "", "", sessionID, "", []string{"CODEX_HOME=" + codexHome}, "")
 	if err != nil {
 		t.Fatalf("newCodexSession: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestSend_WithImages_PassesImageArgsAndDefaultPrompt(t *testing.T) {
 	t.Setenv("CODEX_ARGS_FILE", argsFile)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	cs, err := newCodexSession(context.Background(), "codex", nil, workDir, "", "", "", "", "", nil, "")
+	cs, err := newCodexSession(context.Background(), "codex", nil, nil, workDir, "", "", "", "", "", nil, "")
 	if err != nil {
 		t.Fatalf("newCodexSession: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestSend_ResumeWithImages_PlacesSessionBeforeImageFlags(t *testing.T) {
 	t.Setenv("CODEX_ARGS_FILE", argsFile)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	cs, err := newCodexSession(context.Background(), "codex", nil, workDir, "", "", "", "thread-123", "", nil, "")
+	cs, err := newCodexSession(context.Background(), "codex", nil, nil, workDir, "", "", "", "thread-123", "", nil, "")
 	if err != nil {
 		t.Fatalf("newCodexSession: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestSend_UsesStdinForMultilinePrompt(t *testing.T) {
 	t.Setenv("CODEX_STDIN_FILE", stdinFile)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	cs, err := newCodexSession(context.Background(), "codex", nil, workDir, "", "", "", "thread-stdin", "", nil, "")
+	cs, err := newCodexSession(context.Background(), "codex", nil, nil, workDir, "", "", "", "thread-stdin", "", nil, "")
 	if err != nil {
 		t.Fatalf("newCodexSession: %v", err)
 	}
@@ -413,7 +413,7 @@ func TestSend_HandlesLargeJSONLines(t *testing.T) {
 	t.Setenv("CODEX_PAYLOAD_FILE", payloadFile)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	cs, err := newCodexSession(context.Background(), "codex", nil, workDir, "", "", "", "", "", nil, "")
+	cs, err := newCodexSession(context.Background(), "codex", nil, nil, workDir, "", "", "", "", "", nil, "")
 	if err != nil {
 		t.Fatalf("newCodexSession: %v", err)
 	}
@@ -619,7 +619,7 @@ func indexOf(args []string, target string) int {
 }
 
 func TestCodexSession_ContinueSessionTreatedAsFresh(t *testing.T) {
-	s, err := newCodexSession(context.Background(), "codex", nil, "/tmp", "", "", "full-auto", core.ContinueSession, "", nil, "")
+	s, err := newCodexSession(context.Background(), "codex", nil, nil, "/tmp", "", "", "full-auto", core.ContinueSession, "", nil, "")
 	if err != nil {
 		t.Fatalf("newCodexSession: %v", err)
 	}
@@ -661,7 +661,7 @@ func TestClose_ForceKillsProcessGroupAfterGracefulTimeout(t *testing.T) {
 		codexSessionForceKillWait = oldForceKillWait
 	})
 
-	cs, err := newCodexSession(context.Background(), "codex", nil, workDir, "", "", "", "", "", nil, "")
+	cs, err := newCodexSession(context.Background(), "codex", nil, nil, workDir, "", "", "", "", "", nil, "")
 	if err != nil {
 		t.Fatalf("newCodexSession: %v", err)
 	}
@@ -728,7 +728,7 @@ func TestClose_ForceKillsAllTrackedProcessesAfterCmdOverwrite(t *testing.T) {
 		codexSessionForceKillWait = oldForceKillWait
 	})
 
-	cs, err := newCodexSession(context.Background(), "codex", nil, workDir, "", "", "", "", "", nil, "")
+	cs, err := newCodexSession(context.Background(), "codex", nil, nil, workDir, "", "", "", "", "", nil, "")
 	if err != nil {
 		t.Fatalf("newCodexSession: %v", err)
 	}
@@ -818,4 +818,162 @@ func waitForFileLines(t *testing.T, path string, want int) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %d lines in %s", want, path)
+}
+
+func TestSend_ArgsOptionPrepended(t *testing.T) {
+	workDir := t.TempDir()
+	binDir := filepath.Join(workDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+
+	argsFile := filepath.Join(workDir, "args.txt")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > \"$CODEX_ARGS_FILE\"\n" +
+		"printf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-args\"}'\n" +
+		"printf '%s\\n' '{\"type\":\"turn.completed\"}'\n"
+	powershellScript := `
+[IO.File]::WriteAllLines($env:CODEX_ARGS_FILE, (fakeCodexArgs))
+[Console]::Out.WriteLine('{"type":"thread.started","thread_id":"thread-args"}')
+[Console]::Out.WriteLine('{"type":"turn.completed"}')
+`
+	writeFakeCodexScript(t, binDir, script, powershellScript)
+
+	t.Setenv("CODEX_ARGS_FILE", argsFile)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cs, err := newCodexSession(context.Background(), "codex", nil,
+		[]string{"--custom-flag", "--value=123"},
+		workDir, "", "", "", "", "", nil, "")
+	if err != nil {
+		t.Fatalf("newCodexSession: %v", err)
+	}
+	defer cs.Close()
+
+	if err := cs.Send("hello", nil, nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	args := waitForArgsFile(t, argsFile)
+
+	// --custom-flag and --value=123 must appear before exec/resume args
+	if !containsSequence(args, []string{"--custom-flag"}) {
+		t.Fatalf("args missing --custom-flag: %v", args)
+	}
+	if !containsSequence(args, []string{"--value=123"}) {
+		t.Fatalf("args missing --value=123: %v", args)
+	}
+
+	// args must appear before --json (the exec flag)
+	idxJSON := -1
+	idxFlag := -1
+	for i, a := range args {
+		if a == "--json" || a == "exec" || a == "resume" {
+			idxJSON = i
+		}
+		if a == "--custom-flag" {
+			idxFlag = i
+		}
+	}
+	if idxFlag >= 0 && idxJSON >= 0 && idxFlag >= idxJSON {
+		t.Fatalf("--custom-flag should appear before exec flags, got: %v", args)
+	}
+}
+
+func TestSend_ArgsOptionEmptySlice(t *testing.T) {
+	workDir := t.TempDir()
+	binDir := filepath.Join(workDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+
+	argsFile := filepath.Join(workDir, "args.txt")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > \"$CODEX_ARGS_FILE\"\n" +
+		"printf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-args-empty\"}'\n" +
+		"printf '%s\\n' '{\"type\":\"turn.completed\"}'\n"
+	powershellScript := `
+[IO.File]::WriteAllLines($env:CODEX_ARGS_FILE, (fakeCodexArgs))
+[Console]::Out.WriteLine('{"type":"thread.started","thread_id":"thread-args-empty"}')
+[Console]::Out.WriteLine('{"type":"turn.completed"}')
+`
+	writeFakeCodexScript(t, binDir, script, powershellScript)
+
+	t.Setenv("CODEX_ARGS_FILE", argsFile)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cs, err := newCodexSession(context.Background(), "codex", nil,
+		[]string{},
+		workDir, "", "", "", "", "", nil, "")
+	if err != nil {
+		t.Fatalf("newCodexSession: %v", err)
+	}
+	defer cs.Close()
+
+	if err := cs.Send("hello", nil, nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	args := waitForArgsFile(t, argsFile)
+	// exec/resume args should still be present
+	if !containsSequence(args, []string{"exec"}) && !containsSequence(args, []string{"resume"}) {
+		t.Fatalf("args missing exec/resume: %v", args)
+	}
+}
+
+func TestSend_CliExtraArgsAndArgsCombined(t *testing.T) {
+	workDir := t.TempDir()
+	binDir := filepath.Join(workDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+
+	argsFile := filepath.Join(workDir, "args.txt")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > \"$CODEX_ARGS_FILE\"\n" +
+		"printf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-combined\"}'\n" +
+		"printf '%s\\n' '{\"type\":\"turn.completed\"}'\n"
+	powershellScript := `
+[IO.File]::WriteAllLines($env:CODEX_ARGS_FILE, (fakeCodexArgs))
+[Console]::Out.WriteLine('{"type":"thread.started","thread_id":"thread-combined"}')
+[Console]::Out.WriteLine('{"type":"turn.completed"}')
+`
+	writeFakeCodexScript(t, binDir, script, powershellScript)
+
+	t.Setenv("CODEX_ARGS_FILE", argsFile)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cs, err := newCodexSession(context.Background(), "codex",
+		[]string{"--cli-extra"},
+		[]string{"--config-arg"},
+		workDir, "", "", "", "", "", nil, "")
+	if err != nil {
+		t.Fatalf("newCodexSession: %v", err)
+	}
+	defer cs.Close()
+
+	if err := cs.Send("hello", nil, nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	args := waitForArgsFile(t, argsFile)
+
+	// config args are applied after cliExtraArgs, so they appear first in the final array
+	// expected order: --config-arg --cli-extra exec ...
+	idxCliExtra := -1
+	idxConfigArg := -1
+	for i, a := range args {
+		if a == "--cli-extra" {
+			idxCliExtra = i
+		}
+		if a == "--config-arg" {
+			idxConfigArg = i
+		}
+	}
+	if idxCliExtra < 0 || idxConfigArg < 0 {
+		t.Fatalf("missing expected args, got: %v", args)
+	}
+	if idxConfigArg >= idxCliExtra {
+		t.Fatalf("--config-arg should appear before --cli-extra, got: %v", args)
+	}
 }

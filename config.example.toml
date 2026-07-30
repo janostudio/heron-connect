@@ -1314,6 +1314,9 @@ app_secret = "your-feishu-app-secret"
 # Optional: specify Codex reasoning effort / 可选：指定 Codex 推理强度
 # reasoning_effort = "high"  # "minimal" | "low" | "medium" | "high" | "xhigh"
 #
+# Optional: extra CLI args passed to `codex exec` / 可选：传递给 `codex exec` 的额外参数
+# args = ["--log-level", "debug"]
+#
 # # Active provider / 当前激活的 provider
 # # provider = "openai"
 #

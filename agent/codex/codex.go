@@ -37,6 +37,7 @@ type Agent struct {
 	codexHome       string
 	cliBin          string   // CLI binary name, default "codex"
 	cliExtraArgs    []string // extra args parsed from cli_path after the binary
+	args            []string // extra args from config (appended before exec args)
 	providers       []core.ProviderConfig
 	activeIdx       int // -1 = no provider set
 	sessionEnv      []string
@@ -74,6 +75,17 @@ func New(opts map[string]any) (core.Agent, error) {
 		}
 	}
 
+	// args allows passing extra CLI arguments directly (e.g. ["--config", "path"])
+	var extraArgs []string
+	switch v := opts["args"].(type) {
+	case []string:
+		extraArgs = append([]string(nil), v...)
+	case []any:
+		for _, e := range v {
+			extraArgs = append(extraArgs, fmt.Sprint(e))
+		}
+	}
+
 	if _, err := exec.LookPath(cliBin); err != nil {
 		return nil, fmt.Errorf("codex: %q CLI not found in PATH, install with: npm install -g @openai/codex", cliBin)
 	}
@@ -88,6 +100,7 @@ func New(opts map[string]any) (core.Agent, error) {
 		codexHome:       strings.TrimSpace(codexHome),
 		cliBin:          cliBin,
 		cliExtraArgs:    cliExtraArgs,
+		args:            extraArgs,
 		activeIdx:       -1,
 	}, nil
 }
@@ -367,7 +380,7 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 		extraEnv = append(extraEnv, "CODEX_HOME="+codexHome)
 	}
 
-	return newCodexSession(ctx, cliBin, cliExtraArgs, a.workDir, model, reasoningEffort, mode, sessionID, baseURL, extraEnv, provName)
+	return newCodexSession(ctx, cliBin, cliExtraArgs, a.args, a.workDir, model, reasoningEffort, mode, sessionID, baseURL, extraEnv, provName)
 }
 
 func (a *Agent) ListSessions(_ context.Context) ([]core.AgentSessionInfo, error) {
@@ -431,6 +444,9 @@ func (a *Agent) WorkspaceAgentOptions() map[string]any {
 	}
 	if a.codexHome != "" {
 		opts["codex_home"] = a.codexHome
+	}
+	if len(a.args) > 0 {
+		opts["args"] = append([]string(nil), a.args...)
 	}
 	return opts
 }

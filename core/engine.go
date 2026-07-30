@@ -93,6 +93,9 @@ func ConsumeRestartNotify(dataDir string) *RestartRequest {
 	return &req
 }
 
+// Name returns the engine's project name.
+func (e *Engine) Name() string { return e.name }
+
 // SendRestartNotification sends a "restart successful" message to the
 // platform/session that initiated the restart.
 func (e *Engine) SendRestartNotification(platformName, sessionKey string) {

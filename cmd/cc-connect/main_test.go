@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,6 +48,41 @@ func (s *stubMainAgentSession) Close() error                                    
 func (s *stubMainAgentSession) CancelTurn()                                           {}
 func (s *stubMainAgentSession) CurrentSessionID() string                              { return "" }
 func (s *stubMainAgentSession) Alive() bool                                           { return true }
+
+// stubMainPlatform is a minimal Platform implementation for testing.
+type stubMainPlatform struct {
+	name string
+}
+
+func (p *stubMainPlatform) Name() string                                   { return p.name }
+func (p *stubMainPlatform) Start(_ core.MessageHandler) error              { return nil }
+func (p *stubMainPlatform) Reply(_ context.Context, _ any, _ string) error { return nil }
+func (p *stubMainPlatform) Send(_ context.Context, _ any, _ string) error  { return nil }
+func (p *stubMainPlatform) Stop() error                                    { return nil }
+
+// stubAgentFactory creates a stub agent with a given name for testing.
+func stubAgentFactory(name string) core.AgentFactory {
+	return func(opts map[string]any) (core.Agent, error) {
+		wd, _ := opts["work_dir"].(string)
+		return &stubMainAgent{workDir: wd}, nil
+	}
+}
+
+// stubPlatformFactory creates a stub platform with a given name for testing.
+func stubPlatformFactory(name string) core.PlatformFactory {
+	return func(opts map[string]any) (core.Platform, error) {
+		return &stubMainPlatform{name: name}, nil
+	}
+}
+
+func init() {
+	// Register test agent and platform factories for multi-project tests.
+	// These use unique names to avoid conflicting with real registrations.
+	core.RegisterAgent("test-claude", stubAgentFactory("test-claude"))
+	core.RegisterAgent("test-codex", stubAgentFactory("test-codex"))
+	core.RegisterPlatform("test-feishu", stubPlatformFactory("test-feishu"))
+	core.RegisterPlatform("test-telegram", stubPlatformFactory("test-telegram"))
+}
 
 func TestProjectStatePath(t *testing.T) {
 	dataDir := t.TempDir()
@@ -290,5 +326,100 @@ func TestStartInitialRefresh_AfterProjectStateOverride(t *testing.T) {
 	}
 	if agent.workDir != overrideDir {
 		t.Fatalf("agent workDir at refresh = %q, want %q", agent.workDir, overrideDir)
+	}
+}
+
+func TestCreateProjectEngines_MultiProject(t *testing.T) {
+	dataDir := t.TempDir()
+	configPath := filepath.Join(dataDir, "config.toml")
+	configContent := `
+data_dir = "` + strings.ReplaceAll(dataDir, `\`, `\\`) + `"
+
+[[projects]]
+name = "backend"
+[projects.agent]
+type = "test-claude"
+[projects.agent.options]
+work_dir = "` + strings.ReplaceAll(dataDir, `\`, `\\`) + `/backend"
+
+[[projects.platforms]]
+type = "test-feishu"
+
+[[projects]]
+name = "frontend"
+[projects.agent]
+type = "test-codex"
+[projects.agent.options]
+work_dir = "` + strings.ReplaceAll(dataDir, `\`, `\\`) + `/frontend"
+
+[[projects.platforms]]
+type = "test-telegram"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	observeFlag := false
+	observeChannel := ""
+	engines, workDirs := createProjectEngines(cfg, configPath, &observeFlag, &observeChannel)
+
+	if len(engines) != 2 {
+		t.Fatalf("engines count = %d, want 2", len(engines))
+	}
+	if len(workDirs) != 2 {
+		t.Fatalf("workDirs count = %d, want 2", len(workDirs))
+	}
+
+	// Verify project names
+	if engines[0].Name() != "backend" {
+		t.Errorf("engine[0] name = %q, want backend", engines[0].Name())
+	}
+	if engines[1].Name() != "frontend" {
+		t.Errorf("engine[1] name = %q, want frontend", engines[1].Name())
+	}
+}
+
+func TestCreateProjectEngines_SingleProject(t *testing.T) {
+	dataDir := t.TempDir()
+	configPath := filepath.Join(dataDir, "config.toml")
+	configContent := `
+data_dir = "` + strings.ReplaceAll(dataDir, `\`, `\\`) + `"
+
+[[projects]]
+name = "solo"
+[projects.agent]
+type = "test-claude"
+[projects.agent.options]
+work_dir = "` + strings.ReplaceAll(dataDir, `\`, `\\`) + `/solo"
+
+[[projects.platforms]]
+type = "test-feishu"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	observeFlag := false
+	observeChannel := ""
+	engines, workDirs := createProjectEngines(cfg, configPath, &observeFlag, &observeChannel)
+
+	if len(engines) != 1 {
+		t.Fatalf("engines count = %d, want 1", len(engines))
+	}
+	if len(workDirs) != 1 {
+		t.Fatalf("workDirs count = %d, want 1", len(workDirs))
+	}
+	if engines[0].Name() != "solo" {
+		t.Errorf("engine name = %q, want solo", engines[0].Name())
 	}
 }

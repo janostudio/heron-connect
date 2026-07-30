@@ -32,6 +32,7 @@ type codexSession struct {
 	modelProvider string // Codex model_provider name; passed as -c model_provider=<name>
 	cliBin        string   // CLI binary, default "codex"
 	cliExtraArgs  []string // extra args from cli_path, prepended before exec args
+	args          []string // extra args from config, prepended before exec args
 	extraEnv      []string
 	events        chan core.Event
 	threadID  atomic.Value // stores string — Codex thread_id
@@ -63,7 +64,7 @@ var codexRuntimeConfigTimeout = 1500 * time.Millisecond
 var codexContextUsageRetryDelay = 50 * time.Millisecond
 var codexContextUsageRetryCount = 4
 
-func newCodexSession(ctx context.Context, cliBin string, cliExtraArgs []string, workDir, model, effort, mode, resumeID, baseURL string, extraEnv []string, modelProvider string) (*codexSession, error) {
+func newCodexSession(ctx context.Context, cliBin string, cliExtraArgs []string, args []string, workDir, model, effort, mode, resumeID, baseURL string, extraEnv []string, modelProvider string) (*codexSession, error) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 
 	cs := &codexSession{
@@ -75,6 +76,7 @@ func newCodexSession(ctx context.Context, cliBin string, cliExtraArgs []string, 
 		modelProvider: modelProvider,
 		cliBin:        cliBin,
 		cliExtraArgs:  cliExtraArgs,
+		args:          args,
 		extraEnv:      extraEnv,
 		events:        make(chan core.Event, 64),
 		ctx:           sessionCtx,
@@ -111,6 +113,9 @@ func (cs *codexSession) Send(prompt string, images []core.ImageAttachment, files
 	args := cs.buildExecArgs(prompt, imagePaths)
 	if len(cs.cliExtraArgs) > 0 {
 		args = append(append([]string{}, cs.cliExtraArgs...), args...)
+	}
+	if len(cs.args) > 0 {
+		args = append(append([]string{}, cs.args...), args...)
 	}
 
 	bin := cs.cliBin
