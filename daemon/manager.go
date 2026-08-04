@@ -10,7 +10,7 @@ import (
 
 const (
 	DefaultLogMaxSize = 10 * 1024 * 1024 // 10 MB
-	ServiceName       = "cc-connect"
+	ServiceName       = "cc-connect-qhn"
 )
 
 type Config struct {
@@ -46,7 +46,7 @@ func NewManager() (Manager, error) {
 
 func DefaultLogFile() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".cc-connect-qhn", "logs", "cc-connect.log")
+	return filepath.Join(home, ".cc-connect-qhn", "logs", "cc-connect-qhn.log")
 }
 
 func DefaultDataDir() string {

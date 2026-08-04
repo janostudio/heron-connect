@@ -1,0 +1,31 @@
+# 飞书 + Claude Code（带 Agent 隔离运行 + 自定义 Provider）
+
+[log]
+level = "info"
+
+[[projects]]
+name = "sandboxed"
+
+# Agent 以独立 Unix 用户运行，通过文件权限隔离
+run_as_user = "agent-user"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "/path/to/your/project"
+mode = "default"
+
+# 自定义 API Provider
+[[projects.agent.providers]]
+name = "custom"
+api_key = "sk-your-api-key"
+base_url = "https://api.openai.com/v1"
+model = "gpt-4o"
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "cli_xxxxxxxxxxxx"
+app_secret = "xxxxxxxxxxxxxxxxxxxxxxxx"

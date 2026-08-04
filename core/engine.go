@@ -1264,7 +1264,14 @@ func (e *Engine) maybeAutoResetSessionOnIdle(p Platform, msg *Message, sessions 
 	newSession := sessions.NewSession(msg.SessionKey, "")
 	if !newSession.TryLock() {
 		slog.Error("failed to lock new session after idle auto-reset", "session_key", msg.SessionKey, "new_session", newSession.ID)
-		return nil
+		// Re-lock the old session so the caller can proceed safely.
+		// The old session was unlocked above; without this, the caller
+		// would operate on an unlocked session, which is racy.
+		if !session.TryLock() {
+			slog.Error("failed to re-lock old session after idle auto-reset failure", "session_key", msg.SessionKey, "session_id", session.ID)
+			return nil
+		}
+		return session
 	}
 
 	e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgSessionAutoResetIdle, int(e.resetOnIdle/time.Minute)))
@@ -1945,8 +1952,18 @@ func adoptPendingFromPlaceholder(existing, newState *interactiveState) {
 // When agentOverride is non-nil it is used instead of e.agent to start the session.
 // ccSessionKey, when non-empty, is used for CC_SESSION_KEY env injection; otherwise sessionKey is used.
 func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, replyCtx any, session *Session, sessions *SessionManager, agentOverride Agent, ccSessionKey string) *interactiveState {
+	// Track whether we hold the lock so we can release it before blocking
+	// operations (closeAgentSessionWithTimeout can block up to 130s) and
+	// avoid holding it during the entire function via a single defer.
+	locked := true
 	e.interactiveMu.Lock()
-	defer e.interactiveMu.Unlock()
+	unlock := func() {
+		if locked {
+			e.interactiveMu.Unlock()
+			locked = false
+		}
+	}
+	defer unlock()
 
 	state, ok := e.interactiveStates[sessionKey]
 	if ok && state.agentSession != nil && state.agentSession.Alive() {
@@ -1973,10 +1990,22 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 		)
 		e.stopUnsolicitedReader(state)
 		state.markStopped()
-		// Close synchronously to prevent race condition where old agent
-		// continues outputting while new agent starts (issue #327).
-		e.closeAgentSessionWithTimeout(sessionKey, state.agentSession)
+		// Snapshot the agent session and delete from map before releasing
+		// the lock. The actual close (which can block up to 130s for Stop
+		// hooks) runs outside the critical section so other sessions are
+		// not blocked.
+		agentToClose := state.agentSession
 		delete(e.interactiveStates, sessionKey)
+		unlock()
+
+		if agentToClose != nil {
+			// Close synchronously to prevent race condition where old agent
+			// continues outputting while new agent starts (issue #327).
+			e.closeAgentSessionWithTimeout(sessionKey, agentToClose)
+		}
+
+		e.interactiveMu.Lock()
+		locked = true
 		ok = false // prevent reading stale settings below
 	} else if ok && state != nil && (state.agentSession == nil || !state.agentSession.Alive()) {
 		// Defensive cleanup: a previous session died but was never cleaned
@@ -1998,10 +2027,16 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 		if pending != nil {
 			pending.resolve()
 		}
-		if state.agentSession != nil {
-			e.closeAgentSessionWithTimeout(sessionKey, state.agentSession)
-		}
+		agentToClose := state.agentSession
 		delete(e.interactiveStates, sessionKey)
+		unlock()
+
+		if agentToClose != nil {
+			e.closeAgentSessionWithTimeout(sessionKey, agentToClose)
+		}
+
+		e.interactiveMu.Lock()
+		locked = true
 		ok = false
 	}
 

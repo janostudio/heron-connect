@@ -32,7 +32,7 @@ func runSend(args []string) {
 
 	sockPath := resolveSocketPath(dataDir)
 	if _, err := os.Stat(sockPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: cc-connect is not running (socket not found: %s)\n", sockPath)
+		fmt.Fprintf(os.Stderr, "Error: cc-connect-qhn is not running (socket not found: %s)\n", sockPath)
 		os.Exit(1)
 	}
 
@@ -244,14 +244,14 @@ func resolveSocketPath(dataDir string) string {
 }
 
 func printSendUsage() {
-	fmt.Println(`Usage: cc-connect send [options] <message>
-       cc-connect send [options] -m <message>
-       cc-connect send [options] --stdin < file
-       cc-connect send [options] --image <path>
-       cc-connect send [options] --file <path>
-       echo "msg" | cc-connect send [options] --stdin
+	fmt.Println(`Usage: cc-connect-qhn send [options] <message>
+       cc-connect-qhn send [options] -m <message>
+       cc-connect-qhn send [options] --stdin < file
+       cc-connect-qhn send [options] --image <path>
+       cc-connect-qhn send [options] --file <path>
+       echo "msg" | cc-connect-qhn send [options] --stdin
 
-Send a message or attachment to an active cc-connect session.
+Send a message or attachment to an active cc-connect-qhn session.
 
 Options:
   -m, --message <text>     Message to send (preferred over positional args)
@@ -264,11 +264,11 @@ Options:
   -h, --help               Show this help
 
 Examples:
-  cc-connect send "Daily summary: ..."
-  cc-connect send -m "Build completed successfully"
-  cc-connect send --message "Chart generated" --image /tmp/chart.png
-  cc-connect send --file /tmp/report.pdf
-  cc-connect send --stdin <<'EOF'
+  cc-connect-qhn send "Daily summary: ..."
+  cc-connect-qhn send -m "Build completed successfully"
+  cc-connect-qhn send --message "Chart generated" --image /tmp/chart.png
+  cc-connect-qhn send --file /tmp/report.pdf
+  cc-connect-qhn send --stdin <<'EOF'
     Long message with "special" chars, $variables, and newlines
   EOF`)
 }

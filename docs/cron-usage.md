@@ -221,7 +221,7 @@ cc-connect-qhn cron del <任务ID>
 | `--session-mode` | 否 | 会话模式：`reuse`（复用）或 `new_per_run`（每次新建） |
 | `--timeout-mins` | 否 | 超时时间（分钟），默认 30，设为 0 表示不限制 |
 
-> **提示**：如果通过 AI Agent 内部调用（如 Claude Code 中的 `cc-connect cron add`），`--project` 和 `--session-key` 可以通过环境变量 `CC_PROJECT` 和 `CC_SESSION_KEY` 自动填充。
+> **提示**：如果通过 AI Agent 内部调用（如 Claude Code 中的 `cc-connect-qhn cron add`），`--project` 和 `--session-key` 可以通过环境变量 `CC_PROJECT` 和 `CC_SESSION_KEY` 自动填充。
 
 ### 方式三：管理 API（REST）
 
@@ -415,11 +415,11 @@ session_mode = "reuse"  # 全局默认会话模式："reuse" 或 "new_per_run"
 
 ## AI Agent 自动创建
 
-在连接了 AI Agent（如 Claude Code）的场景下，Agent 的系统提示中已包含 cron 创建指令。用户可以直接用自然语言描述需求，Agent 会自动调用 `cc-connect cron add` 命令：
+在连接了 AI Agent（如 Claude Code）的场景下，Agent 的系统提示中已包含 cron 创建指令。用户可以直接用自然语言描述需求，Agent 会自动调用 `cc-connect-qhn cron add` 命令：
 
 > **用户**: "每天早上 9 点帮我查一下今天的天气"
 >
-> **Agent**: 自动执行 `cc-connect cron add --cron "0 9 * * *" --prompt "查一下今天的天气" --desc "每日天气查询"`
+> **Agent**: 自动执行 `cc-connect-qhn cron add --cron "0 9 * * *" --prompt "查一下今天的天气" --desc "每日天气查询"`
 
 ---
 

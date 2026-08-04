@@ -233,12 +233,12 @@ func fileModTime(path string) int64 {
 }
 
 func printAgentSIDUsage() {
-	fmt.Println(`Usage: cc-connect agent-sid [options]
+	fmt.Println(`Usage: cc-connect-qhn agent-sid [options]
 
 Print the agent session ID (e.g. Claude Code, Codex, Gemini CLI) for the
 current session. This is the ID used for --resume.
 
-The command reads from the persisted session file; no running cc-connect
+The command reads from the persisted session file; no running cc-connect-qhn
 instance is required.
 
 Options:
@@ -248,6 +248,6 @@ Options:
   -h, --help                 Show this help
 
 Examples:
-  cc-connect agent-sid                         Auto-detect from env (inside a session)
-  cc-connect agent-sid -p mybot -s "discord:123:456"`)
+  cc-connect-qhn agent-sid                         Auto-detect from env (inside a session)
+  cc-connect-qhn agent-sid -p mybot -s "discord:123:456"`)
 }

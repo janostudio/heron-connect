@@ -1,38 +1,38 @@
 # 本地开发版安装与替换说明
 
-本文专门说明一个容易混淆的问题：`cc-connect` 虽然核心实现是 Go 二进制，但全局安装场景里常常通过 npm 暴露命令入口。因此，本地开发版覆盖时不能只盯着 PATH 里的那个 `cc-connect` 路径。
+本文专门说明一个容易混淆的问题：`cc-connect-qhn` 虽然核心实现是 Go 二进制，但全局安装场景里常常通过 npm 暴露命令入口。因此，本地开发版覆盖时不能只盯着 PATH 里的那个 `cc-connect-qhn` 路径。
 
 ## 背景
 
 如果你是通过下面这种方式安装的：
 
 ```bash
-npm install -g cc-connect
+npm install -g cc-connect-qhn
 ```
 
-那么 PATH 里的 `cc-connect` 往往不是最终可执行二进制，而是 npm 放出来的入口脚本。以当前机器为例：
+那么 PATH 里的 `cc-connect-qhn` 往往不是最终可执行二进制，而是 npm 放出来的入口脚本。以当前机器为例：
 
 ```bash
-/Users/jahweijiang/.nvm/versions/node/v24.11.0/bin/cc-connect
+/Users/jahweijiang/.nvm/versions/node/v24.11.0/bin/cc-connect-qhn
 ```
 
 这个路径通常是一个软链接，最后会跳到全局 npm 包目录中的 `run.js`，再由 `run.js` 去执行真正的 Go 二进制：
 
 ```text
-~/.nvm/versions/node/<version>/lib/node_modules/cc-connect/run.js
-~/.nvm/versions/node/<version>/lib/node_modules/cc-connect/bin/cc-connect
+~/.nvm/versions/node/<version>/lib/node_modules/cc-connect-qhn/run.js
+~/.nvm/versions/node/<version>/lib/node_modules/cc-connect-qhn/bin/cc-connect-qhn
 ```
 
 所以从执行链路上看：
 
-1. shell 调用 PATH 里的 `cc-connect`
+1. shell 调用 PATH 里的 `cc-connect-qhn`
 2. 这个入口跳到 npm 包内的 `run.js`
-3. `run.js` 再调用 `bin/cc-connect`
-4. `bin/cc-connect` 才是真正的 Go 程序
+3. `run.js` 再调用 `bin/cc-connect-qhn`
+4. `bin/cc-connect-qhn` 才是真正的 Go 程序
 
 ## 为什么不能只覆盖二进制
 
-单独替换 `bin/cc-connect` 在很多场景下仍然不稳。原因是 npm 包里的 `run.js` 会读取同目录 `package.json` 的版本号，并和实际二进制版本做比较。
+单独替换 `bin/cc-connect-qhn` 在很多场景下仍然不稳。原因是 npm 包里的 `run.js` 会读取同目录 `package.json` 的版本号，并和实际二进制版本做比较。
 
 如果你从当前仓库直接构建，默认 Go 二进制版本可能是 git 描述值，比如：
 
@@ -60,7 +60,7 @@ make build-local
 1. 先构建前端资源 `web/`
 2. 用 npm 包版本号重新编译本地 Go 二进制，避免版本比较误判
 3. 覆盖全局 npm 包目录中的包装层文件：`package.json`、`run.js`、`install.js`、`README.md`
-4. 覆盖真正执行的二进制：`$(npm root -g)/cc-connect/bin/cc-connect`
+4. 覆盖真正执行的二进制：`$(npm root -g)/cc-connect-qhn/bin/cc-connect-qhn`
 
 换句话说，它替换的不是 PATH 里的软链接本身，而是软链接最终指向的 npm 包内容。
 
@@ -72,20 +72,20 @@ make build-local
 
 ```bash
 make build-local
-cc-connect --version
+cc-connect-qhn --version
 ```
 
 ### 场景 2：你是手动把二进制装进 PATH
 
-如果 `which cc-connect` 输出的是这种路径：
+如果 `which cc-connect-qhn` 输出的是这种路径：
 
-- `/usr/local/bin/cc-connect`
-- `/opt/homebrew/bin/cc-connect`
+- `/usr/local/bin/cc-connect-qhn`
+- `/opt/homebrew/bin/cc-connect-qhn`
 
 并且它不是 npm 包装层，那就不需要 `build-local` 这套逻辑，直接覆盖即可：
 
 ```bash
-sudo install -m 755 ./cc-connect "$(which cc-connect)"
+sudo install -m 755 ./cc-connect-qhn "$(which cc-connect-qhn)"
 ```
 
 ### 场景 3：你只想临时测试当前仓库构建
@@ -94,8 +94,8 @@ sudo install -m 755 ./cc-connect "$(which cc-connect)"
 
 ```bash
 export PATH="$PWD:$PATH"
-./cc-connect --version
-cc-connect --version
+./cc-connect-qhn --version
+cc-connect-qhn --version
 ```
 
 这种方式只适合临时调试。
@@ -105,26 +105,26 @@ cc-connect --version
 先看入口：
 
 ```bash
-which cc-connect
-ls -l "$(which cc-connect)"
+which cc-connect-qhn
+ls -l "$(which cc-connect-qhn)"
 ```
 
-如果你看到它是一个指向 `../lib/node_modules/cc-connect/run.js` 的软链接，那么说明当前就是 npm 包装层模式。
+如果你看到它是一个指向 `../lib/node_modules/cc-connect-qhn/run.js` 的软链接，那么说明当前就是 npm 包装层模式。
 
 还可以直接看全局 npm 包目录：
 
 ```bash
 npm root -g
-ls -l "$(npm root -g)/cc-connect"
-ls -l "$(npm root -g)/cc-connect/bin"
+ls -l "$(npm root -g)/cc-connect-qhn"
+ls -l "$(npm root -g)/cc-connect-qhn/bin"
 ```
 
 ## 替换后建议验证
 
 至少做两步：
 
-1. 执行 `cc-connect --version`，确认版本号已经变成当前仓库希望暴露的版本
-2. 执行一次最小启动验证，例如 `cc-connect -config ./config.toml` 或你自己的日常启动命令
+1. 执行 `cc-connect-qhn --version`，确认版本号已经变成当前仓库希望暴露的版本
+2. 执行一次最小启动验证，例如 `cc-connect-qhn -config ./config.toml` 或你自己的日常启动命令
 
 如果你是通过守护进程或系统服务启动，还需要重启对应服务，否则旧进程不会自动切到新二进制。
 
@@ -134,4 +134,4 @@ npm 在这里负责的是分发、安装和命令入口管理；真正的业务�
 
 - npm 不是主要实现语言
 - Node.js 不是核心运行时
-- `cc-connect` 真正执行的仍然是 Go 编译出来的二进制文件
+- `cc-connect-qhn` 真正执行的仍然是 Go 编译出来的二进制文件

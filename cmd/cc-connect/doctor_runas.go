@@ -19,12 +19,12 @@ import (
 	"github.com/chenhg5/cc-connect/core"
 )
 
-// runDoctor dispatches `cc-connect doctor ...`. Today the only subcommand
+// runDoctor dispatches `cc-connect-qhn doctor ...`. Today the only subcommand
 // is `user-isolation`, but this function is the growth point for future
 // diagnostics.
 func runDoctor(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: cc-connect doctor <subcommand>")
+		fmt.Fprintln(os.Stderr, "usage: cc-connect-qhn doctor <subcommand>")
 		fmt.Fprintln(os.Stderr, "subcommands:")
 		fmt.Fprintln(os.Stderr, "  user-isolation   audit run_as_user projects and emit an isolation report")
 		os.Exit(2)

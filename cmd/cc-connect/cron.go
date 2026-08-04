@@ -104,7 +104,7 @@ func runCronAdd(args []string) {
 		}
 	}
 
-	// Fallback to env vars (set by cc-connect when spawning agent)
+	// Fallback to env vars (set by cc-connect-qhn when spawning agent)
 	if project == "" {
 		project = os.Getenv("CC_PROJECT")
 	}
@@ -134,7 +134,7 @@ func runCronAdd(args []string) {
 
 	sockPath := resolveSocketPath(dataDir)
 	if _, err := os.Stat(sockPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: cc-connect is not running (socket not found: %s)\n", sockPath)
+		fmt.Fprintf(os.Stderr, "Error: cc-connect-qhn is not running (socket not found: %s)\n", sockPath)
 		os.Exit(1)
 	}
 
@@ -204,7 +204,7 @@ func runCronList(args []string) {
 
 	sockPath := resolveSocketPath(dataDir)
 	if _, err := os.Stat(sockPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: cc-connect is not running (socket not found: %s)\n", sockPath)
+		fmt.Fprintf(os.Stderr, "Error: cc-connect-qhn is not running (socket not found: %s)\n", sockPath)
 		os.Exit(1)
 	}
 
@@ -294,7 +294,7 @@ func runCronDel(args []string) {
 
 	sockPath := resolveSocketPath(dataDir)
 	if _, err := os.Stat(sockPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: cc-connect is not running (socket not found: %s)\n", sockPath)
+		fmt.Fprintf(os.Stderr, "Error: cc-connect-qhn is not running (socket not found: %s)\n", sockPath)
 		os.Exit(1)
 	}
 
@@ -336,14 +336,14 @@ func runCronInfo(args []string) {
 
 	if id == "" {
 		fmt.Fprintln(os.Stderr, "Error: job ID is required")
-		fmt.Fprintln(os.Stderr, "Usage: cc-connect cron info <id> [field]")
-		fmt.Fprintln(os.Stderr, "Use 'cc-connect cron list' to see all task IDs.")
+		fmt.Fprintln(os.Stderr, "Usage: cc-connect-qhn cron info <id> [field]")
+		fmt.Fprintln(os.Stderr, "Use 'cc-connect-qhn cron list' to see all task IDs.")
 		os.Exit(1)
 	}
 
 	sockPath := resolveSocketPath(dataDir)
 	if _, err := os.Stat(sockPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: cc-connect is not running (socket not found: %s)\n", sockPath)
+		fmt.Fprintf(os.Stderr, "Error: cc-connect-qhn is not running (socket not found: %s)\n", sockPath)
 		os.Exit(1)
 	}
 
@@ -435,17 +435,17 @@ func runCronEdit(args []string) {
 
 	if id == "" {
 		fmt.Fprintln(os.Stderr, "Error: job ID is required")
-		fmt.Fprintln(os.Stderr, "Run 'cc-connect cron edit --help' for usage.")
+		fmt.Fprintln(os.Stderr, "Run 'cc-connect-qhn cron edit --help' for usage.")
 		os.Exit(1)
 	}
 	if field == "" {
 		fmt.Fprintln(os.Stderr, "Error: field name is required")
-		fmt.Fprintln(os.Stderr, "Run 'cc-connect cron edit --help' for usage.")
+		fmt.Fprintln(os.Stderr, "Run 'cc-connect-qhn cron edit --help' for usage.")
 		os.Exit(1)
 	}
 	if valueStr == "" {
 		fmt.Fprintln(os.Stderr, "Error: value is required")
-		fmt.Fprintln(os.Stderr, "Run 'cc-connect cron edit --help' for usage.")
+		fmt.Fprintln(os.Stderr, "Run 'cc-connect-qhn cron edit --help' for usage.")
 		os.Exit(1)
 	}
 
@@ -473,7 +473,7 @@ func runCronEdit(args []string) {
 
 	sockPath := resolveSocketPath(dataDir)
 	if _, err := os.Stat(sockPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: cc-connect is not running (socket not found: %s)\n", sockPath)
+		fmt.Fprintf(os.Stderr, "Error: cc-connect-qhn is not running (socket not found: %s)\n", sockPath)
 		os.Exit(1)
 	}
 
@@ -512,7 +512,7 @@ func apiPost(sockPath, path string, payload []byte) (*http.Response, error) {
 }
 
 func printCronUsage() {
-	fmt.Println(`Usage: cc-connect cron <command> [options]
+	fmt.Println(`Usage: cc-connect-qhn cron <command> [options]
 
 Commands:
   add       Create a new scheduled task
@@ -522,11 +522,11 @@ Commands:
                      (optionally filter to a single field)
   del <id>  Delete a scheduled task
 
-Run 'cc-connect cron <command> --help' for details.`)
+Run 'cc-connect-qhn cron <command> --help' for details.`)
 }
 
 func printCronAddUsage() {
-	fmt.Println(`Usage: cc-connect cron add [options] [<min> <hour> <day> <month> <weekday> <prompt>]
+	fmt.Println(`Usage: cc-connect-qhn cron add [options] [<min> <hour> <day> <month> <weekday> <prompt>]
 
 Create a new scheduled task (agent prompt or shell command).
 
@@ -543,13 +543,13 @@ Options:
   -h, --help                 Show this help
 
 Examples:
-  cc-connect cron add --cron "0 6 * * *" --prompt "Collect GitHub trending data" --desc "Daily Trending"
-  cc-connect cron add --cron "*/30 * * * *" --exec "df -h" --desc "Disk usage check"
-  cc-connect cron add 0 6 * * * Collect GitHub trending data and send me a summary`)
+  cc-connect-qhn cron add --cron "0 6 * * *" --prompt "Collect GitHub trending data" --desc "Daily Trending"
+  cc-connect-qhn cron add --cron "*/30 * * * *" --exec "df -h" --desc "Disk usage check"
+  cc-connect-qhn cron add 0 6 * * * Collect GitHub trending data and send me a summary`)
 }
 
 func printCronEditUsage() {
-	fmt.Println(`Usage: cc-connect cron edit <id> <field> <value> [options]
+	fmt.Println(`Usage: cc-connect-qhn cron edit <id> <field> <value> [options]
 
 Edit a specific field of an existing scheduled task.
 
@@ -579,9 +579,9 @@ Options:
   -h, --help             Show this help
 
 Examples:
-  cc-connect cron edit abc123 cron_expr "0 9 * * *"
-  cc-connect cron edit abc123 enabled false
-  cc-connect cron edit abc123 description "Daily standup reminder"
-  cc-connect cron edit abc123 timeout_mins 60
-  cc-connect cron edit abc123 mute true`)
+  cc-connect-qhn cron edit abc123 cron_expr "0 9 * * *"
+  cc-connect-qhn cron edit abc123 enabled false
+  cc-connect-qhn cron edit abc123 description "Daily standup reminder"
+  cc-connect-qhn cron edit abc123 timeout_mins 60
+  cc-connect-qhn cron edit abc123 mute true`)
 }

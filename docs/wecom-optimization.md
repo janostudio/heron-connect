@@ -25,7 +25,7 @@
 
 #### 1a. 将默认 `resetOnIdle` 改为 360 分钟
 ```
-文件: cmd/cc-connect/main.go
+文件: cmd/cc-connect-qhn/main.go
 const defaultResetOnIdleMins = 360  // 原来是 0
 ```
 含义：用户 360 分钟没发新消息到某个 session，下次发消息时自动创建新 session。

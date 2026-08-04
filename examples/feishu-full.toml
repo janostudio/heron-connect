@@ -1,0 +1,33 @@
+# 飞书 + Claude Code（带 Web 管理界面 + 定时任务 + Bridge）
+
+[log]
+level = "info"
+
+# Web 管理界面
+[management]
+enabled = true
+port = 9820
+token = "your-secret-token"
+
+# Bridge 外部接入
+[bridge]
+enabled = true
+port = 9810
+token = "your-bridge-secret"
+
+[[projects]]
+name = "my-project"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "/path/to/your/project"
+mode = "default"
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "cli_xxxxxxxxxxxx"
+app_secret = "xxxxxxxxxxxxxxxxxxxxxxxx"

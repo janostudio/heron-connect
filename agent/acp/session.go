@@ -220,8 +220,8 @@ func (s *acpSession) handshake(resumeSessionID string, authMethod string) error 
 			"terminal": false,
 		},
 		"clientInfo": map[string]any{
-			"name":    "cc-connect",
-			"title":   "cc-connect",
+			"name":    "cc-connect-qhn",
+			"title":   "cc-connect-qhn",
 			"version": "1.4.8",
 		},
 	}
@@ -654,7 +654,7 @@ func (s *acpSession) GetContextUsage() *core.ContextUsage {
 
 // maybeAbsorbCurrentModeUpdate watches session/update notifications
 // for `current_mode_update` (server-driven mode switch, e.g. when the
-// user toggles modes via the Windsurf/IDE UI while cc-connect is
+// user toggles modes via the Windsurf/IDE UI while cc-connect-qhn is
 // connected). Keeping currentMode in sync here means the IM `/mode`
 // indicator reflects the true server state rather than the last
 // client-initiated value.

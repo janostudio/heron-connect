@@ -45,7 +45,7 @@ func runProviderCommand(args []string) {
 }
 
 func printProviderUsage() {
-	fmt.Println(`Usage: cc-connect provider <command> [options]
+	fmt.Println(`Usage: cc-connect-qhn provider <command> [options]
 
 Commands:
   add      Add a new API provider to a project
@@ -56,14 +56,14 @@ Commands:
   global   Manage global shared providers
 
 Examples:
-  cc-connect provider add --project my-backend --name relay --api-key sk-xxx
-  cc-connect provider add --project my-backend --name bedrock --env CLAUDE_CODE_USE_BEDROCK=1,AWS_PROFILE=bedrock
-  cc-connect provider list --project my-backend
-  cc-connect provider remove --project my-backend --name relay
-  cc-connect provider import --project my-backend
-  cc-connect provider presets
-  cc-connect provider global list
-  cc-connect provider global add --name minimaxi --api-key sk-xxx --base-url https://api.minimaxi.chat/v1`)
+  cc-connect-qhn provider add --project my-backend --name relay --api-key sk-xxx
+  cc-connect-qhn provider add --project my-backend --name bedrock --env CLAUDE_CODE_USE_BEDROCK=1,AWS_PROFILE=bedrock
+  cc-connect-qhn provider list --project my-backend
+  cc-connect-qhn provider remove --project my-backend --name relay
+  cc-connect-qhn provider import --project my-backend
+  cc-connect-qhn provider presets
+  cc-connect-qhn provider global list
+  cc-connect-qhn provider global add --name minimaxi --api-key sk-xxx --base-url https://api.minimaxi.chat/v1`)
 }
 
 // initConfigPath resolves the config path and sets config.ConfigPath.
@@ -583,7 +583,7 @@ func runProviderPresets(args []string) {
 
 func runProviderGlobal(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, `Usage: cc-connect provider global <command>
+		fmt.Fprintln(os.Stderr, `Usage: cc-connect-qhn provider global <command>
 
 Commands:
   list     List global providers
@@ -619,7 +619,7 @@ func runGlobalProviderList(args []string) {
 	}
 	if len(providers) == 0 {
 		fmt.Println("No global providers configured.")
-		fmt.Println("\nAdd one with: cc-connect provider global add --name <name> --api-key <key>")
+		fmt.Println("\nAdd one with: cc-connect-qhn provider global add --name <name> --api-key <key>")
 		return
 	}
 

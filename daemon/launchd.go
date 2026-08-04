@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	launchdLabel = "com.cc-connect.service"
+	launchdLabel = "com.cc-connect-qhn.service"
 )
 
 var runLaunchctl = func(args ...string) (string, error) {

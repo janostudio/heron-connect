@@ -1,5 +1,52 @@
 # Changelog
 
+## v2.0.0 (2026-07-31)
+
+**Breaking branding change**: All user-facing log/output strings renamed from `cc-connect` to `cc-connect-qhn`. Binary filename, GitHub release assets, updater APIs all switched to the fork's own identity.
+
+### Breaking
+
+- **Binary renamed**: Go binary output changed from `cc-connect` to `cc-connect-qhn`. Makefile `APP`, npm wrapper scripts (`run.js`, `install.js`, `release-assets.js`), and release asset naming all updated accordingly.
+- **GitHub release assets renamed**: `cc-connect-v2.0.0-darwin-arm64.tar.gz` → `cc-connect-qhn-v2.0.0-darwin-arm64.tar.gz`.
+- **All CLI help/output text renamed**: `Usage: cc-connect [flags]` → `Usage: cc-connect-qhn [flags]`, all examples, error messages, daemon status messages, platform setup prompts updated across ~30 Go files.
+- **Log message renamed**: `"cc-connect is running"` → `"cc-connect-qhn is running"`.
+- **Agent system prompt renamed**: Agent-visible context (system prompt, sender markers, instruction marker) uses `cc-connect-qhn` instead of `cc-connect`.
+- **Daemon service renamed**: Systemd unit description `cc-connect` → `cc-connect-qhn`, launchd label `com.cc-connect.service` → `com.cc-connect-qhn.service`, service name const `cc-connect` → `cc-connect-qhn`.
+- **ACP session names renamed**: ACP `clientInfo.name` and session titles use `cc-connect-qhn`.
+- **i18n strings renamed**: All localized help/status strings across 5 languages updated.
+- **Weixin channel version renamed**: `cc-connect-weixin/1.0` → `cc-connect-qhn-weixin/1.0`.
+- **Windows daemon script renamed**: `cc-connect-daemon.ps1` → `cc-connect-qhn-daemon.ps1`.
+
+### Changed
+
+- **Updater repo URLs switched from upstream to fork**: `CheckForUpdate` and `SelfUpdate` in `core/updater.go`, plus CLI `update` command in `cmd/cc-connect/update.go`, now query `janostudio/cc-connect-qhn` instead of `chenhg5/cc-connect` / `cg33/cc-connect`.
+- **npm package version sync fixed**: `syncNpmPackageVersion` now uses `strings.Contains` for scoped package `@qinghuangniao/cc-connect-qhn` name matching.
+
+### NOT changed (preserved for compatibility)
+
+- **Go import paths**: `github.com/chenhg5/cc-connect/...` unchanged.
+- **cmd/cc-connect/ directory name**: Go package directory unchanged.
+- **`.cc-connect-qhn` data directory**: Already had `-qhn` suffix, unchanged.
+- **npm global command**: `cc-connect-qhn` unchanged (already correct).
+
+### Why v2.0.0
+
+This is a semver-major bump because:
+1. The `ServiceName` const and launchd label change means existing daemon installations need re-install.
+2. The agent system prompt change means agents using memory files with old `cc-connect` instructions will get them refreshed on next run.
+3. The updater URL change means the auto-update path switches from upstream to the fork — users on old versions won't see updates from the new repo.
+
+### Files changed (35 files)
+
+`agent/acp/`: list_sessions.go, session.go
+`cmd/cc-connect/`: main.go, cron.go, send.go, daemon.go, provider.go, feishu.go, weixin.go, sessions.go, update.go, relay.go, session_id.go, config_cmd.go, doctor_runas.go, instance_lock.go, web.go
+`core/`: engine.go, engine_bind_cmds.go, i18n.go, interfaces.go, runas_check.go, updater.go, web_manager.go
+`daemon/`: manager.go, systemd.go, launchd.go, windows.go
+`platform/weixin/`: client.go
+`npm/`: run.js, install.js, release-assets.js
+`Makefile`
+Test files: update_test.go, engine_test.go
+
 ## v1.4.9 (2026-07-29)
 
 Personal fork session idle reaper, WeCom rate-limit tracking, reassurance messages, token usage fix, and log diagnostics hardening for `@qinghuangniao/cc-connect-qhn`.

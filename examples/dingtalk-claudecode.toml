@@ -1,0 +1,23 @@
+# 钉钉 + Claude Code
+# Stream 模式 WebSocket，无需公网 IP
+
+[log]
+level = "info"
+
+[[projects]]
+name = "my-bot"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "/path/to/your/project"
+mode = "default"
+
+[[projects.platforms]]
+type = "dingtalk"
+
+[projects.platforms.options]
+client_id = "your-dingtalk-client-id"
+client_secret = "your-dingtalk-client-secret"
+allow_from = "*"

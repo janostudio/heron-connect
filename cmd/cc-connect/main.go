@@ -37,7 +37,7 @@ var (
 
 // defaultResetOnIdleMins is applied when a project does not set
 // reset_on_idle_mins. After this many minutes of inactivity (both user and
-// agent), cc-connect kills the agent process and rotates to a fresh session
+// agent), cc-connect-qhn kills the agent process and rotates to a fresh session
 // for the next message. This avoids "context drift" where stale chat history
 // and prevents zombie agent processes from accumulating. The previous session
 // is preserved and remains accessible via /list and /switch.
@@ -713,11 +713,11 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("cc-connect %s\ncommit:  %s\nbuilt:   %s\n", version, commit, buildTime)
+		fmt.Printf("cc-connect-qhn %s\ncommit:  %s\nbuilt:   %s\n", version, commit, buildTime)
 		return
 	}
 
-	core.VersionInfo = fmt.Sprintf("cc-connect %s\ncommit: %s\nbuilt: %s", version, commit, buildTime)
+	core.VersionInfo = fmt.Sprintf("cc-connect-qhn %s\ncommit: %s\nbuilt: %s", version, commit, buildTime)
 	core.CurrentVersion = version
 	bridge.CurrentCommit = commit
 	bridge.CurrentBuildTime = buildTime
@@ -746,7 +746,7 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Created default config at %s\n", configPath)
-		fmt.Println("Please edit this file to add your agent and platform credentials, then run cc-connect again.")
+		fmt.Println("Please edit this file to add your agent and platform credentials, then run cc-connect-qhn again.")
 		os.Exit(0)
 	}
 
@@ -762,7 +762,7 @@ func main() {
 	if len(cfg.Projects) == 0 {
 		fmt.Fprintf(os.Stderr, "Error: no projects configured in %s\n", configPath)
 		fmt.Fprintln(os.Stderr, "Add at least one [[project]] section to your config.toml, or run:")
-		fmt.Fprintln(os.Stderr, "  cc-connect init")
+		fmt.Fprintln(os.Stderr, "  cc-connect-qhn init")
 		os.Exit(1)
 	}
 
@@ -1077,7 +1077,7 @@ func main() {
 		apiSrv.Start()
 	}
 
-	slog.Info("cc-connect is running", "projects", len(engines))
+	slog.Info("cc-connect-qhn is running", "projects", len(engines))
 
 	// After startup, check if we were restarted and send success notification
 	if notify := core.ConsumeRestartNotify(cfg.DataDir); notify != nil {
@@ -1242,7 +1242,7 @@ func resolveClaudeProjectDir(workDir string) string {
 		return ""
 	}
 	// Claude Code encodes paths by replacing os.PathSeparator with "-"
-	// e.g. /home/leigh/workspace/cc-connect -> -home-leigh-workspace-cc-connect
+	// e.g. /home/leigh/workspace/cc-connect-qhn -> -home-leigh-workspace-cc-connect-qhn
 	encoded := strings.ReplaceAll(workDir, string(os.PathSeparator), "-")
 	dir := filepath.Join(homeDir, ".claude", "projects", encoded)
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
@@ -1271,7 +1271,7 @@ func bootstrapConfig(path string) error {
 		return err
 	}
 
-	const tmpl = `# cc-connect configuration
+	const tmpl = `# cc-connect-qhn configuration
 # Docs: https://github.com/chenhg5/cc-connect
 
 [log]
@@ -1328,8 +1328,8 @@ func printUsage() {
   Docs:    https://github.com/chenhg5/cc-connect/blob/main/INSTALL.md
 
 Usage:
-  cc-connect [flags]
-  cc-connect <command> [args]
+  cc-connect-qhn [flags]
+  cc-connect-qhn <command> [args]
 
 Flags:
   --config <path>    Path to config file (default: ./config.toml or ~/.cc-connect-qhn/config.toml)
@@ -1338,7 +1338,7 @@ Flags:
   --help             Show this help message
 
 Commands:
-  daemon             Manage cc-connect as a background service (systemd/launchd/schtasks)
+  daemon             Manage cc-connect-qhn as a background service (systemd/launchd/schtasks)
     install          Install and start the daemon service
     uninstall        Remove the daemon service
     start            Start the daemon
@@ -1390,17 +1390,17 @@ Commands:
   config-example     (deprecated: use 'config example' instead)
 
 Examples:
-  cc-connect                          Start with default config
-  cc-connect --config /path/to.toml   Start with a specific config file
-  cc-connect daemon install           Install as a system service
-  cc-connect daemon logs -f           Follow daemon logs
-  cc-connect send -m "hello"          Send a message to the active session
-  cc-connect cron list                List all scheduled tasks
-  cc-connect feishu setup             Setup Feishu/Lark bot credentials
-  cc-connect weixin setup             Setup Weixin (ilink) with QR or --token
-  cc-connect update                   Update to the latest version
-  cc-connect config format            Format the config file
-  cc-connect config example > c.toml  Save example config to a file
+  cc-connect-qhn                          Start with default config
+  cc-connect-qhn --config /path/to.toml   Start with a specific config file
+  cc-connect-qhn daemon install           Install as a system service
+  cc-connect-qhn daemon logs -f           Follow daemon logs
+  cc-connect-qhn send -m "hello"          Send a message to the active session
+  cc-connect-qhn cron list                List all scheduled tasks
+  cc-connect-qhn feishu setup             Setup Feishu/Lark bot credentials
+  cc-connect-qhn weixin setup             Setup Weixin (ilink) with QR or --token
+  cc-connect-qhn update                   Update to the latest version
+  cc-connect-qhn config format            Format the config file
+  cc-connect-qhn config example > c.toml  Save example config to a file
 
 `, v, updateHint)
 }

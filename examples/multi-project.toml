@@ -1,0 +1,41 @@
+# 多项目：飞书 + Telegram，共享同一个 cc-connect-qhn 进程
+# 每个项目有独立的 Agent 和工作目录
+
+[log]
+level = "info"
+
+# 项目 1：飞书 + Claude Code
+[[projects]]
+name = "backend"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "/path/to/backend"
+mode = "default"
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "cli_xxxxxxxxxxxx"
+app_secret = "xxxxxxxxxxxxxxxxxxxxxxxx"
+
+# 项目 2：Telegram + Codex
+[[projects]]
+name = "frontend"
+
+[projects.agent]
+type = "codex"
+
+[projects.agent.options]
+work_dir = "/path/to/frontend"
+mode = "full-auto"
+
+[[projects.platforms]]
+type = "telegram"
+
+[projects.platforms.options]
+token = "123456:ABC-DEF1234ghIkl"
+allow_from = "*"

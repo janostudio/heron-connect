@@ -1,0 +1,21 @@
+# 飞书 + Gemini CLI
+
+[log]
+level = "info"
+
+[[projects]]
+name = "my-project"
+
+[projects.agent]
+type = "gemini"
+
+[projects.agent.options]
+work_dir = "/path/to/your/project"
+mode = "default"
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "cli_xxxxxxxxxxxx"
+app_secret = "xxxxxxxxxxxxxxxxxxxxxxxx"

@@ -101,7 +101,7 @@ func runSessions(args []string) {
 		}
 		if id == "" {
 			fmt.Fprintln(os.Stderr, "Error: session ID is required")
-			fmt.Fprintln(os.Stderr, "Usage: cc-connect sessions show <session-id> [-n N]")
+			fmt.Fprintln(os.Stderr, "Usage: cc-connect-qhn sessions show <session-id> [-n N]")
 			os.Exit(1)
 		}
 		runSessionsShow(dataDir, id, limit)
@@ -265,7 +265,7 @@ func runSessionsShow(dataDir, id string, limit int) {
 
 	if record == nil {
 		fmt.Fprintf(os.Stderr, "Error: session %q not found\n", id)
-		fmt.Fprintln(os.Stderr, "Use 'cc-connect sessions list' to see available sessions.")
+		fmt.Fprintln(os.Stderr, "Use 'cc-connect-qhn sessions list' to see available sessions.")
 		os.Exit(1)
 	}
 
@@ -336,7 +336,7 @@ func truncate(s string, maxLen int) string {
 }
 
 func printSessionsUsage() {
-	fmt.Println(`Usage: cc-connect sessions [command] [options]
+	fmt.Println(`Usage: cc-connect-qhn sessions [command] [options]
 
 Browse session history.
 
@@ -354,8 +354,8 @@ Session ID formats for 'show':
   <number> or #<number> Index from 'sessions list', e.g. "1" or "#1"
 
 Examples:
-  cc-connect sessions                           Interactive TUI browser
-  cc-connect sessions list                      List all sessions
-  cc-connect sessions show "mybot:s1"           Show all messages in session
-  cc-connect sessions show "#1" -n 20           Show last 20 messages of first session`)
+  cc-connect-qhn sessions                           Interactive TUI browser
+  cc-connect-qhn sessions list                      List all sessions
+  cc-connect-qhn sessions show "mybot:s1"           Show all messages in session
+  cc-connect-qhn sessions show "#1" -n 20           Show last 20 messages of first session`)
 }

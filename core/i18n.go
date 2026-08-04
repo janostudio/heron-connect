@@ -974,9 +974,9 @@ var messages = map[MsgKey]map[Language]string{
 			"/doctor\n  Run system diagnostics\n\n" +
 			"/usage\n  Show account/model quota usage\n\n" +
 			"/upgrade\n  Check for updates and self-update\n\n" +
-			"/restart\n  Restart cc-connect service\n\n" +
+			"/restart\n  Restart cc-connect-qhn service\n\n" +
 			"/status\n  Show system status\n\n" +
-			"/version\n  Show cc-connect version\n\n" +
+			"/version\n  Show cc-connect-qhn version\n\n" +
 			"/whoami\n  Show your User ID (for allow_from / admin_from)\n\n" +
 			"/help\n  Show this help\n\n" +
 			"Tip: Commands support prefix matching, e.g. `/pro l` = `/provider list`, `/sw 2` = `/switch 2`.\n\n" +
@@ -1018,9 +1018,9 @@ var messages = map[MsgKey]map[Language]string{
 			"/doctor\n  运行系统诊断\n\n" +
 			"/usage\n  查看账号/模型限额使用情况\n\n" +
 			"/upgrade\n  检查更新并自动升级\n\n" +
-			"/restart\n  重启 cc-connect 服务\n\n" +
+			"/restart\n  重启 cc-connect-qhn 服务\n\n" +
 			"/status\n  查看系统状态\n\n" +
-			"/version\n  查看 cc-connect 版本\n\n" +
+			"/version\n  查看 cc-connect-qhn 版本\n\n" +
 			"/whoami\n  查看你的 User ID（用于 allow_from / admin_from 配置）\n\n" +
 			"/help\n  显示此帮助\n\n" +
 			"提示：命令支持前缀匹配，如 `/pro l` = `/provider list`，`/sw 2` = `/switch 2`。\n\n" +
@@ -1061,9 +1061,9 @@ var messages = map[MsgKey]map[Language]string{
 			"/doctor\n  執行系統診斷\n\n" +
 			"/usage\n  查看帳號/模型限額使用情況\n\n" +
 			"/upgrade\n  檢查更新並自動升級\n\n" +
-			"/restart\n  重啟 cc-connect 服務\n\n" +
+			"/restart\n  重啟 cc-connect-qhn 服務\n\n" +
 			"/status\n  查看系統狀態\n\n" +
-			"/version\n  查看 cc-connect 版本\n\n" +
+			"/version\n  查看 cc-connect-qhn 版本\n\n" +
 			"/whoami\n  查看你的 User ID（用於 allow_from / admin_from 設定）\n\n" +
 			"/help\n  顯示此說明\n\n" +
 			"提示：命令支持前綴匹配，如 `/pro l` = `/provider list`，`/sw 2` = `/switch 2`。\n\n" +
@@ -1103,9 +1103,9 @@ var messages = map[MsgKey]map[Language]string{
 			"/doctor\n  システム診断を実行\n\n" +
 			"/usage\n  アカウント/モデル使用量を表示\n\n" +
 			"/upgrade\n  アップデートを確認して自動更新\n\n" +
-			"/restart\n  cc-connect サービスを再起動\n\n" +
+			"/restart\n  cc-connect-qhn サービスを再起動\n\n" +
 			"/status\n  システム状態を表示\n\n" +
-			"/version\n  cc-connect のバージョンを表示\n\n" +
+			"/version\n  cc-connect-qhn のバージョンを表示\n\n" +
 			"/whoami\n  あなたの User ID を表示（allow_from / admin_from 設定用）\n\n" +
 			"/help\n  このヘルプを表示\n\n" +
 			"ヒント：コマンドはプレフィックスマッチに対応しています。例: `/pro l` = `/provider list`、`/sw 2` = `/switch 2`。\n\n" +
@@ -1145,9 +1145,9 @@ var messages = map[MsgKey]map[Language]string{
 			"/doctor\n  Ejecutar diagnósticos del sistema\n\n" +
 			"/usage\n  Mostrar uso de cuota de cuenta/modelo\n\n" +
 			"/upgrade\n  Buscar actualizaciones y auto-actualizar\n\n" +
-			"/restart\n  Reiniciar el servicio cc-connect\n\n" +
+			"/restart\n  Reiniciar el servicio cc-connect-qhn\n\n" +
 			"/status\n  Mostrar estado del sistema\n\n" +
-			"/version\n  Mostrar versión de cc-connect\n\n" +
+			"/version\n  Mostrar versión de cc-connect-qhn\n\n" +
 			"/whoami\n  Mostrar tu User ID (para allow_from / admin_from)\n\n" +
 			"/help\n  Mostrar esta ayuda\n\n" +
 			"Consejo: Los comandos admiten coincidencia por prefijo, ej. `/pro l` = `/provider list`, `/sw 2` = `/switch 2`.\n\n" +
@@ -1443,11 +1443,11 @@ var messages = map[MsgKey]map[Language]string{
 		LangSpanish:            "Este agente no soporta el cambio de proveedor.",
 	},
 	MsgProviderNone: {
-		LangEnglish:            "No provider configured. Using agent's default environment.\n\nAdd providers in `config.toml` or via `cc-connect provider add`.",
-		LangChinese:            "未配置 Provider，使用 Agent 默认环境。\n\n可在 `config.toml` 中添加或使用 `cc-connect provider add` 命令。",
-		LangTraditionalChinese: "未配置 Provider，使用 Agent 預設環境。\n\n可在 `config.toml` 中新增或使用 `cc-connect provider add` 命令。",
-		LangJapanese:           "プロバイダが設定されていません。エージェントのデフォルト環境を使用します。\n\n`config.toml` または `cc-connect provider add` でプロバイダを追加してください。",
-		LangSpanish:            "No hay proveedor configurado. Usando el entorno predeterminado del agente.\n\nAgregue proveedores en `config.toml` o mediante `cc-connect provider add`.",
+		LangEnglish:            "No provider configured. Using agent's default environment.\n\nAdd providers in `config.toml` or via `cc-connect-qhn provider add`.",
+		LangChinese:            "未配置 Provider，使用 Agent 默认环境。\n\n可在 `config.toml` 中添加或使用 `cc-connect-qhn provider add` 命令。",
+		LangTraditionalChinese: "未配置 Provider，使用 Agent 預設環境。\n\n可在 `config.toml` 中新增或使用 `cc-connect-qhn provider add` 命令。",
+		LangJapanese:           "プロバイダが設定されていません。エージェントのデフォルト環境を使用します。\n\n`config.toml` または `cc-connect-qhn provider add` でプロバイダを追加してください。",
+		LangSpanish:            "No hay proveedor configurado. Usando el entorno predeterminado del agente.\n\nAgregue proveedores en `config.toml` o mediante `cc-connect-qhn provider add`.",
 	},
 	MsgProviderCurrent: {
 		LangEnglish:            "📡 Active provider: **%s**\n\nUse `/provider list` to see all, `/provider switch <name>` to switch.",
@@ -1464,11 +1464,11 @@ var messages = map[MsgKey]map[Language]string{
 		LangSpanish:            "📡 Proveedores\n\n",
 	},
 	MsgProviderListEmpty: {
-		LangEnglish:            "No providers configured.\n\nAdd providers in `config.toml` or via `cc-connect provider add`.",
-		LangChinese:            "未配置 Provider。\n\n可在 `config.toml` 中添加或使用 `cc-connect provider add` 命令。",
-		LangTraditionalChinese: "未配置 Provider。\n\n可在 `config.toml` 中新增或使用 `cc-connect provider add` 命令。",
-		LangJapanese:           "プロバイダが設定されていません。\n\n`config.toml` または `cc-connect provider add` で追加してください。",
-		LangSpanish:            "No hay proveedores configurados.\n\nAgregue proveedores en `config.toml` o mediante `cc-connect provider add`.",
+		LangEnglish:            "No providers configured.\n\nAdd providers in `config.toml` or via `cc-connect-qhn provider add`.",
+		LangChinese:            "未配置 Provider。\n\n可在 `config.toml` 中添加或使用 `cc-connect-qhn provider add` 命令。",
+		LangTraditionalChinese: "未配置 Provider。\n\n可在 `config.toml` 中新增或使用 `cc-connect-qhn provider add` 命令。",
+		LangJapanese:           "プロバイダが設定されていません。\n\n`config.toml` または `cc-connect-qhn provider add` で追加してください。",
+		LangSpanish:            "No hay proveedores configurados.\n\nAgregue proveedores en `config.toml` o mediante `cc-connect-qhn provider add`.",
 	},
 	MsgProviderSwitchHint: {
 		LangEnglish:            "`/provider switch <name>` to switch | `/provider clear` to reset",
@@ -1769,11 +1769,11 @@ var messages = map[MsgKey]map[Language]string{
 		LangSpanish:            "El programador de tareas no está disponible.",
 	},
 	MsgCronUsage: {
-		LangEnglish:            "Usage:\n/cron add <min> <hour> <day> <month> <weekday> <prompt>\n/cron list\n/cron del <id>\n/cron enable <id> · /cron disable <id>\n/cron mute <id> · /cron unmute <id>\n/cron setup — write cc-connect instructions to agent memory file",
-		LangChinese:            "用法：\n/cron add <分> <时> <日> <月> <周> <任务描述>\n/cron list\n/cron del <id>\n/cron enable <id> · /cron disable <id>\n/cron mute <id> · /cron unmute <id> 静音/取消静音\n/cron setup — 将 cc-connect 指令写入 agent 记忆文件",
-		LangTraditionalChinese: "用法：\n/cron add <分> <時> <日> <月> <週> <任務描述>\n/cron list\n/cron del <id>\n/cron enable <id> · /cron disable <id>\n/cron mute <id> · /cron unmute <id> 靜音/取消靜音\n/cron setup — 將 cc-connect 指令寫入 agent 記憶檔案",
-		LangJapanese:           "使い方:\n/cron add <分> <時> <日> <月> <曜日> <タスク内容>\n/cron list\n/cron del <id>\n/cron enable <id> · /cron disable <id>\n/cron mute <id> · /cron unmute <id> ミュート/解除\n/cron setup — cc-connect の指示をエージェントのメモリファイルに書き込む",
-		LangSpanish:            "Uso:\n/cron add <min> <hora> <día> <mes> <día_semana> <tarea>\n/cron list\n/cron del <id>\n/cron enable <id> · /cron disable <id>\n/cron mute <id> · /cron unmute <id>\n/cron setup — escribir las instrucciones de cc-connect en el archivo de memoria del agente",
+		LangEnglish:            "Usage:\n/cron add <min> <hour> <day> <month> <weekday> <prompt>\n/cron list\n/cron del <id>\n/cron enable <id> · /cron disable <id>\n/cron mute <id> · /cron unmute <id>\n/cron setup — write cc-connect-qhn instructions to agent memory file",
+		LangChinese:            "用法：\n/cron add <分> <时> <日> <月> <周> <任务描述>\n/cron list\n/cron del <id>\n/cron enable <id> · /cron disable <id>\n/cron mute <id> · /cron unmute <id> 静音/取消静音\n/cron setup — 将 cc-connect-qhn 指令写入 agent 记忆文件",
+		LangTraditionalChinese: "用法：\n/cron add <分> <時> <日> <月> <週> <任務描述>\n/cron list\n/cron del <id>\n/cron enable <id> · /cron disable <id>\n/cron mute <id> · /cron unmute <id> 靜音/取消靜音\n/cron setup — 將 cc-connect-qhn 指令寫入 agent 記憶檔案",
+		LangJapanese:           "使い方:\n/cron add <分> <時> <日> <月> <曜日> <タスク内容>\n/cron list\n/cron del <id>\n/cron enable <id> · /cron disable <id>\n/cron mute <id> · /cron unmute <id> ミュート/解除\n/cron setup — cc-connect-qhn の指示をエージェントのメモリファイルに書き込む",
+		LangSpanish:            "Uso:\n/cron add <min> <hora> <día> <mes> <día_semana> <tarea>\n/cron list\n/cron del <id>\n/cron enable <id> · /cron disable <id>\n/cron mute <id> · /cron unmute <id>\n/cron setup — escribir las instrucciones de cc-connect-qhn en el archivo de memoria del agente",
 	},
 	MsgCronAddUsage: {
 		LangEnglish:            "Usage: /cron add <min> <hour> <day> <month> <weekday> <prompt>\nExample: /cron add 0 6 * * * Collect GitHub trending data and send me a summary",
@@ -2331,8 +2331,8 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese: "次へ →", LangSpanish: "Siguiente →",
 	},
 	MsgCardTitleStatus: {
-		LangEnglish: "cc-connect Status", LangChinese: "cc-connect 状态", LangTraditionalChinese: "cc-connect 狀態",
-		LangJapanese: "cc-connect ステータス", LangSpanish: "Estado de cc-connect",
+		LangEnglish: "cc-connect-qhn Status", LangChinese: "cc-connect-qhn 状态", LangTraditionalChinese: "cc-connect-qhn 狀態",
+		LangJapanese: "cc-connect-qhn ステータス", LangSpanish: "Estado de cc-connect-qhn",
 	},
 	MsgCardTitleLanguage: {
 		LangEnglish: "Language", LangChinese: "语言", LangTraditionalChinese: "語言",
@@ -3288,11 +3288,11 @@ var messages = map[MsgKey]map[Language]string{
 		LangSpanish:            "✅ Este agente soporta nativamente las instrucciones de cc-connect-qhn — no se necesita configuración.",
 	},
 	MsgCronSetupOK: {
-		LangEnglish:            "✅ cc-connect instructions written to %s\nThe agent can now use relay, cron, and attachment send-back.",
-		LangChinese:            "✅ cc-connect 指令已写入 %s\nagent 现在可以使用中继、定时任务和附件回传功能了。",
-		LangTraditionalChinese: "✅ cc-connect 指令已寫入 %s\nagent 現在可以使用中繼、定時任務和附件回傳功能了。",
-		LangJapanese:           "✅ cc-connect の指示を %s に書き込みました。\nエージェントがリレー、cron、添付ファイル返送を使えるようになりました。",
-		LangSpanish:            "✅ Instrucciones de cc-connect escritas en %s\nEl agente ahora puede usar relay, cron y reenvío de adjuntos.",
+		LangEnglish:            "✅ cc-connect-qhn instructions written to %s\nThe agent can now use relay, cron, and attachment send-back.",
+		LangChinese:            "✅ cc-connect-qhn 指令已写入 %s\nagent 现在可以使用中继、定时任务和附件回传功能了。",
+		LangTraditionalChinese: "✅ cc-connect-qhn 指令已寫入 %s\nagent 現在可以使用中繼、定時任務和附件回傳功能了。",
+		LangJapanese:           "✅ cc-connect-qhn の指示を %s に書き込みました。\nエージェントがリレー、cron、添付ファイル返送を使えるようになりました。",
+		LangSpanish:            "✅ Instrucciones de cc-connect-qhn escritas en %s\nEl agente ahora puede usar relay, cron y reenvío de adjuntos.",
 	},
 	MsgSearchUsage: {
 		LangEnglish:            "Usage: /search <keyword>\nSearch sessions by name or ID.",

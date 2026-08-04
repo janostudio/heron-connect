@@ -1093,7 +1093,7 @@ func TestProcessInteractiveEvents_AppendsReplyFooterWhenEnabled(t *testing.T) {
 			model:           "gpt-5.4",
 			reasoningEffort: "xhigh",
 		},
-		workDir: filepath.Join(homeDir, "codes", "cc-connect"),
+		workDir: filepath.Join(homeDir, "codes", "cc-connect-qhn"),
 		report: &UsageReport{
 			Buckets: []UsageBucket{{
 				Name: "Rate limit",
@@ -1126,7 +1126,7 @@ func TestProcessInteractiveEvents_AppendsReplyFooterWhenEnabled(t *testing.T) {
 	if len(sent) != 1 {
 		t.Fatalf("sent = %#v, want one final reply", sent)
 	}
-	want := "answer\n\n*gpt-5.4 · xhigh · 100% left · ~/codes/cc-connect*"
+	want := "answer\n\n*gpt-5.4 · xhigh · 100% left · ~/codes/cc-connect-qhn*"
 	if sent[0] != want {
 		t.Fatalf("final reply = %q, want %q", sent[0], want)
 	}
@@ -1244,7 +1244,7 @@ func TestProcessInteractiveEvents_DoesNotAppendReplyFooterWhenDisabled(t *testin
 			model:           "gpt-5.4",
 			reasoningEffort: "xhigh",
 		},
-		workDir: filepath.Join(homeDir, "codes", "cc-connect"),
+		workDir: filepath.Join(homeDir, "codes", "cc-connect-qhn"),
 		report: &UsageReport{
 			Buckets: []UsageBucket{{
 				Name: "Rate limit",
@@ -1312,7 +1312,7 @@ func TestProcessInteractiveEvents_ReplyFooterPrefersSessionRuntimeState(t *testi
 	agentSession := newControllableSession("s-footer-runtime")
 	agentSession.model = "gpt-5.4"
 	agentSession.reasoningEffort = "xhigh"
-	agentSession.workDir = filepath.Join(homeDir, "codes", "cc-connect")
+	agentSession.workDir = filepath.Join(homeDir, "codes", "cc-connect-qhn")
 	agentSession.report = &UsageReport{
 		Buckets: []UsageBucket{{
 			Name: "Rate limit",
@@ -1344,7 +1344,7 @@ func TestProcessInteractiveEvents_ReplyFooterPrefersSessionRuntimeState(t *testi
 	if len(sent) != 1 {
 		t.Fatalf("sent = %#v, want one final reply", sent)
 	}
-	want := "answer\n\n*gpt-5.4 · xhigh · 31% left · ~/codes/cc-connect*"
+	want := "answer\n\n*gpt-5.4 · xhigh · 31% left · ~/codes/cc-connect-qhn*"
 	if sent[0] != want {
 		t.Fatalf("final reply = %q, want %q", sent[0], want)
 	}
@@ -2017,10 +2017,10 @@ func TestProcessInteractiveEvents_RichCardCoalescesToolResult(t *testing.T) {
 
 func TestAgentSystemPrompt_MentionsAttachmentSend(t *testing.T) {
 	prompt := AgentSystemPrompt()
-	if !strings.Contains(prompt, "cc-connect send --image") {
+	if !strings.Contains(prompt, "cc-connect-qhn send --image") {
 		t.Fatalf("prompt missing image send instructions: %q", prompt)
 	}
-	if !strings.Contains(prompt, "cc-connect send --file") {
+	if !strings.Contains(prompt, "cc-connect-qhn send --file") {
 		t.Fatalf("prompt missing file send instructions: %q", prompt)
 	}
 }
@@ -3311,7 +3311,7 @@ func TestCmdHelp_UsesLegacyTextOnPlatformWithoutCardSupport(t *testing.T) {
 	if got := p.sent[0]; got != e.i18n.T(MsgHelp) {
 		t.Fatalf("help text = %q, want legacy help text", got)
 	}
-	if strings.Contains(p.sent[0], "cc-connect 帮助") {
+	if strings.Contains(p.sent[0], "cc-connect-qhn 帮助") {
 		t.Fatalf("help text = %q, should not be card title fallback", p.sent[0])
 	}
 }
@@ -3352,7 +3352,7 @@ func TestCmdCurrent_UsesLegacyTextOnPlatformWithoutCardSupport(t *testing.T) {
 	if !strings.Contains(p.sent[0], "Current session") {
 		t.Fatalf("current text = %q, want legacy current session text", p.sent[0])
 	}
-	if strings.Contains(p.sent[0], "cc-connect") {
+	if strings.Contains(p.sent[0], "cc-connect-qhn") {
 		t.Fatalf("current text = %q, should not be card fallback title", p.sent[0])
 	}
 }
@@ -5492,7 +5492,7 @@ func TestRenderListCard_MakesEveryVisibleSessionClickable(t *testing.T) {
 
 	e := NewEngine("test", &stubListAgent{sessions: sessions}, []Platform{&stubPlatformEngine{n: "test"}}, "", LangEnglish)
 	// Register all agent sessions with the session manager so they pass the
-	// owned-session filter (simulates cc-connect having created each session).
+	// owned-session filter (simulates cc-connect-qhn having created each session).
 	var internalIDs []string
 	for i, s := range sessions {
 		sess := e.sessions.NewSession("test:user1", "session-"+string(rune('A'+i)))
@@ -6508,7 +6508,7 @@ func TestSetupMemoryFile_WritesInstructions(t *testing.T) {
 	if !strings.Contains(string(content), ccConnectInstructionMarker) {
 		t.Error("expected instruction marker in file")
 	}
-	if !strings.Contains(string(content), "cc-connect cron add") {
+	if !strings.Contains(string(content), "cc-connect-qhn cron add") {
 		t.Error("expected cron instructions in file")
 	}
 }
@@ -6553,7 +6553,7 @@ func TestSetupMemoryFile_RefreshesLegacyInstructions(t *testing.T) {
 	if strings.Contains(string(content), "legacy instructions") {
 		t.Fatalf("legacy instructions should be refreshed, got %q", string(content))
 	}
-	if !strings.Contains(string(content), "cc-connect send --image") {
+	if !strings.Contains(string(content), "cc-connect-qhn send --image") {
 		t.Fatalf("expected refreshed attachment instructions, got %q", string(content))
 	}
 }
@@ -6599,7 +6599,7 @@ func TestCmdCronSetup_WritesAndReplies(t *testing.T) {
 		t.Errorf("reply = %q, want to contain filename", p.sent[0])
 	}
 	if !strings.Contains(p.sent[0], "attachment send-back") {
-		t.Errorf("reply = %q, want unified cc-connect setup success message", p.sent[0])
+		t.Errorf("reply = %q, want unified cc-connect-qhn setup success message", p.sent[0])
 	}
 
 	content, _ := os.ReadFile(memFile)
@@ -8841,7 +8841,7 @@ func TestBuildSenderPrompt_Enabled(t *testing.T) {
 	e.SetInjectSender(true)
 
 	result := e.buildSenderPrompt("hello world", "user123", "Alice", "feishu", "feishu:channel42:user123", "")
-	expected := "[cc-connect sender_id=user123 sender_name=\"Alice\" platform=feishu chat_id=channel42]\nhello world"
+	expected := "[cc-connect-qhn sender_id=user123 sender_name=\"Alice\" platform=feishu chat_id=channel42]\nhello world"
 	if result != expected {
 		t.Fatalf("got %q, want %q", result, expected)
 	}
@@ -8872,7 +8872,7 @@ func TestBuildSenderPrompt_EmptyUserName(t *testing.T) {
 	e.SetInjectSender(true)
 
 	result := e.buildSenderPrompt("hello", "user1", "", "feishu", "feishu:ch:user1", "")
-	expected := "[cc-connect sender_id=user1 platform=feishu chat_id=ch]\nhello"
+	expected := "[cc-connect-qhn sender_id=user1 platform=feishu chat_id=ch]\nhello"
 	if result != expected {
 		t.Fatalf("got %q, want %q", result, expected)
 	}
@@ -8883,7 +8883,7 @@ func TestBuildSenderPrompt_NameWithSpaces(t *testing.T) {
 	e.SetInjectSender(true)
 
 	result := e.buildSenderPrompt("hi", "U999", "Jim Tang", "slack", "slack:C012:U999", "")
-	expected := "[cc-connect sender_id=U999 sender_name=\"Jim Tang\" platform=slack chat_id=C012]\nhi"
+	expected := "[cc-connect-qhn sender_id=U999 sender_name=\"Jim Tang\" platform=slack chat_id=C012]\nhi"
 	if result != expected {
 		t.Fatalf("got %q, want %q", result, expected)
 	}
@@ -8954,7 +8954,7 @@ func TestBuildSenderPrompt_ChannelKeyOverridesSessionKey(t *testing.T) {
 	// When channelKey is provided, it should be used as chat_id instead of
 	// extracting from sessionKey (which would give "g" for dingtalk).
 	result := e.buildSenderPrompt("hello", "staff1", "Alice", "dingtalk", "dingtalk:g:cidXXX:staff1", "cidXXX")
-	expected := "[cc-connect sender_id=staff1 sender_name=\"Alice\" platform=dingtalk chat_id=cidXXX]\nhello"
+	expected := "[cc-connect-qhn sender_id=staff1 sender_name=\"Alice\" platform=dingtalk chat_id=cidXXX]\nhello"
 	if result != expected {
 		t.Fatalf("got %q, want %q", result, expected)
 	}
@@ -8967,7 +8967,7 @@ func TestBuildSenderPrompt_FallbackWithoutChannelKey(t *testing.T) {
 	// When channelKey is empty, extractChannelID heuristic should detect
 	// the 4-segment format and extract the correct channel.
 	result := e.buildSenderPrompt("hello", "staff1", "Alice", "dingtalk", "dingtalk:g:cidXXX:staff1", "")
-	expected := "[cc-connect sender_id=staff1 sender_name=\"Alice\" platform=dingtalk chat_id=cidXXX]\nhello"
+	expected := "[cc-connect-qhn sender_id=staff1 sender_name=\"Alice\" platform=dingtalk chat_id=cidXXX]\nhello"
 	if result != expected {
 		t.Fatalf("got %q, want %q", result, expected)
 	}
@@ -12632,7 +12632,7 @@ func TestCmdList_RealWorldLegacyDataFullFlow(t *testing.T) {
 }
 
 // TestCmdList_FilterExternalSessionsEnabled verifies that when
-// filter_external_sessions is enabled, only cc-connect-tracked sessions
+// filter_external_sessions is enabled, only cc-connect-qhn-tracked sessions
 // appear in /list.
 func TestCmdList_FilterExternalSessionsEnabled(t *testing.T) {
 	agentSessions := []AgentSessionInfo{
@@ -12713,7 +12713,7 @@ func TestCmdList_DefaultShowsAllSessions(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // setupFilterTestEngine creates a test Engine with 3 agent sessions, 2 tracked
-// by cc-connect and 1 external. Returns (engine, platform, userKey, agentSessions).
+// by cc-connect-qhn and 1 external. Returns (engine, platform, userKey, agentSessions).
 func setupFilterTestEngine(t *testing.T, filterEnabled bool) (*Engine, *stubPlatformEngine, string, []AgentSessionInfo) {
 	t.Helper()
 	agentSessions := []AgentSessionInfo{

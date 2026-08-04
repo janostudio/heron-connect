@@ -1,0 +1,34 @@
+# 飞书 + Codex (OpenAI)
+# Codex 使用 full-auto 模式自动执行
+
+[log]
+level = "info"
+
+[[projects]]
+name = "my-project"
+
+[projects.agent]
+type = "codex"
+
+[projects.agent.options]
+work_dir = "/path/to/your/project"
+mode = "full-auto"
+
+# 可选：指定模型
+# model = "gpt-5"
+
+# 可选：指定推理强度
+# reasoning_effort = "high"  # minimal | low | medium | high | xhigh
+
+# 可选：传递给 `codex exec` 的额外 CLI 参数
+# args = ["--log-level", "debug"]
+
+# 可选：使用自定义 profile（与 cli_path 效果相同）
+# args = ["--profile", "my-profile"]
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "cli_xxxxxxxxxxxx"
+app_secret = "xxxxxxxxxxxxxxxxxxxxxxxx"

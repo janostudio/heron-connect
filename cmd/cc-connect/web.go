@@ -15,7 +15,7 @@ import (
 func runWeb(args []string) {
 	configPath := resolveConfigPath("")
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Config file not found: %s\nRun cc-connect first to create a default config.\n", configPath)
+		fmt.Fprintf(os.Stderr, "Config file not found: %s\nRun cc-connect-qhn first to create a default config.\n", configPath)
 		os.Exit(1)
 	}
 
@@ -46,7 +46,7 @@ func runWeb(args []string) {
 		port = result.ManagementPort
 		token = result.ManagementToken
 		fmt.Printf("Web admin configured on port %d.\n", port)
-		fmt.Println("Restart cc-connect for the changes to take effect.")
+		fmt.Println("Restart cc-connect-qhn for the changes to take effect.")
 	}
 
 	baseURL := fmt.Sprintf("http://localhost:%d", port)

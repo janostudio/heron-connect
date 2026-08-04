@@ -1,0 +1,21 @@
+# 飞书 + Cursor Agent
+
+[log]
+level = "info"
+
+[[projects]]
+name = "my-project"
+
+[projects.agent]
+type = "cursor"
+
+[projects.agent.options]
+work_dir = "/path/to/your/project"
+mode = "force"
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "cli_xxxxxxxxxxxx"
+app_secret = "xxxxxxxxxxxxxxxxxxxxxxxx"

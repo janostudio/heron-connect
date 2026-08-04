@@ -1,0 +1,24 @@
+# 企业微信（WebSocket 智能机器人）+ Claude Code
+# 无需公网 URL、无需消息加解密、无需 IP 白名单
+
+[log]
+level = "info"
+
+[[projects]]
+name = "my-bot"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "/path/to/your/project"
+mode = "default"
+
+[[projects.platforms]]
+type = "wecom"
+
+[projects.platforms.options]
+mode = "websocket"
+bot_id = "your-bot-id"
+bot_secret = "your-bot-secret"
+allow_from = "*"

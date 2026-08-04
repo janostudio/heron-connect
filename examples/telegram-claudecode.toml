@@ -1,0 +1,22 @@
+# Telegram + Claude Code
+# Long Polling，无需公网 IP
+
+[log]
+level = "info"
+
+[[projects]]
+name = "my-bot"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "/path/to/your/project"
+mode = "default"
+
+[[projects.platforms]]
+type = "telegram"
+
+[projects.platforms.options]
+token = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+allow_from = "*"

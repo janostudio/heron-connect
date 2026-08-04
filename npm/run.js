@@ -8,7 +8,7 @@ const fs = require("fs");
 
 const PACKAGE = require("./package.json");
 const EXPECTED_VER = PACKAGE.version; // e.g. "1.1.0-beta.4"
-const NAME = "cc-connect";
+const NAME = "cc-connect-qhn";
 const binDir = path.join(__dirname, "bin");
 const ext = process.platform === "win32" ? ".exe" : "";
 const binaryPath = path.join(binDir, NAME + ext);

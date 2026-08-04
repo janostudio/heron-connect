@@ -118,7 +118,7 @@
 
 这批测试主要验证：
 
-- `cc-connect` 对真实 agent 会话的创建、切换、列出、删除和持久化
+- `cc-connect-qhn` 对真实 agent 会话的创建、切换、列出、删除和持久化
 - `/provider switch` 等需要真实 provider wiring 的行为
 - Claude Code / Codex 的会话文件扫描与 external session filtering
 - 不同 agent 在统一 Engine 中的行为是否一致

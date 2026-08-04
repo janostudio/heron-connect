@@ -11,7 +11,7 @@ const zlib = require("zlib");
 
 const PACKAGE = require("./package.json");
 const VERSION = `v${PACKAGE.version}`;
-const NAME = "cc-connect";
+const NAME = "cc-connect-qhn";
 
 const GITHUB_REPO = "janostudio/cc-connect-qhn";
 
