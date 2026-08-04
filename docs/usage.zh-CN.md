@@ -150,14 +150,14 @@ api_key = "sk-ant-xxx"
 name = "relay"
 api_key = "sk-xxx"
 base_url = "https://api.relay-service.com"
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-4-6"
 
 [[projects.agent.providers.models]]
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-4-6"
 alias = "sonnet"
 
 [[projects.agent.providers.models]]
-model = "claude-opus-4-20250514"
+model = "claude-opus-4-8"
 alias = "opus"
 
 [[projects.agent.providers.models]]

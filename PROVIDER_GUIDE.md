@@ -37,7 +37,7 @@ type ProviderConfig struct {
 - **Name**: Unique provider identifier (e.g., "anthropic", "minimaxi-claude")
 - **APIKey**: API authentication key (can use `${ENV_VAR}` syntax)
 - **BaseURL**: Custom API endpoint (default = official Anthropic API)
-- **Model**: Default model for this provider (e.g., "claude-sonnet-4-20250514")
+- **Model**: Default model for this provider (e.g., "claude-sonnet-4-6")
 - **Models**: Array of `ModelOption` entries (for `/model` command)
 - **Thinking**: Override adaptive thinking setting ("disabled", "enabled", or empty)
 - **Env**: Extra environment variables passed to the agent
@@ -48,7 +48,7 @@ Defined in `core/interfaces.go` lines 379-383:
 
 ```go
 type ModelOption struct {
-    Name  string // model identifier (e.g., "claude-sonnet-4-20250514")
+    Name  string // model identifier (e.g., "claude-sonnet-4-6")
     Desc  string // short description for display (optional)
     Alias string // short alias for /model command (e.g., "sonnet")
 }
@@ -137,7 +137,7 @@ name = "minimaxi-claude"
 api_key = "${MINIMAXI_API_KEY}"
 base_url = "https://api.minimaxi.chat/v1"
 agent_types = ["claudecode"]
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-4-6"
 
 [[providers]]
 name = "minimaxi-codex"
@@ -151,7 +151,7 @@ model = "MiniMax-M2.7"
 name = "relay-service"
 api_key = "sk-relay-xxx"
 base_url = "https://api.relay-service.com"
-model = "claude-sonnet-4-20250514"  # default fallback
+model = "claude-sonnet-4-6"  # default fallback
 thinking = "disabled"  # disable adaptive thinking for this provider
 
 # Per-agent-type base URLs (different endpoint for Codex)
@@ -160,16 +160,16 @@ codex = "https://api.relay-service.com/v2/codex"
 
 # Per-agent-type default models
 [providers.agent_models]
-claudecode = "claude-opus-4-20250514"
+claudecode = "claude-opus-4-8"
 codex = "openai/gpt-5.3-codex"
 
 # Per-agent-type model lists (overrides Models when matched)
 [providers.agent_model_lists.claudecode]
 [[providers.agent_model_lists.claudecode]]
-model = "claude-opus-4-20250514"
+model = "claude-opus-4-8"
 alias = "opus"
 [[providers.agent_model_lists.claudecode]]
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-4-6"
 alias = "sonnet"
 ```
 
@@ -189,15 +189,15 @@ provider_refs = ["anthropic", "minimaxi-claude", "dashscope"]
 name = "relay"
 api_key = "sk-relay-xxx"
 base_url = "https://api.relay-service.com"
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-4-6"
 
 # Define available models for this provider
 [[projects.agent.providers.models]]
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-4-6"
 alias = "sonnet"
 
 [[projects.agent.providers.models]]
-model = "claude-opus-4-20250514"
+model = "claude-opus-4-8"
 alias = "opus"
 
 [[projects.agent.providers.models]]
@@ -511,13 +511,13 @@ Response (200 OK):
       "name": "anthropic",
       "api_key": "sk-ant-...",
       "base_url": "",
-      "model": "claude-sonnet-4-20250514",
+      "model": "claude-sonnet-4-6",
       "thinking": "",
       "env": {...},
       "agent_types": ["claudecode"],
       "models": [
-        {"model": "claude-sonnet-4-20250514", "alias": "sonnet"},
-        {"model": "claude-opus-4-20250514", "alias": "opus"}
+        {"model": "claude-sonnet-4-6", "alias": "sonnet"},
+        {"model": "claude-opus-4-8", "alias": "opus"}
       ],
       "endpoints": {...},
       "agent_models": {...},
@@ -539,12 +539,12 @@ Request Body:
   "name": "relay",
   "api_key": "sk-relay-xxx",
   "base_url": "https://api.relay-service.com",
-  "model": "claude-sonnet-4-20250514",
+  "model": "claude-sonnet-4-6",
   "thinking": "disabled",
   "env": {...},
   "agent_types": ["claudecode"],
   "models": [
-    {"model": "claude-sonnet-4-20250514", "alias": "sonnet"}
+    {"model": "claude-sonnet-4-6", "alias": "sonnet"}
   ],
   "endpoints": {...},
   "agent_models": {...},

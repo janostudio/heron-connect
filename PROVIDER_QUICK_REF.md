@@ -45,7 +45,7 @@
 name = "provider-name"
 api_key = "${ENV_VAR}"
 base_url = "https://..."  # optional; default = Anthropic API
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-4-6"
 thinking = "disabled"  # or "enabled" or empty
 env = { KEY = "value" }  # extra env vars
 agent_types = ["claudecode"]  # restrict to these agents
@@ -58,7 +58,7 @@ codex = "glm-5.1"  # override model for codex agent
 
 [providers.agent_model_lists.claudecode]
 [[providers.agent_model_lists.claudecode]]
-model = "claude-opus-4-20250514"
+model = "claude-opus-4-8"
 alias = "opus"
 ```
 
@@ -77,10 +77,10 @@ provider_refs = ["anthropic", "minimaxi"]  # reference global providers
 name = "relay"
 api_key = "sk-..."
 base_url = "http://localhost:5000"
-model = "claude-opus-4-20250514"
+model = "claude-opus-4-8"
 
 [[projects.agent.providers.models]]
-model = "claude-opus-4-20250514"
+model = "claude-opus-4-8"
 alias = "opus"
 ```
 
@@ -121,7 +121,7 @@ active := agent.GetActiveProvider()  // → *ProviderConfig
 all := agent.ListProviders()  // → []ProviderConfig
 
 // Set model (uses active provider's model)
-agent.SetModel("claude-opus-4-20250514")
+agent.SetModel("claude-opus-4-8")
 
 // Get model
 model := agent.GetModel()
@@ -217,9 +217,9 @@ codex = "glm-5.1"
 # Different model lists
 [providers.agent_model_lists.claudecode]
 [[providers.agent_model_lists.claudecode]]
-model = "claude-opus-4-20250514"
+model = "claude-opus-4-8"
 [[providers.agent_model_lists.claudecode]]
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-4-6"
 
 [providers.agent_model_lists.codex]
 [[providers.agent_model_lists.codex]]
@@ -283,7 +283,7 @@ ANTHROPIC_API_KEY=                 # cleared
 ANTHROPIC_API_KEY=sk-ant-xxx
 
 # Model (always)
-ANTHROPIC_MODEL=claude-sonnet-4-20250514
+ANTHROPIC_MODEL=claude-sonnet-4-6
 
 # Extra env vars from provider.Env
 KEY1=value1
@@ -313,7 +313,7 @@ provider_refs = ["anthropic"]
 name = "relay"
 api_key = "sk-relay-xxx"
 base_url = "https://api.relay.com/v1"
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-4-6"
 
 [[projects.agent]]
 provider_refs = ["relay"]
@@ -343,7 +343,7 @@ provider_refs = ["anthropic", "minimaxi"]
 [[providers]]
 name = "relay"
 base_url = "https://relay.com/v1"
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-4-6"
 
 [providers.agent_models]
 codex = "gpt-4o"

@@ -12,7 +12,7 @@
 │  │   ├── name = "anthropic"                                    │
 │  │   ├── api_key = "${ANTHROPIC_API_KEY}"                     │
 │  │   ├── base_url = ""                                        │
-│  │   ├── model = "claude-sonnet-4-20250514"                  │
+│  │   ├── model = "claude-sonnet-4-6"                  │
 │  │   ├── models = [                                          │
 │  │   │   { model = "...", alias = "sonnet" }                │
 │  │   └── ]                                                    │
@@ -84,7 +84,7 @@
 │  Result: env = [                                             │
 │    "ANTHROPIC_BASE_URL=https://api.relay-service.com",      │
 │    "ANTHROPIC_AUTH_TOKEN=sk-relay-xxx",                     │
-│    "ANTHROPIC_MODEL=claude-sonnet-4-20250514",              │
+│    "ANTHROPIC_MODEL=claude-sonnet-4-6",              │
 │    ...other env vars...                                     │
 │  ]                                                            │
 │                                                               │
@@ -154,7 +154,7 @@
 │ name = "minimaxi-relay"                                    │
 │ api_key = "${MINIMAXI_KEY}"                              │
 │ base_url = "https://api.minimaxi.chat/v1"               │
-│ model = "claude-sonnet-4-20250514"                       │
+│ model = "claude-sonnet-4-6"                       │
 │ agent_types = ["claudecode", "codex"]                   │
 │ thinking = "disabled"                                   │
 │                                                             │
@@ -162,15 +162,15 @@
 │ codex = "https://api.minimaxi.chat/v2/codex"           │
 │                                                             │
 │ [providers.agent_models]       ← Per-agent-type models    │
-│ claudecode = "claude-opus-4-20250514"                   │
+│ claudecode = "claude-opus-4-8"                   │
 │ codex = "glm-5.1"                                       │
 │                                                             │
 │ [providers.agent_model_lists.claudecode]                 │
 │ [[providers.agent_model_lists.claudecode]]              │
-│ model = "claude-opus-4-20250514"                        │
+│ model = "claude-opus-4-8"                        │
 │ alias = "opus"                                          │
 │ [[providers.agent_model_lists.claudecode]]              │
-│ model = "claude-sonnet-4-20250514"                      │
+│ model = "claude-sonnet-4-6"                      │
 │ alias = "sonnet"                                        │
 │                                                             │
 └──────────────────────────────────────────────────────────────┘
@@ -184,10 +184,10 @@
 │ name = "relay"                  ← Different name from global│
 │ api_key = "sk-local-xxx"                                  │
 │ base_url = "http://localhost:5000"                       │
-│ model = "claude-opus-4-20250514"                         │
+│ model = "claude-opus-4-8"                         │
 │                                                             │
 │ [[projects.agent.providers.models]]                        │
-│ model = "claude-opus-4-20250514"                         │
+│ model = "claude-opus-4-8"                         │
 │ alias = "opus"                                           │
 │                                                             │
 └──────────────────────────────────────────────────────────────┘
@@ -212,7 +212,7 @@
 │ LEVEL 4: ACTIVE MODEL (runtime via /model command)          │
 ├──────────────────────────────────────────────────────────────┤
 │ User switches: /model opus                                  │
-│ Agent: SetModel("claude-opus-4-20250514")                  │
+│ Agent: SetModel("claude-opus-4-8")                  │
 │ OR via provider.Models list (alias-based lookup)            │
 │                                                             │
 │ GetModel() → provider[activeIdx].Model or fallback         │
@@ -296,7 +296,7 @@ codex           = "gpt-4-..."
 [providers.agent_model_lists]
 # [providers.agent_model_lists.claudecode]
 # [[providers.agent_model_lists.claudecode]]
-# model = "claude-opus-4-20250514"
+# model = "claude-opus-4-8"
 # alias = "opus"
 
 # Codex-specific settings
@@ -328,11 +328,11 @@ thinking        = "disabled"
 
 # Models available for this provider
 [[projects.agent.providers.models]]
-model           = "claude-sonnet-4-20250514"
+model           = "claude-sonnet-4-6"
 alias           = "sonnet"
 
 [[projects.agent.providers.models]]
-model           = "claude-opus-4-20250514"
+model           = "claude-opus-4-8"
 alias           = "opus"
 ```
 
@@ -421,13 +421,13 @@ User Input:
     engine.HandleCommand(/model opus)
          ↓
     if agent.(ModelSwitcher) {
-        agent.SetModel("claude-opus-4-20250514")
+        agent.SetModel("claude-opus-4-8")
     }
          ↓
     Agent updates:
-    ├── model = "claude-opus-4-20250514"
+    ├── model = "claude-opus-4-8"
     └── Next session will use:
-        • ANTHROPIC_MODEL=claude-opus-4-20250514
+        • ANTHROPIC_MODEL=claude-opus-4-8
 ```
 
 ---

@@ -749,7 +749,7 @@ function ProviderFormModal({
                 <Input
                   value={form.model || ''}
                   onChange={e => set('model', e.target.value)}
-                  placeholder="claude-sonnet-4-20250514"
+                  placeholder="claude-sonnet-4-6"
                 />
                 <p className="mt-1 text-xs text-gray-400">{t('globalProviders.form.modelHint')}</p>
               </div>
