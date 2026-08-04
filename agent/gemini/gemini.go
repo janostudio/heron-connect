@@ -142,11 +142,11 @@ func (a *Agent) AvailableModels(ctx context.Context) []core.ModelOption {
 	}
 	// Matches Gemini CLI's own "Select Model" list.
 	return []core.ModelOption{
+		{Name: "gemini-3.5-flash", Desc: "Gemini 3.5 Flash"},
 		{Name: "gemini-3.1-pro-preview", Desc: "Gemini 3.1 Pro Preview"},
 		{Name: "gemini-3-flash-preview", Desc: "Gemini 3 Flash Preview"},
 		{Name: "gemini-2.5-pro", Desc: "Gemini 2.5 Pro"},
 		{Name: "gemini-2.5-flash", Desc: "Gemini 2.5 Flash"},
-		{Name: "gemini-2.5-flash-lite", Desc: "Gemini 2.5 Flash Lite"},
 	}
 }
 

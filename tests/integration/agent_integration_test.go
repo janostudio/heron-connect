@@ -205,6 +205,8 @@ func findAgentBin(agentType string) (string, error) {
 	switch agentType {
 	case "claudecode":
 		return "claude", nil
+	case "codebuddy":
+		return "codebuddy", nil
 	case "codex":
 		return "codex", nil
 	case "cursor":
@@ -653,7 +655,7 @@ var sharedTestCases = []AgentTestCase{
 }
 
 func TestSharedCasesAcrossAgents(t *testing.T) {
-	agents := []string{"claudecode", "codex", "cursor", "gemini", "opencode"}
+	agents := []string{"claudecode", "codebuddy", "codex", "cursor", "gemini", "opencode"}
 	for _, agentType := range agents {
 		for _, tc := range sharedTestCases {
 			tc := tc // capture range variable

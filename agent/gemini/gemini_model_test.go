@@ -44,14 +44,14 @@ func TestConfiguredModels_BoundaryConditions(t *testing.T) {
 
 func TestGetModel_PrefersActiveProviderModel(t *testing.T) {
 	a := &Agent{
-		model: "gemini-2.5-flash",
+		model: "gemini-3.5-flash",
 		providers: []core.ProviderConfig{
-			{Name: "google", Model: "gemini-2.5-pro"},
+			{Name: "google", Model: "gemini-3.1-pro-preview"},
 		},
 		activeIdx: 0,
 	}
 
-	if got := a.GetModel(); got != "gemini-2.5-pro" {
-		t.Fatalf("GetModel() = %q, want gemini-2.5-pro", got)
+	if got := a.GetModel(); got != "gemini-3.1-pro-preview" {
+		t.Fatalf("GetModel() = %q, want gemini-3.1-pro-preview", got)
 	}
 }

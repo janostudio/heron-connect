@@ -290,9 +290,9 @@ func TestAgent_SetWorkDir(t *testing.T) {
 
 func TestAgent_SetModel(t *testing.T) {
 	a := &Agent{}
-	a.SetModel("claude-sonnet-4-20250514")
-	if got := a.GetModel(); got != "claude-sonnet-4-20250514" {
-		t.Errorf("GetModel() = %q, want %q", got, "claude-sonnet-4-20250514")
+	a.SetModel("claude-sonnet-4-6")
+	if got := a.GetModel(); got != "claude-sonnet-4-6" {
+		t.Errorf("GetModel() = %q, want %q", got, "claude-sonnet-4-6")
 	}
 }
 
@@ -531,7 +531,7 @@ func TestWorkspaceAgentOptions_FullSnapshot(t *testing.T) {
 		cliBin:           "my-cli",
 		cliExtraArgs:     []string{"--add-dir", "/parent"},
 		cliArgsFlag:      "-a",
-		model:            "claude-opus-4-7",
+		model:            "claude-opus-4-8",
 		reasoningEffort:  "high",
 		mode:             "acceptEdits",
 		allowedTools:     []string{"Edit", "Read"},
@@ -546,7 +546,7 @@ func TestWorkspaceAgentOptions_FullSnapshot(t *testing.T) {
 		"mode":               "acceptEdits",
 		"cli_path":           "my-cli --add-dir /parent",
 		"cli_args_flag":      "-a",
-		"model":              "claude-opus-4-7",
+		"model":              "claude-opus-4-8",
 		"reasoning_effort":   "high",
 		"allowed_tools":      []any{"Edit", "Read"},
 		"disallowed_tools":   []any{"Bash"},
@@ -609,7 +609,7 @@ func TestWorkspaceAgentOptions_RoundTripsThroughNew(t *testing.T) {
 		cliBin:           "my-cli",
 		cliExtraArgs:     []string{"code", "--add-dir", "/parent"},
 		cliArgsFlag:      "-a",
-		model:            "claude-opus-4-7",
+		model:            "claude-opus-4-8",
 		reasoningEffort:  "high",
 		mode:             "acceptEdits",
 		allowedTools:     []string{"Edit", "Read"},
@@ -637,8 +637,8 @@ func TestWorkspaceAgentOptions_RoundTripsThroughNew(t *testing.T) {
 	if child.cliArgsFlag != "-a" {
 		t.Errorf("cliArgsFlag = %q, want -a", child.cliArgsFlag)
 	}
-	if child.model != "claude-opus-4-7" {
-		t.Errorf("model = %q, want claude-opus-4-7", child.model)
+	if child.model != "claude-opus-4-8" {
+		t.Errorf("model = %q, want claude-opus-4-8", child.model)
 	}
 	if child.reasoningEffort != "high" {
 		t.Errorf("reasoningEffort = %q, want high", child.reasoningEffort)

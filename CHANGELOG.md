@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.0.1 (2026-08-04)
+
+**New agent + model refresh**: Adds `codebuddy` headless CLI driver, completes the `cmd/cc-connect` → `cmd/cc-connect-qhn` directory rename, refreshes stale model lists across all agents and provider presets.
+
+### Added
+
+- **`type = "codebuddy"` agent**: Headless stream-json CLI driver (`codebuddy -p <prompt> --output-format stream-json`), following the same per-turn spawn pattern as qoder/gemini/kimi. Supports `mode`, `model`, `SkillDirs`, `MemoryFileProvider`, and `ContextCompressor`. Includes example config (`examples/feishu-codebuddy.toml`).
+
+### Changed
+
+- **`cmd/cc-connect` → `cmd/cc-connect-qhn`**: Directory renamed to complete the v2.0.0 branding migration.
+- **Model lists refreshed across all agents**: `gemini` adds `gemini-3.5-flash`; `kimi` adds `kimi-k3`; `opencode` updates `gpt-4o` → `gpt-5.4`; `codex` adds `gpt-5.4`/`gpt-5.4-mini`; `cursor` fallback models updated.
+- **`provider-presets.json`**: All Claude presets now default to `claude-sonnet-5`; Gemini presets default to `gemini-3.1-pro-preview` with `gemini-3.5-flash`.
+- **Codex docs**: Added third-party provider examples (DeepSeek, MiniMax) with `wire_api` guidance in `examples/feishu-codex.toml` and `config.example.toml`.
+
+### Fixed
+
+- **codebuddy model naming**: Fixed dotted (`claude-sonnet-4.6`) → dashed (`claude-sonnet-4-6`) to match rest of repo.
+- **Stale model IDs in tests**: Updated `claude-opus-4-7` → `4-8`, `kimi-k2` → `k3`, `gemini-2.5-*` → `3.1-*` across test fixtures.
+
 ## v2.0.0 (2026-07-31)
 
 **Breaking branding change**: All user-facing log/output strings renamed from `cc-connect` to `cc-connect-qhn`. Binary filename, GitHub release assets, updater APIs all switched to the fork's own identity.
@@ -19,13 +39,12 @@
 
 ### Changed
 
-- **Updater repo URLs switched from upstream to fork**: `CheckForUpdate` and `SelfUpdate` in `core/updater.go`, plus CLI `update` command in `cmd/cc-connect/update.go`, now query `janostudio/cc-connect-qhn` instead of `chenhg5/cc-connect` / `cg33/cc-connect`.
+- **Updater repo URLs switched from upstream to fork**: `CheckForUpdate` and `SelfUpdate` in `core/updater.go`, plus CLI `update` command in `cmd/cc-connect-qhn/update.go`, now query `janostudio/cc-connect-qhn` instead of `chenhg5/cc-connect` / `cg33/cc-connect`.
 - **npm package version sync fixed**: `syncNpmPackageVersion` now uses `strings.Contains` for scoped package `@qinghuangniao/cc-connect-qhn` name matching.
 
 ### NOT changed (preserved for compatibility)
 
 - **Go import paths**: `github.com/chenhg5/cc-connect/...` unchanged.
-- **cmd/cc-connect/ directory name**: Go package directory unchanged.
 - **`.cc-connect-qhn` data directory**: Already had `-qhn` suffix, unchanged.
 - **npm global command**: `cc-connect-qhn` unchanged (already correct).
 
@@ -39,7 +58,7 @@ This is a semver-major bump because:
 ### Files changed (35 files)
 
 `agent/acp/`: list_sessions.go, session.go
-`cmd/cc-connect/`: main.go, cron.go, send.go, daemon.go, provider.go, feishu.go, weixin.go, sessions.go, update.go, relay.go, session_id.go, config_cmd.go, doctor_runas.go, instance_lock.go, web.go
+`cmd/cc-connect-qhn/`: main.go, cron.go, send.go, daemon.go, provider.go, feishu.go, weixin.go, sessions.go, update.go, relay.go, session_id.go, config_cmd.go, doctor_runas.go, instance_lock.go, web.go
 `core/`: engine.go, engine_bind_cmds.go, i18n.go, interfaces.go, runas_check.go, updater.go, web_manager.go
 `daemon/`: manager.go, systemd.go, launchd.go, windows.go
 `platform/weixin/`: client.go

@@ -2,7 +2,8 @@
 #
 # 各文件说明：
 #   feishu-claudecode.toml   — 飞书 + Claude Code（最常用）
-#   feishu-codex.toml        — 飞书 + Codex (OpenAI)
+#   feishu-codex.toml        — 飞书 + Codex（含第三方 Provider 示例）
+#   feishu-codebuddy.toml    — 飞书 + CodeBuddy Code
 #   feishu-gemini.toml       — 飞书 + Gemini CLI
 #   feishu-cursor.toml       — 飞书 + Cursor Agent
 #   feishu-full.toml         — 飞书 + Web 管理界面 + Bridge

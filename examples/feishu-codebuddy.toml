@@ -1,0 +1,34 @@
+# 飞书 + CodeBuddy Code
+# 使用 headless stream-json 模式，和 qoder/gemini/kimi 一致
+#
+# CodeBuddy Code 支持 `codebuddy -p <prompt> --output-format stream-json`
+# 的 headless 模式，cc-connect-qhn 自动封装 CLI 参数。
+
+[log]
+level = "info"
+
+[[projects]]
+name = "my-project"
+
+[projects.agent]
+type = "codebuddy"
+
+[projects.agent.options]
+work_dir = "/path/to/your/project"
+
+# 可选：跳过权限检查（yolo 模式）
+# mode = "yolo"
+
+# 可选：指定模型（默认使用 CLI 配置的模型）
+# model = "claude-sonnet-4-6"
+
+# 可选：环境变量
+# [projects.agent.options.env]
+# CODEBUDDY_API_KEY = "your-key"
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "cli_xxxxxxxxxxxx"
+app_secret = "xxxxxxxxxxxxxxxxxxxxxxxx"

@@ -12,7 +12,7 @@ import (
 
 func TestNewKimiSession(t *testing.T) {
 	ctx := context.Background()
-	ks, err := newKimiSession(ctx, "kimi", "/tmp", "kimi-k2", "default", "resume-123", nil, 0)
+	ks, err := newKimiSession(ctx, "kimi", "/tmp", "kimi-k3", "default", "resume-123", nil, 0)
 	require.NoError(t, err)
 	require.NotNil(t, ks)
 	assert.True(t, ks.Alive())

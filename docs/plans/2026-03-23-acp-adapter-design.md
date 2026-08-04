@@ -11,7 +11,7 @@
 ## 2. 架构约束（与仓库规则一致）
 
 - `core/` **不** import `agent/*`；新逻辑全部放在 `agent/acp/`（或 `agent/acpclient/`）。
-- 通过 `core.RegisterAgent("acp", factory)` 在 `init()` 注册；`cmd/cc-connect/plugin_agent_acp.go` + `Makefile` + `config.example.toml` 与现有 agent 插件一致。
+- 通过 `core.RegisterAgent("acp", factory)` 在 `init()` 注册；`cmd/cc-connect-qhn/plugin_agent_acp.go` + `Makefile` + `config.example.toml` 与现有 agent 插件一致。
 - 权限、会话、卡片等多为 Engine 已有能力；适配层专注 **协议 ↔ Event**。
 
 ## 3. 目标与非目标

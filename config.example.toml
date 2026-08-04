@@ -61,7 +61,7 @@ level = "info" # debug, info, warn, error
 # api_key = "${MINIMAXI_API_KEY}"
 # base_url = "https://api.minimaxi.chat/v1"
 # agent_types = ["claudecode"]
-# model = "claude-sonnet-4-20250514"
+# model = "claude-sonnet-4-6"
 
 # [[providers]]
 # name = "minimaxi-codex"
@@ -744,7 +744,7 @@ mode = "default" # "default" | "acceptEdits" (edit) | "plan" | "auto" | "bypassP
 # system_prompt = "You are a helpful AI assistant that specializes in Python development."
 
 # Optional: specify a model / 可选：指定模型
-# model = "claude-sonnet-4-20250514"
+# model = "claude-sonnet-4-6"
 
 # Optional: per-project environment variables injected into Claude Code sessions.
 # This allows different projects to use different model providers (Kimi, Mimo, DeepSeek, etc.)
@@ -798,16 +798,16 @@ mode = "default" # "default" | "acceptEdits" (edit) | "plan" | "auto" | "bypassP
 # name = "relay"
 # api_key = "sk-xxx"
 # base_url = "https://api.relay-service.com"
-# model = "claude-sonnet-4-20250514"
+# model = "claude-sonnet-4-6"
 # # Optional: pre-configure available models shown by /model command (alias - model)
 # # /model switch [alias] switches to the model; omit to auto-fetch from the API.
 # # 可选：预先配置 /model 命令显示的可用模型列表，格式为 alias - model
 # # 使用 /model switch [alias] 切换模型；留空则自动从 API 获取
 # [[projects.agent.providers.models]]
-# model = "claude-sonnet-4-20250514"
+# model = "claude-sonnet-4-6"
 # alias = "sonnet"
 # [[projects.agent.providers.models]]
-# model = "claude-opus-4-20250514"
+# model = "claude-opus-4-8"
 # alias = "opus"
 # [[projects.agent.providers.models]]
 # model = "claude-haiku-3-5-20241022"
@@ -1224,7 +1224,7 @@ app_secret = "your-feishu-app-secret"
 # - "ask":     Q&A style, read-only / 问答风格，只读
 #
 # Optional: specify a model / 可选：指定模型
-# model = "claude-sonnet-4-20250514"
+# model = "claude-sonnet-4-6"
 #
 # [[projects.platforms]]
 # type = "feishu"
@@ -1338,6 +1338,20 @@ app_secret = "your-feishu-app-secret"
 # base_url = "https://api.minimax.io/v1"
 # model = "MiniMax-M2.7"
 #
+# # DeepSeek — OpenAI-compatible, needs wire_api = "chat" for native API
+# # DeepSeek — 兼容 OpenAI 接口，原生 API 需指定 wire_api = "chat"
+# [[projects.agent.providers]]
+# name = "deepseek"
+# api_key = "sk-your-deepseek-key"
+# base_url = "https://api.deepseek.com/v1"
+# model = "deepseek-v4-flash"
+# codex_config = { wire_api = "chat" }  # DeepSeek 使用 chat 协议而非 responses
+#
+# # cc-connect-qhn automatically writes codex's [model_providers] and auth.json
+# # for third-party providers — no separate cc-switch installation needed.
+# # cc-connect-qhn 会自动为第三方 provider 写入 codex 的 [model_providers] 和
+# # auth.json，无需额外安装 cc-switch。
+#
 # [[projects.platforms]]
 # type = "telegram"
 #
@@ -1443,7 +1457,7 @@ app_secret = "your-feishu-app-secret"
 # - "yolo":    Auto-approve all tool calls / 自动批准所有工具调用
 #
 # Optional: specify a model (provider/model format) / 可选：指定模型
-# model = "anthropic/claude-sonnet-4-20250514"
+# model = "anthropic/claude-sonnet-4-6"
 #
 # [[projects.platforms]]
 # type = "telegram"
@@ -1493,6 +1507,46 @@ app_secret = "your-feishu-app-secret"
 # # 可选：Windsurf 企业版 API Key（优先级高于 `devin auth login` 的本地凭证）。
 # # [projects.agent.options.env]
 # # WINDSURF_API_KEY = "wk_xxx"
+
+# [[projects.platforms]]
+# type = "telegram"
+#
+# [projects.platforms.options]
+# token = "your-telegram-bot-token"
+
+# =============================================================================
+# Project: CodeBuddy Code CLI (Tencent, https://codebuddy.ai/) / 使用 CodeBuddy Code CLI
+# =============================================================================
+# CodeBuddy Code supports headless mode via `codebuddy -p <prompt> --output-format
+# stream-json`, matching the same per-turn spawn pattern as qoder / gemini / kimi.
+# cc-connect-qhn ships a first-class `type = "codebuddy"` agent that wraps the CLI
+# flags so you don't have to spell them out.
+# CodeBuddy Code 通过 `codebuddy -p <prompt> --output-format stream-json` 支持
+# headless 模式，和 qoder / gemini / kimi 等 agent 使用相同的 per-turn spawn 模式。
+# cc-connect-qhn 内置 `type = "codebuddy"` 的一级支持，自动封装 CLI 参数。
+#
+# Prerequisites / 前置条件:
+#   1. Install CodeBuddy Code CLI: npm install -g @anthropic-ai/codebuddy-code
+#      安装 CodeBuddy Code CLI
+#   2. Run `codebuddy login` once — credentials are stored locally and the
+#      spawned subprocess reads them automatically. cc-connect-qhn never sees the token.
+#      运行一次 `codebuddy login` 完成登录；子进程会自动读取本地凭证。
+
+# [[projects]]
+# name = "my-codebuddy-project"
+#
+# [projects.agent]
+# type = "codebuddy"
+#
+# [projects.agent.options]
+# work_dir = "/path/to/your/code"
+# # Optional: permission mode. "yolo" enables --dangerously-skip-permissions.
+# # 可选：权限模式。"yolo" 启用 --dangerously-skip-permissions
+# # mode = "yolo"
+# #
+# # Optional: model selection (defaults to CLI-configured model).
+# # 可选：模型选择（默认使用 CLI 配置的模型）
+# # model = "claude-sonnet-4-6"
 
 # [[projects.platforms]]
 # type = "telegram"

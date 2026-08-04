@@ -206,16 +206,16 @@ func (a *Agent) AvailableModels(ctx context.Context) []core.ModelOption {
 		return models
 	}
 	return []core.ModelOption{
+		{Name: "gpt-5.4", Desc: "GPT-5.4 (balanced)"},
+		{Name: "gpt-5.4-mini", Desc: "GPT-5.4 Mini (fast)"},
 		{Name: "o4-mini", Desc: "O4 Mini (fast reasoning)"},
 		{Name: "o3", Desc: "O3 (most capable reasoning)"},
-		{Name: "gpt-4.1", Desc: "GPT-4.1 (balanced)"},
-		{Name: "gpt-4.1-mini", Desc: "GPT-4.1 Mini (fast)"},
-		{Name: "gpt-4.1-nano", Desc: "GPT-4.1 Nano (fastest)"},
 		{Name: "codex-mini-latest", Desc: "Codex Mini (code-optimized)"},
 	}
 }
 
 var openaiChatModels = map[string]bool{
+	"gpt-5.4": true, "gpt-5.4-mini": true,
 	"o4-mini": true, "o3": true, "o3-mini": true, "o1": true, "o1-mini": true,
 	"gpt-4.1": true, "gpt-4.1-mini": true, "gpt-4.1-nano": true,
 	"gpt-4o": true, "gpt-4o-mini": true,

@@ -442,9 +442,9 @@ func (a *Agent) AvailableModels(ctx context.Context) []core.ModelOption {
 		return models
 	}
 	return []core.ModelOption{
-		{Name: "anthropic/claude-sonnet-4-20250514", Desc: "Claude Sonnet 4 (default)"},
-		{Name: "anthropic/claude-opus-4-20250514", Desc: "Claude Opus 4"},
-		{Name: "openai/gpt-4o", Desc: "GPT-4o"},
+		{Name: "anthropic/claude-sonnet-4-6", Desc: "Claude Sonnet 4.6 (default)"},
+		{Name: "anthropic/claude-opus-4-8", Desc: "Claude Opus 4.8"},
+		{Name: "openai/gpt-5.4", Desc: "GPT-5.4"},
 		{Name: "openai/o3", Desc: "OpenAI o3"},
 	}
 }

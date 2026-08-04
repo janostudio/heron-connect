@@ -168,7 +168,7 @@ func New(opts map[string]any) (core.Agent, error) {
 	routerAPIKey, _ := opts["router_api_key"].(string)
 
 	// run_as_user: optional OS-user isolation. Injected into opts from
-	// the project-level config field by cmd/cc-connect/main.go.
+	// the project-level config field by cmd/cc-connect-qhn/main.go.
 	spawnOpts := core.SpawnOptions{}
 	spawnOpts.RunAsUser, _ = opts["run_as_user"].(string)
 	if env, ok := opts["run_as_env"].([]any); ok {
@@ -662,7 +662,7 @@ func (a *Agent) GetMode() string {
 
 // GetRunAsUser returns the target user for OS-isolation spawning, or ""
 // if no isolation is configured. Set at construction from the project-level
-// run_as_user field (injected into opts by cmd/cc-connect/main.go).
+// run_as_user field (injected into opts by cmd/cc-connect-qhn/main.go).
 //
 // This accessor exists specifically so multi-workspace mode can propagate
 // run_as_user from the parent (project-level) agent into per-workspace

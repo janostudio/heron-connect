@@ -1286,7 +1286,7 @@ type = "claudecode"   # "claudecode", "codex", "cursor", "gemini", "qoder", "ope
 [projects.agent.options]
 work_dir = "/path/to/your/project"
 mode = "default"
-# model = "claude-sonnet-4-20250514"
+# model = "claude-sonnet-4-6"
 
 # --- Choose at least one platform below ---
 

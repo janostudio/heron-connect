@@ -461,7 +461,7 @@ func TestAvailableModels_FallsBackToBuiltinWhenBothUnavailable(t *testing.T) {
 	}
 	found := false
 	for _, m := range got {
-		if m.Name == "anthropic/claude-sonnet-4-20250514" {
+		if m.Name == "anthropic/claude-sonnet-4-6" {
 			found = true
 			break
 		}

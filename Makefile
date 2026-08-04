@@ -1,6 +1,6 @@
 APP        := cc-connect-qhn
 MODULE     := github.com/chenhg5/cc-connect
-CMD        := ./cmd/cc-connect
+CMD        := ./cmd/cc-connect-qhn
 DIST       := dist
 LOCAL_NPM_ROOT ?= $(shell npm root -g 2>/dev/null)
 LOCAL_CC_CONNECT_DIR ?= $(LOCAL_NPM_ROOT)/cc-connect
@@ -36,7 +36,7 @@ PLATFORMS := \
 #   make build EXCLUDE=discord,dingtalk,qq,qqbot,line
 # ---------------------------------------------------------------------------
 
-ALL_AGENTS    := acp claudecode codex cursor devin gemini iflow kimi opencode pi qoder
+ALL_AGENTS    := acp claudecode codebuddy codex cursor devin gemini iflow kimi opencode pi qoder
 ALL_PLATFORMS := feishu telegram discord slack dingtalk wecom weixin qq qqbot line weibo max
 ALL_EXTRAS    := web
 

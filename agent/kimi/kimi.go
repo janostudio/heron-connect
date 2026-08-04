@@ -140,10 +140,9 @@ func (a *Agent) AvailableModels(ctx context.Context) []core.ModelOption {
 		return models
 	}
 	return []core.ModelOption{
-		{Name: "kimi-k2-0711-preview", Desc: "Kimi K2 (most capable)"},
-		{Name: "kimi-k2-0711", Desc: "Kimi K2"},
-		{Name: "kimi-k2-5-preview", Desc: "Kimi K2.5 (balanced)"},
+		{Name: "kimi-k3", Desc: "Kimi K3 (latest, 2.8T params)"},
 		{Name: "kimi-k2-5", Desc: "Kimi K2.5"},
+		{Name: "kimi-k2-5-preview", Desc: "Kimi K2.5 Preview"},
 	}
 }
 

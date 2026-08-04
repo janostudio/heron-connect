@@ -489,7 +489,7 @@ func (a *runAsTestAgent) GetRunAsEnv() []string {
 //
 // Before the fix: per-workspace agents were created with opts containing
 // only work_dir/model/mode. The project-level run_as_user injected into
-// proj.Agent.Options by cmd/cc-connect/main.go was not propagated, so
+// proj.Agent.Options by cmd/cc-connect-qhn/main.go was not propagated, so
 // spawned sessions used the legacy (supervisor-user) path despite the
 // preflight saying otherwise.
 //

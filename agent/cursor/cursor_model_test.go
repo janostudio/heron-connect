@@ -108,16 +108,16 @@ func TestAvailableModels_FetchFromAgent(t *testing.T) {
 		t.Logf("  %2d. %s - %s", i+1, m.Name, m.Desc)
 	}
 
-	// Should have real models like gpt-5.3-codex, opus-4.6-thinking, etc.
+	// Should have real models like gpt-5.4, claude-sonnet-4-6, cursor-small, etc.
 	hasCodex := false
 	for _, m := range models {
-		if m.Name == "gpt-5.3-codex" || m.Name == "opus-4.6-thinking" || m.Name == "auto" {
+		if m.Name == "gpt-5.4" || m.Name == "claude-sonnet-4-6" || m.Name == "cursor-small" {
 			hasCodex = true
 			break
 		}
 	}
 	if !hasCodex {
 		t.Logf("models: %v", models)
-		t.Log("agent models returned models but none of the expected ones (gpt-5.3-codex, opus-4.6-thinking, auto) - may be OK if CLI output format changed")
+		t.Log("agent models returned models but none of the expected ones (gpt-5.4, claude-sonnet-4-6, cursor-small) - may be OK if CLI output format changed")
 	}
 }

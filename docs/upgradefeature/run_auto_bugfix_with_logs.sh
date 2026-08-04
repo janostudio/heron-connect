@@ -30,7 +30,7 @@ cd "$PROJECT_DIR"
 
 {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] start cc-connect"
-  echo "command: GOCACHE=$(pwd)/.gocache go run ./cmd/cc-connect --force --config $CONFIG_PATH"
-  GOCACHE="$(pwd)/.gocache" go run ./cmd/cc-connect --force --config "$CONFIG_PATH"
+  echo "command: GOCACHE=$(pwd)/.gocache go run ./cmd/cc-connect-qhn --force --config $CONFIG_PATH"
+  GOCACHE="$(pwd)/.gocache" go run ./cmd/cc-connect-qhn --force --config "$CONFIG_PATH"
 } 2>&1 | tee "$LOG_FILE"
 

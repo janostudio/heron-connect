@@ -248,7 +248,7 @@ make test-fast
 
 ```text
 .
-├── cmd/cc-connect      # CLI 入口和子命令
+├── cmd/cc-connect-qhn      # CLI 入口和子命令
 ├── core                # engine、session、hooks、i18n
 ├── config              # TOML 配置加载
 ├── agent               # Claude Code、Codex、Gemini、ACP 等

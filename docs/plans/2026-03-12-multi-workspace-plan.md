@@ -1135,7 +1135,7 @@ git commit -m "feat: add /workspace commands (init, unbind, list, status)"
 ### Task 10: Wire multi-workspace in main.go
 
 **Files:**
-- Modify: `cmd/cc-connect/main.go` (~line 139 project setup loop)
+- Modify: `cmd/cc-connect-qhn/main.go` (~line 139 project setup loop)
 
 **Step 1: Add multi-workspace setup after engine creation**
 
@@ -1167,7 +1167,7 @@ Expected: Compiles cleanly
 **Step 3: Commit**
 
 ```bash
-git add cmd/cc-connect/main.go
+git add cmd/cc-connect-qhn/main.go
 git commit -m "feat: wire multi-workspace mode setup in main.go"
 ```
 

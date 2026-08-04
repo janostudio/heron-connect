@@ -1,5 +1,9 @@
 # 飞书 + Codex (OpenAI)
 # Codex 使用 full-auto 模式自动执行
+#
+# 支持第三方 OpenAI 兼容 provider（DeepSeek、MiniMax 等），
+# 无需额外安装 cc-switch，cc-connect-qhn 会自动写入 codex 的
+# config.toml 和 auth.json。
 
 [log]
 level = "info"
@@ -25,6 +29,26 @@ mode = "full-auto"
 
 # 可选：使用自定义 profile（与 cli_path 效果相同）
 # args = ["--profile", "my-profile"]
+
+# ── 第三方 provider 示例 ─────────────────────────────────
+# Codex 默认连接 api.openai.com，使用 `[[projects.agent.providers]]`
+# 可以接入任意 OpenAI 兼容的 API（DeepSeek、MiniMax、AIHubMix 等）。
+# cc-connect-qhn 会自动写入 codex 的 [model_providers] 和 auth.json，
+# 无需额外安装 cc-switch 等工具。
+
+# [[projects.agent.providers]]
+# name = "deepseek"
+# api_key = "sk-your-deepseek-key"
+# base_url = "https://api.deepseek.com/v1"
+# model = "deepseek-v4-flash"
+# # DeepSeek 原生 API 使用 chat 协议，如果报错需要指定 wire_api
+# # codex_config = { wire_api = "chat" }
+#
+# [[projects.agent.providers.models]]
+# model = "deepseek-v4-flash"
+# alias = "deepseek"
+
+# provider = "deepseek"  # 激活 provider（也可用 /provider deepseek 命令切换）
 
 [[projects.platforms]]
 type = "feishu"

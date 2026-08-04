@@ -7,7 +7,7 @@
 
 ```
 cc-connect-qhn/
-├── cmd/cc-connect/          ~2,000 行  ← CLI 入口、插件注册
+├── cmd/cc-connect-qhn/          ~2,000 行  ← CLI 入口、插件注册
 ├── config/                  ~1,500 行  ← TOML 配置解析
 ├── core/                   59,847 行  ← 核心引擎（含测试）
 │   ├── engine.go           13,820 行  ← ⚠️ 单体 God Object
@@ -106,7 +106,7 @@ func init() {
     })
 }
 
-// cmd/cc-connect/plugin_platform_feishu.go
+// cmd/cc-connect-qhn/plugin_platform_feishu.go
 //go:build !no_feishu
 package main
 import _ "cc-connect/platform/feishu"

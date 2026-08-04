@@ -121,7 +121,7 @@ func listRegisteredAgents() []string {
 	// This requires access to the internal registry
 	// We'll test via the factory pattern
 	agents := []string{
-		"claudecode", "codex", "cursor", "gemini",
+		"claudecode", "codebuddy", "codex", "cursor", "gemini",
 		"iflow", "opencode", "pi", "qoder",
 	}
 	return agents

@@ -45,7 +45,7 @@ func TestAgentNew(t *testing.T) {
 	skipUnlessKimiAvailable(t)
 	agentInf, err := New(map[string]any{
 		"work_dir":     "/tmp",
-		"model":        "kimi-k2",
+		"model":        "kimi-k3",
 		"mode":         "yolo",
 		"timeout_mins": 15,
 	})
@@ -56,7 +56,7 @@ func TestAgentNew(t *testing.T) {
 	assert.Equal(t, "kimi", a.Name())
 	assert.Equal(t, "/tmp", a.GetWorkDir())
 	assert.Equal(t, "yolo", a.GetMode())
-	assert.Equal(t, "kimi-k2", a.GetModel())
+	assert.Equal(t, "kimi-k3", a.GetModel())
 }
 
 // TestAgentFields verifies Name/WorkDir/Mode/Model without requiring
@@ -64,7 +64,7 @@ func TestAgentNew(t *testing.T) {
 func TestAgentFields(t *testing.T) {
 	a := &Agent{
 		workDir:   "/tmp",
-		model:     "kimi-k2",
+		model:     "kimi-k3",
 		mode:      "yolo",
 		cmd:       "kimi",
 		activeIdx: -1,
@@ -74,7 +74,7 @@ func TestAgentFields(t *testing.T) {
 	assert.Equal(t, "kimi", a.CLIBinaryName())
 	assert.Equal(t, "/tmp", a.GetWorkDir())
 	assert.Equal(t, "yolo", a.GetMode())
-	assert.Equal(t, "kimi-k2", a.GetModel())
+	assert.Equal(t, "kimi-k3", a.GetModel())
 }
 
 func TestAgentSetters(t *testing.T) {
@@ -83,8 +83,8 @@ func TestAgentSetters(t *testing.T) {
 	a.SetWorkDir("/new/path")
 	assert.Equal(t, "/new/path", a.GetWorkDir())
 
-	a.SetModel("kimi-k2-5")
-	assert.Equal(t, "kimi-k2-5", a.GetModel())
+	a.SetModel("kimi-k3-5")
+	assert.Equal(t, "kimi-k3-5", a.GetModel())
 
 	a.SetMode("plan")
 	assert.Equal(t, "plan", a.GetMode())
@@ -123,7 +123,7 @@ func TestAgentStartSession(t *testing.T) {
 	skipUnlessKimiAvailable(t)
 	agentInf, err := New(map[string]any{
 		"work_dir":     "/tmp",
-		"model":        "kimi-k2",
+		"model":        "kimi-k3",
 		"mode":         "default",
 		"timeout_mins": 10,
 	})
