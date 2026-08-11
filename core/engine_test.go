@@ -1463,6 +1463,67 @@ func TestProcessInteractiveEvents_ToolMessagesDisabledSuppressesToolProgressOnly
 	}
 }
 
+func TestProcessInteractiveEvents_ToolMessagesDisabledHidesSubagentDetails(t *testing.T) {
+	p := &stubPlatformEngine{n: "telegram"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetDisplayConfig(DisplayCfg{ThinkingMessages: true, ThinkingMaxLen: 300, ToolMaxLen: 500, ToolMessages: false})
+	sessionKey := "telegram:subagent-hidden"
+	session := e.sessions.GetOrCreateActive(sessionKey)
+	agentSession := newControllableSession("s-subagent-hidden")
+	state := &interactiveState{
+		agentSession: agentSession,
+		platform:     p,
+		replyCtx:     "ctx-subagent-hidden",
+	}
+	e.interactiveStates[sessionKey] = state
+
+	agentSession.events <- Event{Type: EventThinking, Content: "child thought", IsSubagent: true}
+	agentSession.events <- Event{Type: EventToolUse, ToolName: "ChildTool", ToolInput: "child input", IsSubagent: true}
+	agentSession.events <- Event{Type: EventToolResult, ToolName: "ChildTool", ToolResult: "child result", IsSubagent: true}
+	agentSession.events <- Event{Type: EventText, Content: "child text", IsSubagent: true}
+	agentSession.events <- Event{Type: EventText, Content: "main answer"}
+	agentSession.events <- Event{Type: EventResult, Done: true}
+
+	e.processInteractiveEvents(state, session, e.sessions, sessionKey, "m-subagent-hidden", time.Now(), nil, nil, nil)
+
+	sent := strings.Join(p.getSent(), "\n")
+	for _, hidden := range []string{"child thought", "ChildTool", "child input", "child result", "child text"} {
+		if strings.Contains(sent, hidden) {
+			t.Fatalf("subagent detail %q should be hidden, got %q", hidden, sent)
+		}
+	}
+	if !strings.Contains(sent, "main answer") {
+		t.Fatalf("main answer should remain visible, got %q", sent)
+	}
+}
+
+func TestEngine_HidesSubagentEventFollowsToolMessages(t *testing.T) {
+	e := NewEngine("test", &stubAgent{}, nil, "", LangEnglish)
+	contentEvents := []Event{
+		{Type: EventText, IsSubagent: true},
+		{Type: EventThinking, IsSubagent: true},
+		{Type: EventToolUse, IsSubagent: true},
+		{Type: EventToolResult, IsSubagent: true},
+	}
+
+	e.SetDisplayConfig(DisplayCfg{ToolMessages: false})
+	for _, event := range contentEvents {
+		if !e.hidesSubagentEvent(event) {
+			t.Fatalf("event %s should be hidden when tool messages are disabled", event.Type)
+		}
+	}
+	if e.hidesSubagentEvent(Event{Type: EventResult, IsSubagent: true}) {
+		t.Fatal("result lifecycle event should never be hidden")
+	}
+
+	e.SetDisplayConfig(DisplayCfg{ToolMessages: true})
+	for _, event := range contentEvents {
+		if e.hidesSubagentEvent(event) {
+			t.Fatalf("event %s should be shown when tool messages are enabled", event.Type)
+		}
+	}
+}
+
 func TestProcessInteractiveEvents_CompactProgressCoalescesThinkingAndToolUse(t *testing.T) {
 	p := &stubCompactProgressPlatform{stubPlatformEngine: stubPlatformEngine{n: "feishu"}}
 	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
@@ -1752,6 +1813,9 @@ func TestProcessInteractiveEvents_StreamModeToolHoldSkipsToolProgressWhenToolMes
 	}
 	e.interactiveStates[sessionKey] = state
 
+	agentSession.events <- Event{Type: EventText, Content: "child-text-must-not-render", IsSubagent: true}
+	agentSession.events <- Event{Type: EventToolUse, ToolName: "ChildTool", ToolInput: "child-input-must-not-render", IsSubagent: true}
+	agentSession.events <- Event{Type: EventToolResult, ToolName: "ChildTool", ToolResult: "child-result-must-not-render", IsSubagent: true}
 	agentSession.events <- Event{Type: EventText, Content: "我先定位问题。"}
 	agentSession.events <- Event{Type: EventToolUse, ToolName: "Bash", ToolInput: "wc -m /tmp/agent.json"}
 	agentSession.events <- Event{Type: EventToolResult, ToolName: "Bash", ToolResult: "42 /tmp/agent.json"}
@@ -1770,8 +1834,20 @@ func TestProcessInteractiveEvents_StreamModeToolHoldSkipsToolProgressWhenToolMes
 		t.Fatalf("preview messages = %#v, want initial preview + final finalize", previewMsgs)
 	}
 	joined := strings.Join(previewMsgs, "\n")
-	if strings.Contains(joined, "Tool #1") || strings.Contains(joined, "42 /tmp/agent.json") || strings.Contains(joined, "wc -m /tmp/agent.json") {
-		t.Fatalf("preview messages should not contain tool progress when tool_messages=false, got %#v", previewMsgs)
+	for _, forbidden := range []string{
+		"Tool #1", "42 /tmp/agent.json", "wc -m /tmp/agent.json",
+		"child-text-must-not-render", "child-input-must-not-render",
+		"child-result-must-not-render", "ChildTool",
+	} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("preview messages should not contain %q when tool_messages=false, got %#v", forbidden, previewMsgs)
+		}
+	}
+	if starts := p.getToolStarts(); len(starts) != 0 {
+		t.Fatalf("OnToolStart calls = %#v, want no side-channel tool progress", starts)
+	}
+	if completes := p.getToolCompletes(); len(completes) != 0 {
+		t.Fatalf("OnToolComplete calls = %#v, want no side-channel tool progress", completes)
 	}
 	if finalMsg := previewMsgs[0]; finalMsg != "start:我先定位问题。" {
 		t.Fatalf("preview message = %#v, want only the initial partial preview", previewMsgs)
@@ -13357,11 +13433,11 @@ type fakeAgentSessionForReaper struct {
 	name  string
 }
 
-func (f *fakeAgentSessionForReaper) Alive() bool                               { return f.alive }
-func (f *fakeAgentSessionForReaper) Close() error                              { f.alive = false; return nil }
-func (f *fakeAgentSessionForReaper) CancelTurn()                               {}
-func (f *fakeAgentSessionForReaper) CurrentSessionID() string                  { return "test-sid" }
-func (f *fakeAgentSessionForReaper) Events() <-chan Event                      { return nil }
+func (f *fakeAgentSessionForReaper) Alive() bool              { return f.alive }
+func (f *fakeAgentSessionForReaper) Close() error             { f.alive = false; return nil }
+func (f *fakeAgentSessionForReaper) CancelTurn()              {}
+func (f *fakeAgentSessionForReaper) CurrentSessionID() string { return "test-sid" }
+func (f *fakeAgentSessionForReaper) Events() <-chan Event     { return nil }
 func (f *fakeAgentSessionForReaper) Send(prompt string, images []ImageAttachment, files []FileAttachment) error {
 	return nil
 }

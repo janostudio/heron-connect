@@ -12,9 +12,10 @@ import (
 // together (instead of a standalone tool-only frame that would flicker).
 func (p *WSPlatform) OnToolStart(ctx context.Context, previewHandle any, toolName, explainArg, rawArg string) error {
 	h, ok := previewHandle.(*wsPreviewHandle)
-	if !ok || h == nil {
+	if !ok || h == nil || !h.lockOpen() {
 		return nil
 	}
+	defer h.unlock()
 	state, err := p.wecomAssemblerFor(h.replyCtx)
 	if err != nil {
 		slog.Debug("wecom-ws: OnToolStart no assembler", "error", err)
@@ -32,9 +33,10 @@ func (p *WSPlatform) OnToolStart(ctx context.Context, previewHandle any, toolNam
 // to progressLines without touching visibleText, then sends a merged preview.
 func (p *WSPlatform) OnToolComplete(ctx context.Context, previewHandle any, toolName, resultSummary string) error {
 	h, ok := previewHandle.(*wsPreviewHandle)
-	if !ok || h == nil {
+	if !ok || h == nil || !h.lockOpen() {
 		return nil
 	}
+	defer h.unlock()
 	state, err := p.wecomAssemblerFor(h.replyCtx)
 	if err != nil {
 		slog.Debug("wecom-ws: OnToolComplete no assembler", "error", err)
@@ -61,7 +63,7 @@ func (p *WSPlatform) sendMergedPreview(ctx context.Context, h *wsPreviewHandle, 
 	if !hasVisible {
 		return nil
 	}
-	return p.sendStreamFrameAndWaitAck(ctx, h.replyCtx, wecomPreviewPayload(rendered), false)
+	return p.sendStreamFrameAndWaitAck(ctx, h.replyCtx, rendered, false)
 }
 
 // wecomAssemblerFor returns the wecomStreamAssembler for the given reply context,

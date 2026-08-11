@@ -266,6 +266,7 @@ make test-fast
 
 - [INSTALL.md](INSTALL.md) — 安装与平台接入
 - [docs/usage.md](docs/usage.md) — 完整功能说明
+- [docs/session-isolation.zh-CN.md](docs/session-isolation.zh-CN.md) — IM 群聊会话隔离与共享规则
 - [config.example.toml](config.example.toml) — 配置完整示例
 - [AGENTS.md](AGENTS.md) — 开发指南
 - [docs/bridge-protocol.md](docs/bridge-protocol.md) — Bridge 协议

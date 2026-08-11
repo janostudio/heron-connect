@@ -39,9 +39,11 @@ func (p *WSPlatform) SendPreviewStart(ctx context.Context, rctx any, content str
 		return nil, core.ErrNotSupported
 	}
 	handle := &wsPreviewHandle{replyCtx: rc}
-	previewContent := wecomPreviewPayload(content)
 	handle.replyCtx.streamID = p.generateReqID("stream")
-	if err := p.sendStreamFrameAndWaitAck(ctx, handle.replyCtx, previewContent, false); err != nil {
+	if state, err := p.wecomAssemblerFor(handle.replyCtx); err == nil {
+		content = state.appendText(content)
+	}
+	if err := p.sendStreamFrameAndWaitAck(ctx, handle.replyCtx, content, false); err != nil {
 		return nil, err
 	}
 	return handle, nil
@@ -55,6 +57,10 @@ func (p *WSPlatform) UpdateMessage(ctx context.Context, previewHandle any, conte
 	if h.replyCtx.streamID == "" {
 		return fmt.Errorf("wecom-ws: preview handle missing stream id")
 	}
+	if !h.lockOpen() {
+		return nil
+	}
+	defer h.unlock()
 	// If a wecomStreamAssembler exists for this stream, track the visible text
 	// in it and send the merged render (progressLines + visibleText).
 	// This is the打通 contract: visible text and tool progress are merged before
@@ -62,10 +68,10 @@ func (p *WSPlatform) UpdateMessage(ctx context.Context, previewHandle any, conte
 	if state, err := p.wecomAssemblerFor(h.replyCtx); err == nil {
 		state.appendText(content)
 		merged := state.snapshot()
-		return p.sendStreamFrameAndWaitAck(ctx, h.replyCtx, wecomPreviewPayload(merged), false)
+		return p.sendStreamFrameAndWaitAck(ctx, h.replyCtx, merged, false)
 	}
 	// No assembler (non-tool_hold mode or assembler not yet initialized): send as-is.
-	return p.sendStreamFrameAndWaitAck(ctx, h.replyCtx, wecomPreviewPayload(content), false)
+	return p.sendStreamFrameAndWaitAck(ctx, h.replyCtx, content, false)
 }
 
 func (p *WSPlatform) FinalizePreviewMessage(ctx context.Context, previewHandle any, content string) error {
@@ -76,21 +82,28 @@ func (p *WSPlatform) FinalizePreviewMessage(ctx context.Context, previewHandle a
 	if h.replyCtx.streamID == "" {
 		return fmt.Errorf("wecom-ws: preview handle missing stream id")
 	}
-	if content == "" {
+	if !h.beginFinalization() {
 		return nil
 	}
-	// If a wecomStreamAssembler exists, finalize it: this clears progressLines
-	// and sets the final visible text. The final frame will contain ONLY the
-	// answer (no tool progress), which is the expected finalize behavior.
-	if state, err := p.wecomAssemblerFor(h.replyCtx); err == nil {
-		finalRendered := state.finish(content)
-		return p.sendFinalReplyChunks(ctx, h.replyCtx, finalRendered)
+	if content == "" {
+		h.finishFinalization(false)
+		return nil
 	}
-	return p.sendFinalReplyChunks(ctx, h.replyCtx, content)
+	// The final payload intentionally excludes progress. Commit the assembler
+	// state only after the terminal frame is acknowledged.
+	if err := p.sendStreamFrameAndWaitAck(ctx, h.replyCtx, content, true); err != nil {
+		h.finishFinalization(false)
+		return err
+	}
+	if state, err := p.wecomAssemblerFor(h.replyCtx); err == nil {
+		state.finish(content)
+	}
+	h.finishFinalization(true)
+	return nil
 }
 
 func (p *WSPlatform) sendFinalReplyChunks(ctx context.Context, rc wsReplyContext, content string) error {
-	chunks := splitByBytes(content, wecomStreamMaxBytes)
+	chunks := splitByBytes(content, wecomWSStreamContentMaxBytes)
 	if len(chunks) == 0 {
 		return nil
 	}
@@ -110,26 +123,6 @@ func (p *WSPlatform) sendFinalReplyChunks(ctx context.Context, rc wsReplyContext
 		}
 	}
 	return nil
-}
-
-func wecomPreviewPayload(content string) string {
-	chunks := splitByBytes(content, wecomStreamMaxBytes)
-	if len(chunks) == 0 {
-		return ""
-	}
-	if len(chunks) == 1 {
-		return chunks[0]
-	}
-	notice := "\n\n[内容较长，正在整理后续片段...]"
-	headMax := wecomStreamMaxBytes - len([]byte(notice))
-	if headMax <= 0 {
-		return splitByBytes(notice, wecomStreamMaxBytes)[0]
-	}
-	head := splitByBytes(chunks[0], headMax)
-	if len(head) == 0 {
-		return splitByBytes(notice, wecomStreamMaxBytes)[0]
-	}
-	return head[0] + notice
 }
 
 func (p *WSPlatform) sendStreamFrameAndWaitAck(ctx context.Context, rc wsReplyContext, content string, finish bool) error {

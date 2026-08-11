@@ -212,6 +212,21 @@ type StreamPreviewModeProvider interface {
 	StreamPreviewMode() string
 }
 
+// StreamPreviewRolloverConfig describes how a platform can turn one long
+// streaming preview into a finalized preview followed by normal messages.
+type StreamPreviewRolloverConfig struct {
+	PreviewMaxBytes  int
+	FollowupMaxBytes int
+}
+
+// StreamPreviewRolloverProvider is implemented by platforms whose streaming
+// preview API has a larger limit than their normal message API. Once the
+// preview budget is reached, the engine finalizes the original preview and
+// sends subsequent complete segments as ordinary messages.
+type StreamPreviewRolloverProvider interface {
+	StreamPreviewRolloverConfig() StreamPreviewRolloverConfig
+}
+
 // ProgressAssembler is an optional interface for platforms that render tool
 // progress as a UI side-channel (separate region from the answer text).
 // When a platform implements this and opts into "tool_hold" stream-preview

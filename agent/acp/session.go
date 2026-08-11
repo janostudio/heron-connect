@@ -55,6 +55,8 @@ type acpSession struct {
 	toolInputMu   sync.Mutex
 	toolInputByID map[string]string // toolCallId -> summarized tool input
 
+	mapper sessionUpdateMapper
+
 	// modesMu guards availableModes and currentMode. Both fields are
 	// populated on handshake (session/new or session/load response) and
 	// updated whenever SetLiveMode succeeds or the server announces a
@@ -504,7 +506,7 @@ func (s *acpSession) onNotification(method string, params json.RawMessage) {
 	s.maybeAbsorbUsageUpdate(params)
 	s.maybeExtractSessionTitle(params)
 	sid := s.currentACPSessionID()
-	for _, ev := range mapSessionUpdate(sid, params) {
+	for _, ev := range s.mapper.mapSessionUpdate(sid, params) {
 		s.emit(ev)
 	}
 }

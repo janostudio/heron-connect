@@ -204,6 +204,7 @@ type Event struct {
 	OutputTokens int
 	Metadata     map[string]any // optional metadata from agent (e.g. compaction_continue)
 	Synthetic    bool           // true if this is a synthetic/generated message (not from real user)
+	IsSubagent   bool           // true if this event originates from a child-agent stream
 }
 
 // HistoryEntry is one turn in a conversation.

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/chenhg5/cc-connect/core"
 )
@@ -101,10 +102,10 @@ func TestSplitByBytes_ReassemblesLargeContent(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		s += fmt.Sprintf("line %d: 这是一段中文\n", i)
 	}
-	parts := splitByBytes(s, wecomStreamMaxBytes)
+	parts := splitByBytes(s, wecomMessageMaxBytes)
 	reassembled := ""
 	for _, p := range parts {
-		if len(p) > wecomStreamMaxBytes {
+		if len(p) > wecomMessageMaxBytes {
 			t.Fatalf("chunk exceeds maxBytes: %d", len(p))
 		}
 		reassembled += p
@@ -490,62 +491,86 @@ func TestFinalizePreviewMessage_UsesSameStreamIDAndFinishTrue(t *testing.T) {
 	}
 }
 
-func TestFinalizePreviewMessage_LongContentSplitsIntoFollowUpMessages(t *testing.T) {
+func ackPendingRequest(p *WSPlatform, reqID string) {
+	for {
+		if v, ok := p.pendingAcks.LoadAndDelete(reqID); ok {
+			v.(chan error) <- nil
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+func TestWSPlatform_StreamPreviewRolloverUsesWeComBudgets(t *testing.T) {
+	cfg := (&WSPlatform{}).StreamPreviewRolloverConfig()
+	if cfg.PreviewMaxBytes != 16384 {
+		t.Fatalf("preview budget = %d, want 16384", cfg.PreviewMaxBytes)
+	}
+	if cfg.FollowupMaxBytes != 2048 {
+		t.Fatalf("follow-up budget = %d, want 2048", cfg.FollowupMaxBytes)
+	}
+	if cfg.PreviewMaxBytes >= wecomWSStreamContentMaxBytes {
+		t.Fatalf("preview budget = %d, must leave headroom below physical limit %d", cfg.PreviewMaxBytes, wecomWSStreamContentMaxBytes)
+	}
+}
+
+func TestEnqueueLatestStreamSend_TerminalBarrierDropsStaleUpdate(t *testing.T) {
+	var frames []map[string]any
+	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
+	state := &wsStreamState{terminalQueued: true}
+	rc := wsReplyContext{reqID: "req-terminal", streamID: "stream-terminal"}
+	if err := p.enqueueLatestStreamSend(context.Background(), "req-terminal:stream-terminal", state, rc, "stale update", false); err != nil {
+		t.Fatalf("enqueue stale update: %v", err)
+	}
+	if len(frames) != 0 {
+		t.Fatalf("stale update should not be written after final queued: %#v", frames)
+	}
+}
+
+func TestBuildStreamFrame_EnforcesUTF8PhysicalByteLimit(t *testing.T) {
+	p := &WSPlatform{}
+	rc := wsReplyContext{reqID: "req-limit", streamID: "stream-limit"}
+	atLimit := strings.Repeat("你", 6826) + "ab"
+	if len([]byte(atLimit)) != wecomWSStreamContentMaxBytes {
+		t.Fatalf("test input bytes = %d, want %d", len([]byte(atLimit)), wecomWSStreamContentMaxBytes)
+	}
+
+	_, frame, err := p.buildStreamFrame(rc, atLimit, false)
+	if err != nil {
+		t.Fatalf("build stream frame at limit: %v", err)
+	}
+	content := frame["body"].(map[string]any)["stream"].(map[string]any)["content"].(string)
+	if content != atLimit || !utf8.ValidString(content) {
+		t.Fatalf("stream content was changed or invalid UTF-8")
+	}
+	if len([]byte(content)) != wecomWSStreamContentMaxBytes {
+		t.Fatalf("stream content bytes = %d, want %d", len([]byte(content)), wecomWSStreamContentMaxBytes)
+	}
+
+	if _, _, err := p.buildStreamFrame(rc, atLimit+"x", false); err == nil || !strings.Contains(err.Error(), "exceeds 20480 bytes") {
+		t.Fatalf("over-limit frame error = %v, want physical limit error", err)
+	}
+}
+
+func TestFinalizePreviewMessage_UsesSingleLargeStreamFrame(t *testing.T) {
 	var frames []map[string]any
 	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
 	handle := &wsPreviewHandle{replyCtx: wsReplyContext{reqID: "req_finalize_long", chatID: "chat_1", userID: "user_1", streamID: "stream_fixed"}}
 	content := strings.Repeat("你", 700)
 
-	go func() {
-		seen := map[string]bool{}
-		for len(seen) < 2 {
-			p.pendingAcks.Range(func(key, value any) bool {
-				k, ok := key.(string)
-				if !ok || seen[k] {
-					return true
-				}
-				seen[k] = true
-				value.(chan error) <- nil
-				return true
-			})
-			time.Sleep(2 * time.Millisecond)
-		}
-	}()
-
+	go ackPendingRequest(p, "req_finalize_long")
 	if err := p.FinalizePreviewMessage(context.Background(), handle, content); err != nil {
 		t.Fatalf("FinalizePreviewMessage failed: %v", err)
 	}
-
-	if len(frames) != 2 {
-		t.Fatalf("captured frames = %d, want 2", len(frames))
+	if len(frames) != 1 {
+		t.Fatalf("captured frames = %d, want 1", len(frames))
 	}
 	stream := frames[0]["body"].(map[string]any)["stream"].(map[string]any)
-	if frames[0]["cmd"] != "aibot_respond_msg" {
-		t.Fatalf("first frame cmd = %v, want aibot_respond_msg", frames[0]["cmd"])
+	if stream["id"] != "stream_fixed" || stream["finish"] != true || stream["content"] != content {
+		t.Fatalf("stream = %#v, want finalized full content", stream)
 	}
-	if stream["id"] != "stream_fixed" {
-		t.Fatalf("stream id = %v, want stream_fixed", stream["id"])
-	}
-	if stream["finish"] != true {
-		t.Fatalf("first frame finish = %v, want true", stream["finish"])
-	}
-	firstChunk, ok := stream["content"].(string)
-	if !ok {
-		t.Fatalf("first frame content type = %T, want string", stream["content"])
-	}
-	if len([]byte(firstChunk)) > wecomStreamMaxBytes {
-		t.Fatalf("first frame content bytes = %d, want <= %d", len([]byte(firstChunk)), wecomStreamMaxBytes)
-	}
-	if frames[1]["cmd"] != "aibot_send_msg" {
-		t.Fatalf("second frame cmd = %v, want aibot_send_msg", frames[1]["cmd"])
-	}
-	markdown := frames[1]["body"].(map[string]any)["markdown"].(map[string]any)
-	secondChunk, ok := markdown["content"].(string)
-	if !ok {
-		t.Fatalf("follow-up content type = %T, want string", markdown["content"])
-	}
-	if got := firstChunk + secondChunk; got != content {
-		t.Fatalf("reassembled content mismatch: len=%d want=%d", len([]rune(got)), len([]rune(content)))
+	if len([]byte(content)) > wecomWSStreamContentMaxBytes {
+		t.Fatal("test content should fit stream limit")
 	}
 }
 
@@ -553,7 +578,7 @@ func TestReply_LongContentSplitsIntoFollowUpMessages(t *testing.T) {
 	var frames []map[string]any
 	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
 	rctx := wsReplyContext{reqID: "req_long", chatID: "chat_1", userID: "user_1"}
-	content := strings.Repeat("a", wecomStreamMaxBytes) + "b"
+	content := strings.Repeat("a", wecomWSStreamContentMaxBytes) + "b"
 
 	go func() {
 		seen := map[string]bool{}
@@ -585,8 +610,8 @@ func TestReply_LongContentSplitsIntoFollowUpMessages(t *testing.T) {
 	if stream["finish"] != true {
 		t.Fatalf("first frame finish = %v, want true", stream["finish"])
 	}
-	if got := stream["content"].(string); len(got) != wecomStreamMaxBytes {
-		t.Fatalf("first frame content len = %d, want %d", len(got), wecomStreamMaxBytes)
+	if got := stream["content"].(string); len(got) != wecomWSStreamContentMaxBytes {
+		t.Fatalf("first frame content len = %d, want %d", len(got), wecomWSStreamContentMaxBytes)
 	}
 	if frames[1]["cmd"] != "aibot_send_msg" {
 		t.Fatalf("second frame cmd = %v, want aibot_send_msg", frames[1]["cmd"])
@@ -597,22 +622,13 @@ func TestReply_LongContentSplitsIntoFollowUpMessages(t *testing.T) {
 	}
 }
 
-func TestUpdateMessage_LongContentUsesPreviewNotice(t *testing.T) {
+func TestUpdateMessage_LongContentKeepsFullStreamPayload(t *testing.T) {
 	var frames []map[string]any
 	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
 	handle := &wsPreviewHandle{replyCtx: wsReplyContext{reqID: "req_preview", chatID: "chat_1", userID: "user_1", streamID: "stream_1"}}
 	content := strings.Repeat("你", 700)
 
-	go func() {
-		for {
-			if v, ok := p.pendingAcks.LoadAndDelete("req_preview"); ok {
-				v.(chan error) <- nil
-				return
-			}
-			time.Sleep(2 * time.Millisecond)
-		}
-	}()
-
+	go ackPendingRequest(p, "req_preview")
 	if err := p.UpdateMessage(context.Background(), handle, content); err != nil {
 		t.Fatalf("UpdateMessage failed: %v", err)
 	}
@@ -620,14 +636,11 @@ func TestUpdateMessage_LongContentUsesPreviewNotice(t *testing.T) {
 		t.Fatalf("captured frames = %d, want 1", len(frames))
 	}
 	stream := frames[0]["body"].(map[string]any)["stream"].(map[string]any)
-	got := stream["content"].(string)
-	if !strings.Contains(got, "[内容较长，正在整理后续片段...]") {
-		t.Fatalf("preview content = %q, want truncation notice", got)
+	if got := stream["content"].(string); got != content {
+		t.Fatalf("preview content = %q, want full content", got)
 	}
-	if len([]byte(got)) <= wecomStreamMaxBytes {
-		// acceptable: preview still fits after truncation
-	} else {
-		t.Fatalf("preview content bytes = %d, want <= %d", len([]byte(got)), wecomStreamMaxBytes)
+	if len([]byte(content)) > wecomWSStreamContentMaxBytes {
+		t.Fatal("test content should fit stream limit")
 	}
 }
 

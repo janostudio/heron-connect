@@ -3,9 +3,61 @@ package acp
 import (
 	"encoding/json"
 	"strings"
+	"sync"
 
 	"github.com/chenhg5/cc-connect/core"
 )
+
+type sessionUpdateMapper struct {
+	mu                    sync.Mutex
+	subagentParentToolIDs map[string]struct{}
+}
+
+func (m *sessionUpdateMapper) mapSessionUpdate(sessionID string, params json.RawMessage) []core.Event {
+	isSubagent := m.isSubagentUpdate(params)
+	events := mapSessionUpdate(sessionID, params)
+	if isSubagent {
+		for i := range events {
+			events[i].IsSubagent = true
+		}
+	}
+	return events
+}
+
+func (m *sessionUpdateMapper) isSubagentUpdate(params json.RawMessage) bool {
+	var notification struct {
+		Meta struct {
+			CodeBuddy struct {
+				ParentToolUseID string `json:"parentToolUseId"`
+			} `json:"codebuddy.ai"`
+		} `json:"_meta"`
+		Update struct {
+			SessionUpdate string `json:"sessionUpdate"`
+			ToolCallID    string `json:"toolCallId"`
+			Title         string `json:"title"`
+			Kind          string `json:"kind"`
+		} `json:"update"`
+	}
+	if json.Unmarshal(params, &notification) != nil {
+		return false
+	}
+
+	parentToolUseID := strings.TrimSpace(notification.Meta.CodeBuddy.ParentToolUseID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	_, isSubagentEvent := m.subagentParentToolIDs[parentToolUseID]
+	if notification.Update.SessionUpdate == "tool_call" &&
+		notification.Update.Title == "Agent" &&
+		notification.Update.Kind == "other" &&
+		notification.Update.ToolCallID != "" {
+		if m.subagentParentToolIDs == nil {
+			m.subagentParentToolIDs = make(map[string]struct{})
+		}
+		m.subagentParentToolIDs[notification.Update.ToolCallID] = struct{}{}
+	}
+	return parentToolUseID != "" && isSubagentEvent
+}
 
 // mapSessionUpdate turns one ACP session/update payload into zero or more core events.
 func mapSessionUpdate(sessionID string, params json.RawMessage) []core.Event {

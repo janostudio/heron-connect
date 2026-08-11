@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.0.2 (2026-08-10)
+
+### Fixed
+
+- **ACP 子 Agent 显示控制**：识别 CodeBuddy ACP `Agent` 工具调用及其关联的子 Agent 事件；`tool_messages = false` 时隐藏子 Agent 的文本、思考和工具细节，同时保留主 Agent 回复。
+- **企微 WebSocket 长回复**：流式预览使用 20,480-byte 内容上限，并保留安全展示余量；超出预览预算后实时续发后续消息，不再插入“内容较长”提示。
+- **企微流式格式与投递可靠性**：分段保持 UTF-8 边界和 Markdown 代码围栏完整；ACK 超时不再被视为已投递；终态帧提交后阻止旧的预览和工具进度更新覆盖最终回复。
+- **企微工具进度**：工具开始或完成时可建立或复用流式预览，使工具进度与已有回复共同展示，并在最终回复中清除进度区域。
+
+### Tests
+
+- 增加 ACP 子 Agent 标记、嵌套关系和 `tool_messages` 显示控制的覆盖。
+- 增加企微流式 UTF-8、字节上限、代码围栏续传、分段失败重试、终态屏障和工具进度的回归测试。
+
 ## v2.0.1 (2026-08-04)
 
 **New agent + model refresh**: Adds `codebuddy` headless CLI driver, completes the `cmd/cc-connect` → `cmd/cc-connect-qhn` directory rename, refreshes stale model lists across all agents and provider presets.

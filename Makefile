@@ -3,7 +3,7 @@ MODULE     := github.com/chenhg5/cc-connect
 CMD        := ./cmd/cc-connect-qhn
 DIST       := dist
 LOCAL_NPM_ROOT ?= $(shell npm root -g 2>/dev/null)
-LOCAL_CC_CONNECT_DIR ?= $(LOCAL_NPM_ROOT)/cc-connect
+LOCAL_CC_CONNECT_DIR ?= $(LOCAL_NPM_ROOT)/@qinghuangniao/cc-connect-qhn
 LOCAL_CC_CONNECT_BIN ?= $(LOCAL_CC_CONNECT_DIR)/bin/$(APP)
 
 VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -87,8 +87,8 @@ build-local: web
 	fi
 	@if [ ! -d "$(LOCAL_CC_CONNECT_DIR)" ]; then \
 		echo "Global npm package not found: $(LOCAL_CC_CONNECT_DIR)"; \
-		echo "Install with: npm install -g cc-connect"; \
-		echo "Or run: make build-local LOCAL_CC_CONNECT_BIN=/your/path/cc-connect"; \
+		echo "Install with: npm install -g @qinghuangniao/cc-connect-qhn"; \
+		echo "Or run: make build-local LOCAL_CC_CONNECT_BIN=/your/path/cc-connect-qhn"; \
 		exit 1; \
 	fi
 	@set -e; \

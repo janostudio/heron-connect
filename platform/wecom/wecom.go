@@ -500,7 +500,7 @@ func (p *Platform) Reply(ctx context.Context, rctx any, content string) error {
 		content = core.StripMarkdown(content)
 	}
 
-	chunks := splitByBytes(content, wecomStreamMaxBytes)
+	chunks := splitByBytes(content, wecomMessageMaxBytes)
 	for i, chunk := range chunks {
 		var sendErr error
 		if p.enableMarkdown {

@@ -2,10 +2,12 @@ package core
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // mockUpdaterPlatform implements Platform + MessageUpdater + PreviewStarter.
@@ -46,6 +48,167 @@ func (m *mockUpdaterPlatform) getMessages() []string {
 	out := make([]string, len(m.messages))
 	copy(out, m.messages)
 	return out
+}
+
+type rolloverMockPlatform struct {
+	mockUpdaterPlatform
+	sendErrors []error
+}
+
+func (m *rolloverMockPlatform) Send(ctx context.Context, replyCtx any, content string) error {
+	m.mockUpdaterPlatform.mu.Lock()
+	defer m.mockUpdaterPlatform.mu.Unlock()
+	if len(m.sendErrors) > 0 {
+		err := m.sendErrors[0]
+		m.sendErrors = m.sendErrors[1:]
+		if err != nil {
+			return err
+		}
+	}
+	m.mockUpdaterPlatform.messages = append(m.mockUpdaterPlatform.messages, "send:"+content)
+	return nil
+}
+
+func (m *rolloverMockPlatform) StreamPreviewRolloverConfig() StreamPreviewRolloverConfig {
+	return StreamPreviewRolloverConfig{PreviewMaxBytes: 10, FollowupMaxBytes: 6}
+}
+
+func TestTakeStreamSegment_UTF8ByteBoundary(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		maxBytes int
+		want     string
+	}{
+		{
+			name:     "preview boundary before Chinese rune",
+			text:     strings.Repeat("a", 16383) + "你tail",
+			maxBytes: 16384,
+			want:     strings.Repeat("a", 16383),
+		},
+		{
+			name:     "follow-up boundary before Chinese rune",
+			text:     strings.Repeat("b", 2047) + "好tail",
+			maxBytes: 2048,
+			want:     strings.Repeat("b", 2047),
+		},
+		{
+			name:     "boundary before emoji rune",
+			text:     strings.Repeat("c", 2046) + "🧪tail",
+			maxBytes: 2048,
+			want:     strings.Repeat("c", 2046),
+		},
+		{
+			name:     "prefers paragraph boundary",
+			text:     "first paragraph\n\nsecond paragraph continues",
+			maxBytes: 25,
+			want:     "first paragraph\n\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := takeStreamSegment(tt.text, tt.maxBytes, true)
+			if got != tt.want {
+				t.Fatalf("segment = %q, want %q", got, tt.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Fatalf("segment is not valid UTF-8: %q", got)
+			}
+			if len([]byte(got)) > tt.maxBytes {
+				t.Fatalf("segment bytes = %d, want <= %d", len([]byte(got)), tt.maxBytes)
+			}
+			if !strings.HasPrefix(tt.text, got) {
+				t.Fatalf("segment %q is not a source prefix", got)
+			}
+		})
+	}
+}
+
+func TestRenderFencedRolloverSegment_ClosesAndReopensCodeFence(t *testing.T) {
+	sp := &streamPreview{}
+	first, nextFence := sp.renderFencedRolloverSegment("```go\nfmt.Println(1)")
+	if !strings.HasSuffix(first, "\n```") {
+		t.Fatalf("first payload must close its code fence: %q", first)
+	}
+	if nextFence != "```go" {
+		t.Fatalf("next fence = %q, want ```go", nextFence)
+	}
+
+	sp.rolloverFence = nextFence
+	second, nextFence := sp.renderFencedRolloverSegment("fmt.Println(2)\n```\n")
+	if !strings.HasPrefix(second, "```go\n") {
+		t.Fatalf("second payload must reopen its code fence: %q", second)
+	}
+	if nextFence != "" {
+		t.Fatalf("next fence = %q, want empty after closing fence", nextFence)
+	}
+}
+
+func TestStreamPreview_RolloverSendsFollowupsBeforeFinish(t *testing.T) {
+	mp := &rolloverMockPlatform{}
+	sp := newStreamPreview(StreamPreviewCfg{Enabled: true, IntervalMs: 0, MinDeltaChars: 1, MaxChars: 4}, mp, "ctx", context.Background(), nil)
+
+	sp.appendText("hello\nworld\nagain")
+	if !sp.rolloverFinalized {
+		t.Fatal("expected preview rollover after exceeding preview budget")
+	}
+	if !strings.Contains(strings.Join(mp.getMessages(), "\n"), "send:") {
+		t.Fatal("expected a follow-up to be sent before finish")
+	}
+	if !sp.finish("hello\nworld\nagain") {
+		t.Fatal("expected rollover preview to handle final delivery")
+	}
+	msgs := mp.getMessages()
+	if len(msgs) < 2 || !strings.HasPrefix(msgs[0], "start:") || !strings.HasPrefix(msgs[1], "finalize:") {
+		t.Fatalf("preview lifecycle = %#v, want start then finalize", msgs)
+	}
+	var delivered string
+	for _, msg := range msgs {
+		switch {
+		case strings.HasPrefix(msg, "finalize:"):
+			delivered = strings.TrimPrefix(msg, "finalize:")
+		case strings.HasPrefix(msg, "send:"):
+			delivered += strings.TrimPrefix(msg, "send:")
+		}
+	}
+	if delivered != "hello\nworld\nagain" {
+		t.Fatalf("reassembled delivery = %q", delivered)
+	}
+}
+
+func TestStreamPreview_FinishRolloverRetriesOnlyUncommittedSuffix(t *testing.T) {
+	mp := &rolloverMockPlatform{sendErrors: []error{errors.New("transient"), nil}}
+	sp := newStreamPreview(StreamPreviewCfg{Enabled: true, IntervalMs: 0, MinDeltaChars: 1}, mp, "ctx", context.Background(), nil)
+	sp.appendText("hello")
+
+	final := "hello\nworld\nagain"
+	if !sp.finish(final) {
+		t.Fatal("expected retry of uncommitted follow-up to complete")
+	}
+	if sp.rolloverCommittedSource != final {
+		t.Fatalf("committed source = %q, want %q", sp.rolloverCommittedSource, final)
+	}
+	for _, msg := range mp.getMessages() {
+		if strings.HasPrefix(msg, "send:hello") {
+			t.Fatalf("committed preview prefix was replayed as follow-up: %#v", mp.getMessages())
+		}
+	}
+}
+
+func TestStreamPreview_FinishRolloverFailureReturnsFalse(t *testing.T) {
+	fail := errors.New("send failed")
+	mp := &rolloverMockPlatform{sendErrors: []error{fail, fail}}
+	sp := newStreamPreview(StreamPreviewCfg{Enabled: true, IntervalMs: 0, MinDeltaChars: 1}, mp, "ctx", context.Background(), nil)
+	sp.appendText("hello")
+
+	final := "hello\nworld\nagain"
+	if sp.finish(final) {
+		t.Fatal("finish should fail when the uncommitted follow-up cannot be delivered")
+	}
+	if sp.rolloverCommittedSource == final {
+		t.Fatalf("failed follow-up must not advance committed source: %q", sp.rolloverCommittedSource)
+	}
 }
 
 func TestStreamPreview_BasicFlow(t *testing.T) {
@@ -200,7 +363,7 @@ type mockKeepPreviewPlatform struct {
 	mode string
 
 	// ProgressAssembler call records
-	muProgress sync.Mutex
+	muProgress    sync.Mutex
 	toolStarts    []toolStartCall
 	toolCompletes []toolCompleteCall
 }

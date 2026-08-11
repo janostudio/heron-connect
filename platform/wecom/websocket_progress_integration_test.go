@@ -3,9 +3,11 @@ package wecom
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // captureWSFramesCapture returns a writeJSONFn that captures all sent frames.
@@ -103,6 +105,87 @@ func TestUpdateMessage_MergesProgressAndVisibleText(t *testing.T) {
 // only be sent when the next UpdateMessage (with visible text) triggers a merge.
 //
 // This is the key to avoiding "alternating flicker" between progress and text.
+func TestUpdateMessage_ToolHoldPreviewBudgetLeavesRoomForProgress(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		frames []map[string]any
+	)
+	p := &WSPlatform{writeJSONFn: captureWSFramesCapture(&frames, &mu), streamState: make(map[string]*wsStreamState)}
+	stopAck := ackReqLoopCapture(p)
+	defer stopAck()
+
+	handle := &wsPreviewHandle{replyCtx: wsReplyContext{reqID: "req-budget", userID: "user_1", streamID: "stream_budget"}}
+	if err := p.OnToolStart(context.Background(), handle, "Bash", strings.Repeat("🧪", 200), "go test ./..."); err != nil {
+		t.Fatalf("OnToolStart failed: %v", err)
+	}
+	visible := strings.Repeat("你", 5461) + "a"
+	if len([]byte(visible)) != wecomWSPreviewTextMaxBytes {
+		t.Fatalf("visible bytes = %d, want %d", len([]byte(visible)), wecomWSPreviewTextMaxBytes)
+	}
+	if err := p.UpdateMessage(context.Background(), handle, visible); err != nil {
+		t.Fatalf("UpdateMessage failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(frames) != 1 {
+		t.Fatalf("frames = %d, want 1", len(frames))
+	}
+	stream := frames[0]["body"].(map[string]any)["stream"].(map[string]any)
+	content := stream["content"].(string)
+	if stream["finish"] != false {
+		t.Fatalf("finish = %v, want false", stream["finish"])
+	}
+	for _, expected := range []string{visible, "🛠️", "---"} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("stream content missing %q", expected)
+		}
+	}
+	if strings.Contains(content, "内容较长，正在整理后续片段") {
+		t.Fatalf("stream content contains retired truncation notice")
+	}
+	if !utf8.ValidString(content) {
+		t.Fatal("stream content is not valid UTF-8")
+	}
+	if got := len([]byte(content)); got <= wecomWSPreviewTextMaxBytes || got > wecomWSStreamContentMaxBytes {
+		t.Fatalf("merged stream bytes = %d, want (%d, %d]", got, wecomWSPreviewTextMaxBytes, wecomWSStreamContentMaxBytes)
+	}
+}
+
+func TestSendPreviewStartThenToolProgressKeepsVisibleText(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		frames []map[string]any
+	)
+	p := &WSPlatform{writeJSONFn: captureWSFramesCapture(&frames, &mu), streamState: make(map[string]*wsStreamState)}
+	stopAck := ackReqLoopCapture(p)
+	defer stopAck()
+
+	rc := wsReplyContext{reqID: "req-start-tool", userID: "user_1", streamID: "ignored"}
+	handle, err := p.SendPreviewStart(context.Background(), rc, "partial answer")
+	if err != nil {
+		t.Fatalf("SendPreviewStart failed: %v", err)
+	}
+	if err := p.OnToolStart(context.Background(), handle, "Bash", "run tests", "go test ./..."); err != nil {
+		t.Fatalf("OnToolStart failed: %v", err)
+	}
+	if err := p.OnToolComplete(context.Background(), handle, "Bash", "ok"); err != nil {
+		t.Fatalf("OnToolComplete failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(frames) < 3 {
+		t.Fatalf("frames = %d, want start plus tool progress updates", len(frames))
+	}
+	toolFrame := frames[len(frames)-1]["body"].(map[string]any)["stream"].(map[string]any)["content"].(string)
+	for _, expected := range []string{"partial answer", "✅", "Bash"} {
+		if !strings.Contains(toolFrame, expected) {
+			t.Fatalf("tool frame missing %q: %q", expected, toolFrame)
+		}
+	}
+}
+
 func TestOnToolStart_DoesNotSendStandaloneFrameWhenNoVisibleText(t *testing.T) {
 	var (
 		mu     sync.Mutex

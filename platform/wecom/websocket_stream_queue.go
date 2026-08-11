@@ -11,9 +11,12 @@ func (p *WSPlatform) enqueueLatestStreamSend(ctx context.Context, key string, st
 	var superseded *wsStreamSend
 
 	state.mu.Lock()
-	if !finish && state.lastAcked == content {
+	if !finish && (state.terminalQueued || state.completed || state.lastAcked == content) {
 		state.mu.Unlock()
 		return nil
+	}
+	if finish {
+		state.terminalQueued = true
 	}
 	// Note: shouldHoldOnlyTool/holdTool logic was removed because tool_hold is now
 	// driven explicitly by the engine via ProgressAssembler.OnToolStart/OnToolComplete.
@@ -39,7 +42,9 @@ func (p *WSPlatform) enqueueLatestStreamSend(ctx context.Context, key string, st
 		}
 	}
 	state.pending = req
-	state.completed = false
+	if !finish {
+		state.completed = false
+	}
 	if state.running {
 		state.mu.Unlock()
 		select {
@@ -143,14 +148,18 @@ func (p *WSPlatform) runStreamQueue(key string, state *wsStreamState, rc wsReply
 			state.lastAcked = rendered
 			state.mu.Unlock()
 		}
-		if req.finish && err == nil {
+		if req.finish {
 			state.mu.Lock()
-			state.lastAcked = rendered
-			state.assembler.reset()
-			if state.wecomAssembler != nil {
-				state.wecomAssembler.reset()
+			if err == nil {
+				state.lastAcked = rendered
+				state.assembler.reset()
+				if state.wecomAssembler != nil {
+					state.wecomAssembler.reset()
+				}
+				state.completed = true
+			} else {
+				state.terminalQueued = false
 			}
-			state.completed = true
 			state.mu.Unlock()
 		}
 		req.done <- err

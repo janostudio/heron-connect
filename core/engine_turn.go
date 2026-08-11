@@ -130,6 +130,18 @@ func (e *Engine) startUnsolicitedReader(state *interactiveState, session *Sessio
 	go e.runUnsolicitedReader(ctx, cancel, done, state, agentSession, session, sessions, sessionKey, workspaceDir)
 }
 
+func (e *Engine) hidesSubagentEvent(event Event) bool {
+	if !event.IsSubagent || e.display.ToolMessages {
+		return false
+	}
+	switch event.Type {
+	case EventText, EventThinking, EventToolUse, EventToolResult:
+		return true
+	default:
+		return false
+	}
+}
+
 // runUnsolicitedReader is the goroutine body for the unsolicited event reader.
 // agentSession is captured by the caller so we don't race with
 // cleanupInteractiveState nilling state.agentSession.
@@ -194,6 +206,10 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 				state.mu.Unlock()
 				return
 			default:
+			}
+
+			if e.hidesSubagentEvent(event) {
+				continue
 			}
 
 			// Mark workspace active on first event.
@@ -649,6 +665,10 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			}
 		}
 
+		if e.hidesSubagentEvent(event) {
+			continue
+		}
+
 		state.mu.Lock()
 		p := state.platform
 		state.mu.Unlock()
@@ -809,7 +829,9 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					// polluting visibleText. Tool progress is a UI side-channel, never
 					// enters the model-produced answer text.
 					if assembler, ok := p.(ProgressAssembler); ok {
-						_ = assembler.OnToolStart(sp.ctx, sp.previewMsgID, event.ToolName, formattedInput, event.ToolInput)
+						if handle := sp.progressHandle(e.i18n.T(MsgStarting)); handle != nil {
+							_ = assembler.OnToolStart(sp.ctx, handle, event.ToolName, formattedInput, event.ToolInput)
+						}
 					}
 				}
 				continue
@@ -924,7 +946,9 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						if e.display.ToolMessages {
 							// Route tool result to ProgressAssembler side-channel.
 							if assembler, ok := p.(ProgressAssembler); ok {
-								_ = assembler.OnToolComplete(sp.ctx, sp.previewMsgID, event.ToolName, result)
+								if handle := sp.progressHandle(e.i18n.T(MsgStarting)); handle != nil {
+									_ = assembler.OnToolComplete(sp.ctx, handle, event.ToolName, result)
+								}
 							}
 						}
 						continue

@@ -42,6 +42,7 @@ type WSPlatform struct {
 	missedPong  atomic.Int32 // consecutive heartbeat acks not received
 	pendingAcks sync.Map     // req_id -> chan error, for sequential send with ack waiting
 	rateTracker *chatRateTracker
+	requireAck  bool // production WebSocket delivery requires confirmed ACKs
 }
 
 type wsStreamState struct {
@@ -53,6 +54,7 @@ type wsStreamState struct {
 	// wecomAssembler is the new three-region assembler for tool_hold mode.
 	// It is populated lazily when OnToolStart/OnToolComplete is first called.
 	wecomAssembler *wecomStreamAssembler
+	terminalQueued bool
 	completed      bool
 }
 
@@ -73,11 +75,69 @@ type wsReplyContext struct {
 	streamID string // stream id for aibot_respond_msg full-replacement updates
 }
 
+type wsPreviewPhase uint8
+
+const (
+	wsPreviewOpen wsPreviewPhase = iota
+	wsPreviewFinalizing
+	wsPreviewFinalized
+)
+
 type wsPreviewHandle struct {
+	mu       sync.Mutex
 	replyCtx wsReplyContext
+	phase    wsPreviewPhase
 }
 
-const wecomStreamMaxBytes = 2048
+func (h *wsPreviewHandle) isOpen() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.phase == wsPreviewOpen
+}
+
+func (h *wsPreviewHandle) lockOpen() bool {
+	h.mu.Lock()
+	if h.phase != wsPreviewOpen {
+		h.mu.Unlock()
+		return false
+	}
+	return true
+}
+
+func (h *wsPreviewHandle) unlock() {
+	h.mu.Unlock()
+}
+
+func (h *wsPreviewHandle) beginFinalization() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.phase != wsPreviewOpen {
+		return false
+	}
+	h.phase = wsPreviewFinalizing
+	return true
+}
+
+func (h *wsPreviewHandle) finishFinalization(success bool) {
+	h.mu.Lock()
+	if success {
+		h.phase = wsPreviewFinalized
+	} else if h.phase == wsPreviewFinalizing {
+		h.phase = wsPreviewOpen
+	}
+	h.mu.Unlock()
+}
+
+const (
+	// wecomMessageMaxBytes is the conservative limit for ordinary Markdown
+	// messages sent through aibot_send_msg and the legacy HTTP callback path.
+	wecomMessageMaxBytes = 2048
+	// wecomWSStreamContentMaxBytes is the documented UTF-8 limit for
+	// aibot_respond_msg stream.content.
+	wecomWSStreamContentMaxBytes = 20480
+	// Keep room for tool-hold progress rows added by the WeCom stream assembler.
+	wecomWSPreviewTextMaxBytes = 16384
+)
 
 // --- WebSocket protocol frame types (matching official SDK) ---
 
@@ -153,6 +213,7 @@ func newWebSocket(opts map[string]any) (core.Platform, error) {
 		allowFrom:   allowFrom,
 		accessLog:   newWecomAccessLogger(dataDir, project),
 		streamState: make(map[string]*wsStreamState),
+		requireAck:  true,
 	}, nil
 }
 
@@ -165,6 +226,13 @@ func (p *WSPlatform) generateReqID(prefix string) string {
 func (p *WSPlatform) Name() string { return "wecom" }
 
 func (p *WSPlatform) StreamPreviewMode() string { return "tool_hold" }
+
+func (p *WSPlatform) StreamPreviewRolloverConfig() core.StreamPreviewRolloverConfig {
+	return core.StreamPreviewRolloverConfig{
+		PreviewMaxBytes:  wecomWSPreviewTextMaxBytes,
+		FollowupMaxBytes: wecomMessageMaxBytes,
+	}
+}
 
 func (p *WSPlatform) Start(handler core.MessageHandler) error {
 	p.handler = handler
@@ -515,6 +583,9 @@ func (p *WSPlatform) logAccess(rec wecomAccessRecord) {
 }
 
 func (p *WSPlatform) buildStreamFrame(rc wsReplyContext, content string, finish bool) (string, map[string]any, error) {
+	if len([]byte(content)) > wecomWSStreamContentMaxBytes {
+		return "", nil, fmt.Errorf("wecom-ws: stream content exceeds %d bytes", wecomWSStreamContentMaxBytes)
+	}
 	if rc.reqID == "" {
 		return "", nil, fmt.Errorf("wecom-ws: reqID is empty, cannot send stream reply")
 	}
@@ -561,7 +632,7 @@ func (p *WSPlatform) Send(ctx context.Context, rctx any, content string) error {
 		return fmt.Errorf("wecom-ws: chatID is empty, cannot send proactive message")
 	}
 
-	chunks := splitByBytes(content, wecomStreamMaxBytes)
+	chunks := splitByBytes(content, wecomMessageMaxBytes)
 	for i, chunk := range chunks {
 		// Rate limit check before each chunk send
 		if p.rateTracker != nil {
@@ -650,8 +721,9 @@ func (p *WSPlatform) writeJSON(v any) error {
 	return p.conn.WriteJSON(v)
 }
 
-// writeAndWaitAck sends a frame and waits for the server ack before returning.
-// Falls back to non-blocking on timeout to avoid deadlocks.
+// writeAndWaitAck sends a frame and waits for a confirmed server ack before returning.
+// An ACK timeout is an unconfirmed delivery failure: callers must not advance
+// stream or rollover state because the remote side may not have applied it.
 // For 846607 (rate limit), retries with exponential backoff up to 3 times.
 // For 846608 (stream expired), returns the error immediately (no retry).
 func (p *WSPlatform) writeAndWaitAck(ctx context.Context, frame map[string]any, reqID string) error {
@@ -688,7 +760,10 @@ func (p *WSPlatform) writeAndWaitAck(ctx context.Context, frame map[string]any, 
 			return ctx.Err()
 		case <-time.After(wsAckTimeout):
 			p.pendingAcks.Delete(reqID)
-			slog.Debug("wecom-ws: ack timeout, proceeding", "req_id", reqID)
+			if p.requireAck {
+				return fmt.Errorf("wecom-ws: ack timeout for req_id=%s", reqID)
+			}
+			slog.Debug("wecom-ws: ack timeout accepted by test transport", "req_id", reqID)
 			return nil
 		}
 

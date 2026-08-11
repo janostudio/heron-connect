@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // StreamPreviewCfg controls the streaming preview behavior.
@@ -46,6 +47,12 @@ type streamPreview struct {
 	lastSentViaUpdate bool // true if lastSentText was delivered via UpdateMessage (not SendPreviewStart)
 	previewMsgID      any  // platform-specific ID for the preview message (returned by SendPreviewStart)
 	degraded          bool // if true, stop trying (platform doesn't support it or permanent error)
+
+	rollover                *StreamPreviewRolloverConfig
+	rolloverFinalized       bool
+	rolloverCommittedSource string
+	rolloverFence           string
+	closed                  bool
 
 	timer     *time.Timer
 	timerStop chan struct{} // closed when preview ends
@@ -130,6 +137,12 @@ func newStreamPreview(cfg StreamPreviewCfg, p Platform, replyCtx any, ctx contex
 	if mp, ok := p.(StreamPreviewModeProvider); ok {
 		sp.mode = strings.ToLower(strings.TrimSpace(mp.StreamPreviewMode()))
 	}
+	if rp, ok := p.(StreamPreviewRolloverProvider); ok {
+		cfg := rp.StreamPreviewRolloverConfig()
+		if cfg.PreviewMaxBytes > 0 && cfg.FollowupMaxBytes > 0 {
+			sp.rollover = &cfg
+		}
+	}
 	return sp
 }
 
@@ -164,17 +177,13 @@ func (sp *streamPreview) appendText(text string) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 
-	if sp.degraded || !sp.cfg.Enabled {
+	if sp.closed || sp.degraded || !sp.cfg.Enabled {
 		return
 	}
 
 	sp.fullText += text
 
-	displayText := sp.fullText
-	maxChars := sp.cfg.MaxChars
-	if maxChars > 0 && len([]rune(displayText)) > maxChars {
-		displayText = string([]rune(displayText)[:maxChars]) + "…"
-	}
+	displayText := sp.displayTextLocked()
 
 	delta := len([]rune(displayText)) - len([]rune(sp.lastSentText))
 	elapsed := time.Since(sp.lastSentAt)
@@ -202,20 +211,27 @@ func (sp *streamPreview) appendTextNow(text string) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 
-	if sp.degraded || !sp.cfg.Enabled {
+	if sp.closed || sp.degraded || !sp.cfg.Enabled {
 		return
 	}
 
 	sp.fullText += text
 
-	displayText := sp.fullText
-	maxChars := sp.cfg.MaxChars
-	if maxChars > 0 && len([]rune(displayText)) > maxChars {
-		displayText = string([]rune(displayText)[:maxChars]) + "…"
-	}
+	displayText := sp.displayTextLocked()
 
 	sp.cancelTimerLocked()
 	sp.flushLocked(displayText)
+}
+
+func (sp *streamPreview) displayTextLocked() string {
+	text := sp.fullText
+	if sp.rollover != nil {
+		return text
+	}
+	if maxChars := sp.cfg.MaxChars; maxChars > 0 && len([]rune(text)) > maxChars {
+		return string([]rune(text)[:maxChars]) + "…"
+	}
+	return text
 }
 
 func (sp *streamPreview) scheduleFlushLocked(delay time.Duration) {
@@ -226,15 +242,10 @@ func (sp *streamPreview) scheduleFlushLocked(delay time.Duration) {
 		sp.mu.Lock()
 		defer sp.mu.Unlock()
 		sp.timer = nil
-		if sp.degraded {
+		if sp.closed || sp.degraded {
 			return
 		}
-		displayText := sp.fullText
-		maxChars := sp.cfg.MaxChars
-		if maxChars > 0 && len([]rune(displayText)) > maxChars {
-			displayText = string([]rune(displayText)[:maxChars]) + "…"
-		}
-		sp.flushLocked(displayText)
+		sp.flushLocked(sp.displayTextLocked())
 	})
 }
 
@@ -247,6 +258,13 @@ func (sp *streamPreview) cancelTimerLocked() {
 
 // flushLocked sends the current preview text to the platform. Must hold sp.mu.
 func (sp *streamPreview) flushLocked(text string) {
+	if sp.closed {
+		return
+	}
+	if sp.rollover != nil {
+		sp.flushRolloverLocked(text)
+		return
+	}
 	if sp.transform != nil {
 		text = sp.transform(text)
 	}
@@ -303,6 +321,213 @@ func (sp *streamPreview) flushLocked(text string) {
 	sp.lastSentAt = time.Now()
 }
 
+func (sp *streamPreview) flushRolloverLocked(source string) {
+	if source == "" {
+		return
+	}
+	if sp.rolloverFinalized {
+		_ = sp.emitRolloverFollowupsLocked(source, false)
+		return
+	}
+	if payload := sp.renderRolloverPayload(source); len([]byte(payload)) <= sp.rollover.PreviewMaxBytes {
+		sp.flushPreviewLocked(payload)
+		return
+	}
+	sp.finalizeRolloverPreviewLocked(source)
+	if sp.rolloverFinalized {
+		_ = sp.emitRolloverFollowupsLocked(source, false)
+	}
+}
+
+func (sp *streamPreview) renderRolloverPayload(source string) string {
+	if sp.transform != nil {
+		return sp.transform(source)
+	}
+	return source
+}
+
+func (sp *streamPreview) flushPreviewLocked(text string) {
+	if text == sp.lastSentText {
+		return
+	}
+	updater, ok := sp.platform.(MessageUpdater)
+	if !ok {
+		sp.degraded = true
+		return
+	}
+	if sp.previewMsgID == nil {
+		starter, ok := sp.platform.(PreviewStarter)
+		if !ok {
+			sp.degraded = true
+			return
+		}
+		handle, err := starter.SendPreviewStart(sp.ctx, sp.replyCtx, text)
+		if err != nil {
+			sp.degraded = true
+			return
+		}
+		sp.previewMsgID = handle
+		sp.lastSentViaUpdate = false
+	} else if err := updater.UpdateMessage(sp.ctx, sp.previewMsgID, text); err != nil {
+		sp.degraded = true
+		return
+	} else {
+		sp.lastSentViaUpdate = true
+	}
+	sp.lastSentText = text
+	sp.lastSentAt = time.Now()
+}
+
+func (sp *streamPreview) takeRenderedRolloverSegment(source string, maxBytes int, final bool) (string, string, string) {
+	segment := takeStreamSegment(source, maxBytes, final)
+	for segment != "" {
+		payload, nextFence := sp.renderFencedRolloverSegment(segment)
+		payload = sp.renderRolloverPayload(payload)
+		if len([]byte(payload)) <= maxBytes {
+			return segment, payload, nextFence
+		}
+		_, size := utf8.DecodeLastRuneInString(segment)
+		segment = segment[:len(segment)-size]
+	}
+	return "", "", ""
+}
+
+func (sp *streamPreview) renderFencedRolloverSegment(source string) (string, string) {
+	payload := source
+	activeFence := sp.rolloverFence
+	if activeFence != "" {
+		payload = activeFence + "\n" + payload
+	}
+	for _, line := range strings.SplitAfter(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "```") && !strings.HasPrefix(trimmed, "~~~") {
+			continue
+		}
+		marker := trimmed[:3]
+		if activeFence == "" {
+			activeFence = strings.TrimRight(line, "\r\n")
+			continue
+		}
+		if strings.HasPrefix(activeFence, marker) {
+			activeFence = ""
+		}
+	}
+	if activeFence != "" {
+		payload = strings.TrimRight(payload, "\n") + "\n" + activeFence[:3]
+	}
+	return payload, activeFence
+}
+
+func (sp *streamPreview) finalizeRolloverPreviewLocked(source string) bool {
+	segmentSource, payload, nextFence := sp.takeRenderedRolloverSegment(source, sp.rollover.PreviewMaxBytes, true)
+	if segmentSource == "" {
+		return false
+	}
+	sp.flushPreviewLocked(payload)
+	if sp.previewMsgID == nil || sp.degraded {
+		return false
+	}
+	finalizer, ok := sp.platform.(PreviewFinalizer)
+	if !ok {
+		sp.degraded = true
+		return false
+	}
+	if err := finalizer.FinalizePreviewMessage(sp.ctx, sp.previewMsgID, payload); err != nil {
+		slog.Warn("stream preview: rollover finalization failed", "error", err, "platform", sp.platform.Name())
+		return false
+	}
+	sp.rolloverCommittedSource = segmentSource
+	sp.rolloverFence = nextFence
+	sp.rolloverFinalized = true
+	return true
+}
+
+func (sp *streamPreview) emitRolloverFollowupsLocked(source string, final bool) bool {
+	if !strings.HasPrefix(source, sp.rolloverCommittedSource) {
+		slog.Warn("stream preview: rollover source no longer has committed prefix", "platform", sp.platform.Name())
+		return false
+	}
+	for remaining := source[len(sp.rolloverCommittedSource):]; remaining != ""; {
+		if !final && len(remaining) <= sp.rollover.FollowupMaxBytes {
+			return true
+		}
+		segmentSource, payload, nextFence := sp.takeRenderedRolloverSegment(remaining, sp.rollover.FollowupMaxBytes, final)
+		if segmentSource == "" {
+			return true
+		}
+		if err := sp.platform.Send(sp.ctx, sp.replyCtx, payload); err != nil {
+			slog.Warn("stream preview: rollover follow-up failed", "error", err, "platform", sp.platform.Name())
+			return false
+		}
+		sp.rolloverCommittedSource += segmentSource
+		sp.rolloverFence = nextFence
+		remaining = source[len(sp.rolloverCommittedSource):]
+	}
+	return true
+}
+
+// takeStreamSegment returns a UTF-8-safe segment bounded by maxBytes. When the
+// content is oversized it prefers paragraph and line boundaries near the end.
+func takeStreamSegment(text string, maxBytes int, final bool) string {
+	if text == "" || maxBytes <= 0 {
+		return ""
+	}
+	if len(text) <= maxBytes {
+		if final {
+			return text
+		}
+		return ""
+	}
+	end := maxBytes
+	for end > 0 && end < len(text) && text[end]>>6 == 0b10 {
+		end--
+	}
+	candidate := text[:end]
+	for _, boundary := range []string{"\n\n", "\n"} {
+		if idx := strings.LastIndex(candidate, boundary); idx > end/2 {
+			return text[:idx+len(boundary)]
+		}
+	}
+	return candidate
+}
+
+func (sp *streamPreview) finishRolloverLocked(finalSource string) bool {
+	if sp.rolloverFinalized {
+		if !strings.HasPrefix(finalSource, sp.rolloverCommittedSource) {
+			return false
+		}
+		if sp.emitRolloverFollowupsLocked(finalSource, true) {
+			return true
+		}
+		// Retry only the uncommitted source suffix once. A second failure leaves
+		// finish false so the engine's normal final-response fallback is used.
+		return sp.emitRolloverFollowupsLocked(finalSource, true)
+	}
+	if sp.previewMsgID == nil || sp.degraded || finalSource == "" {
+		return false
+	}
+	if len([]byte(sp.renderRolloverPayload(finalSource))) > sp.rollover.PreviewMaxBytes {
+		if !sp.finalizeRolloverPreviewLocked(finalSource) {
+			return false
+		}
+		if sp.emitRolloverFollowupsLocked(finalSource, true) {
+			return true
+		}
+		return sp.emitRolloverFollowupsLocked(finalSource, true)
+	}
+	finalizer, ok := sp.platform.(PreviewFinalizer)
+	if !ok {
+		return false
+	}
+	payload, _ := sp.renderFencedRolloverSegment(finalSource)
+	payload = sp.renderRolloverPayload(payload)
+	if err := finalizer.FinalizePreviewMessage(sp.ctx, sp.previewMsgID, payload); err != nil {
+		return false
+	}
+	sp.rolloverCommittedSource = finalSource
+	return true
+}
+
 // freeze stops the streaming preview permanently: cancels pending timers,
 // updates the preview message in-place with the accumulated text, and marks
 // the preview as degraded so no further updates are sent.
@@ -339,6 +564,7 @@ func (sp *streamPreview) discard() {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 
+	sp.closed = true
 	sp.cancelTimerLocked()
 
 	select {
@@ -362,7 +588,7 @@ func (sp *streamPreview) discard() {
 func (sp *streamPreview) hasPreview() bool {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	return sp.previewMsgID != nil && !sp.degraded
+	return sp.previewMsgID != nil && !sp.closed && !sp.degraded
 }
 
 // ensurePreview sends a preview message if one hasn't been started yet.
@@ -370,7 +596,7 @@ func (sp *streamPreview) hasPreview() bool {
 // content. Used for reassurance messages during long agent operations.
 func (sp *streamPreview) ensurePreview(content string) {
 	sp.mu.Lock()
-	if sp.degraded || !sp.cfg.Enabled {
+	if sp.closed || sp.degraded || !sp.cfg.Enabled {
 		sp.mu.Unlock()
 		return
 	}
@@ -419,11 +645,21 @@ func (sp *streamPreview) ensurePreview(content string) {
 	}
 }
 
+func (sp *streamPreview) progressHandle(placeholder string) any {
+	sp.ensurePreview(placeholder)
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if sp.closed || sp.degraded {
+		return nil
+	}
+	return sp.previewMsgID
+}
+
 // reassure updates the existing preview message with reassurance content.
 // Does nothing if no preview is active.
 func (sp *streamPreview) reassure(content string) {
 	sp.mu.Lock()
-	if sp.degraded || sp.previewMsgID == nil {
+	if sp.closed || sp.degraded || sp.previewMsgID == nil {
 		sp.mu.Unlock()
 		return
 	}
@@ -465,6 +701,7 @@ func (sp *streamPreview) finish(finalText string) bool {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 
+	sp.closed = true
 	sp.cancelTimerLocked()
 
 	select {
@@ -473,6 +710,9 @@ func (sp *streamPreview) finish(finalText string) bool {
 		close(sp.timerStop)
 	}
 
+	if sp.rollover != nil {
+		return sp.finishRolloverLocked(finalText)
+	}
 	if sp.transform != nil {
 		finalText = sp.transform(finalText)
 	}
@@ -588,7 +828,7 @@ func (sp *streamPreview) setStatus(status CardStatus) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	sp.pendingStatus = status
-	if sp.previewMsgID == nil || sp.degraded {
+	if sp.previewMsgID == nil || sp.closed || sp.degraded {
 		return
 	}
 	if updater, ok := sp.platform.(PreviewStatusUpdater); ok {
