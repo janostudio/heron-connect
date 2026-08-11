@@ -57,7 +57,6 @@ func resolveResetOnIdle(configured *int) (time.Duration, bool) {
 	return time.Duration(defaultResetOnIdleMins) * time.Minute, true
 }
 
-
 // createProjectEngines creates engines for all projects in the config.
 // It returns the engines and their effective work directories.
 func createProjectEngines(cfg *config.Config, configPath string, observeFlag *bool, observeChannel *string) ([]*core.Engine, []string) {
@@ -619,7 +618,6 @@ func createProjectEngines(cfg *config.Config, configPath string, observeFlag *bo
 	return engines, effectiveWorkDirs
 }
 
-
 type initialModelRefreshStarter interface {
 	StartInitialModelRefresh()
 }
@@ -781,7 +779,11 @@ func main() {
 
 	// Start cron scheduler
 	// Start cron scheduler
-	cronStore, err := core.NewCronStore(cfg.DataDir)
+	cronDir := cfg.Cron.CronDataDir
+	if cronDir == "" {
+		cronDir = cfg.DataDir
+	}
+	cronStore, err := core.NewCronStore(cronDir)
 	if err != nil {
 		slog.Warn("cron store unavailable", "error", err)
 	}

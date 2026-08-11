@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.0.4 (2026-08-11)
+
+### Added
+
+- **`cron_data_dir` 配置**：在 `[cron]` 段新增 `cron_data_dir` 字段，可显式指定 cron `jobs.json` 的存储目录；空值时回退到顶层 `data_dir`，保持向后兼容。支持相对路径（基于进程工作目录解析），方便多环境部署。
+
+### Docs
+
+- **IM 群聊会话隔离说明**：新增 `docs/session-isolation.zh-CN.md`，说明各平台群聊的会话隔离/共享规则、`share_session_in_channel`、`thread_isolation` 及选型建议。
+
 ## v2.0.3 (2026-08-11)
 
 ### Fixed
