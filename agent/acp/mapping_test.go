@@ -89,6 +89,54 @@ func TestSessionUpdateMapper_marksSubagentEvents(t *testing.T) {
 	}
 }
 
+func TestSessionUpdateMapper_marksFlatParentToolCallID(t *testing.T) {
+	var mapper sessionUpdateMapper
+
+	parent := json.RawMessage(`{
+		"sessionId": "s1",
+		"update": {"sessionUpdate": "tool_call", "toolCallId": "call_EWPfXOg3PmQcBaguXGYFW9nL", "title": "Agent", "kind": "other"}
+	}`)
+	mapper.mapSessionUpdate("s1", parent)
+
+	child := json.RawMessage(`{
+		"sessionId": "s1",
+		"_meta": {"codebuddy.ai/parentToolCallId": "call_EWPfXOg3PmQcBaguXGYFW9nL"},
+		"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "child text"}}
+	}`)
+	if evs := mapper.mapSessionUpdate("s1", child); len(evs) != 1 || evs[0].Type != core.EventText || !evs[0].IsSubagent {
+		t.Fatalf("got %+v, want flat-field child event marked as subagent", evs)
+	}
+}
+
+func TestSessionUpdateMapper_prefersFlatParentToolCallID(t *testing.T) {
+	var mapper sessionUpdateMapper
+
+	for _, params := range []json.RawMessage{
+		json.RawMessage(`{
+			"sessionId": "s1",
+			"update": {"sessionUpdate": "tool_call", "toolCallId": "agent-1", "title": "Agent", "kind": "other"}
+		}`),
+		json.RawMessage(`{
+			"sessionId": "s1",
+			"update": {"sessionUpdate": "tool_call", "toolCallId": "search-1", "title": "Search", "kind": "search"}
+		}`),
+	} {
+		mapper.mapSessionUpdate("s1", params)
+	}
+
+	child := json.RawMessage(`{
+		"sessionId": "s1",
+		"_meta": {
+			"codebuddy.ai/parentToolCallId": "search-1",
+			"codebuddy.ai": {"parentToolUseId": "agent-1"}
+		},
+		"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "not a child of Agent"}}
+	}`)
+	if evs := mapper.mapSessionUpdate("s1", child); len(evs) != 1 || evs[0].IsSubagent {
+		t.Fatalf("got %+v, want flat parent ID to take precedence", evs)
+	}
+}
+
 func TestSessionUpdateMapper_keepsEventsForNonAgentParents(t *testing.T) {
 	var mapper sessionUpdateMapper
 

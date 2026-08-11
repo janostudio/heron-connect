@@ -27,7 +27,8 @@ func (m *sessionUpdateMapper) mapSessionUpdate(sessionID string, params json.Raw
 func (m *sessionUpdateMapper) isSubagentUpdate(params json.RawMessage) bool {
 	var notification struct {
 		Meta struct {
-			CodeBuddy struct {
+			ParentToolCallID string `json:"codebuddy.ai/parentToolCallId"`
+			CodeBuddy        struct {
 				ParentToolUseID string `json:"parentToolUseId"`
 			} `json:"codebuddy.ai"`
 		} `json:"_meta"`
@@ -42,11 +43,14 @@ func (m *sessionUpdateMapper) isSubagentUpdate(params json.RawMessage) bool {
 		return false
 	}
 
-	parentToolUseID := strings.TrimSpace(notification.Meta.CodeBuddy.ParentToolUseID)
+	parentToolID := strings.TrimSpace(notification.Meta.ParentToolCallID)
+	if parentToolID == "" {
+		parentToolID = strings.TrimSpace(notification.Meta.CodeBuddy.ParentToolUseID)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	_, isSubagentEvent := m.subagentParentToolIDs[parentToolUseID]
+	_, isSubagentEvent := m.subagentParentToolIDs[parentToolID]
 	if notification.Update.SessionUpdate == "tool_call" &&
 		notification.Update.Title == "Agent" &&
 		notification.Update.Kind == "other" &&
@@ -56,7 +60,7 @@ func (m *sessionUpdateMapper) isSubagentUpdate(params json.RawMessage) bool {
 		}
 		m.subagentParentToolIDs[notification.Update.ToolCallID] = struct{}{}
 	}
-	return parentToolUseID != "" && isSubagentEvent
+	return parentToolID != "" && isSubagentEvent
 }
 
 // mapSessionUpdate turns one ACP session/update payload into zero or more core events.
@@ -157,7 +161,7 @@ func mapToolCallUpdate(sessionID string, update json.RawMessage) []core.Event {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"rawOutput"`
-		Content    []struct {
+		Content []struct {
 			Type    string `json:"type"`
 			Content struct {
 				Type string `json:"type"`
@@ -192,12 +196,12 @@ func mapToolCallUpdate(sessionID string, update json.RawMessage) []core.Event {
 			body = "(failed)"
 		}
 		return []core.Event{{
-			Type:      core.EventToolResult,
-			ToolName:  toolLabel,
+			Type:       core.EventToolResult,
+			ToolName:   toolLabel,
 			ToolResult: truncateRunes(body, 800),
 			ToolStatus: st,
-			Content:   truncateRunes(body, 800),
-			SessionID: sessionID,
+			Content:    truncateRunes(body, 800),
+			SessionID:  sessionID,
 		}}
 	case st == "in_progress" || st == "pending" || st == "":
 		// ACP tool_call_update often streams partial JSON fragments while the tool
@@ -209,12 +213,12 @@ func mapToolCallUpdate(sessionID string, update json.RawMessage) []core.Event {
 	default:
 		if body != "" && st == "done" {
 			return []core.Event{{
-				Type:      core.EventToolResult,
-				ToolName:  toolLabel,
+				Type:       core.EventToolResult,
+				ToolName:   toolLabel,
 				ToolResult: truncateRunes(body, 800),
 				ToolStatus: st,
-				Content:   truncateRunes(body, 800),
-				SessionID: sessionID,
+				Content:    truncateRunes(body, 800),
+				SessionID:  sessionID,
 			}}
 		}
 		return nil

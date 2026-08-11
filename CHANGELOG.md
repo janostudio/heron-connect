@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.3 (2026-08-11)
+
+### Fixed
+
+- **ACP 子 Agent 元数据兼容**：同时支持 CodeBuddy 实际使用的扁平字段 `_meta["codebuddy.ai/parentToolCallId"]` 与原有嵌套字段 `_meta["codebuddy.ai"]["parentToolUseId"]`；扁平字段存在时优先使用，确保实际 ACP 通知中的子 Agent 事件能被正确识别和按 `tool_messages` 控制显示。
+
 ## v2.0.2 (2026-08-10)
 
 ### Fixed
