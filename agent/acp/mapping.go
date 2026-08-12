@@ -37,13 +37,27 @@ func (m *sessionUpdateMapper) isSubagentUpdate(params json.RawMessage) bool {
 			ToolCallID    string `json:"toolCallId"`
 			Title         string `json:"title"`
 			Kind          string `json:"kind"`
+			Meta          struct {
+				ParentToolCallID string `json:"codebuddy.ai/parentToolCallId"`
+				CodeBuddy        struct {
+					ParentToolUseID string `json:"parentToolUseId"`
+				} `json:"codebuddy.ai"`
+			} `json:"_meta"`
 		} `json:"update"`
 	}
 	if json.Unmarshal(params, &notification) != nil {
 		return false
 	}
 
-	parentToolID := strings.TrimSpace(notification.Meta.ParentToolCallID)
+	// Prefer params.update._meta (ACP protocol places parentToolCallId here),
+	// fall back to params._meta for compatibility.
+	parentToolID := strings.TrimSpace(notification.Update.Meta.ParentToolCallID)
+	if parentToolID == "" {
+		parentToolID = strings.TrimSpace(notification.Update.Meta.CodeBuddy.ParentToolUseID)
+	}
+	if parentToolID == "" {
+		parentToolID = strings.TrimSpace(notification.Meta.ParentToolCallID)
+	}
 	if parentToolID == "" {
 		parentToolID = strings.TrimSpace(notification.Meta.CodeBuddy.ParentToolUseID)
 	}

@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.0.5 (2026-08-12)
+
+### Fixed
+
+- **ACP 子 Agent `_meta` 解析位置**：将 `parentToolCallId` / `parentToolUseId` 的解析优先级改为先读 `params.update._meta`（ACP 协议实际位置），再回退 `params._meta`，修复 `tool_messages = false` 仍展示子 Agent 内容的问题。
+- **启动日志版本号**：`cc-connect-qhn is running` 日志增加 `version` 字段，便于从日志确认实际运行的版本。
+
 ## v2.0.4 (2026-08-11)
 
 ### Added

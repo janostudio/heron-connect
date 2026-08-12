@@ -100,8 +100,11 @@ func TestSessionUpdateMapper_marksFlatParentToolCallID(t *testing.T) {
 
 	child := json.RawMessage(`{
 		"sessionId": "s1",
-		"_meta": {"codebuddy.ai/parentToolCallId": "call_EWPfXOg3PmQcBaguXGYFW9nL"},
-		"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "child text"}}
+		"update": {
+			"sessionUpdate": "agent_message_chunk",
+			"content": {"type": "text", "text": "child text"},
+			"_meta": {"codebuddy.ai/parentToolCallId": "call_EWPfXOg3PmQcBaguXGYFW9nL"}
+		}
 	}`)
 	if evs := mapper.mapSessionUpdate("s1", child); len(evs) != 1 || evs[0].Type != core.EventText || !evs[0].IsSubagent {
 		t.Fatalf("got %+v, want flat-field child event marked as subagent", evs)
@@ -126,14 +129,121 @@ func TestSessionUpdateMapper_prefersFlatParentToolCallID(t *testing.T) {
 
 	child := json.RawMessage(`{
 		"sessionId": "s1",
-		"_meta": {
-			"codebuddy.ai/parentToolCallId": "search-1",
-			"codebuddy.ai": {"parentToolUseId": "agent-1"}
-		},
-		"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "not a child of Agent"}}
+		"update": {
+			"sessionUpdate": "agent_message_chunk",
+			"content": {"type": "text", "text": "not a child of Agent"},
+			"_meta": {
+				"codebuddy.ai/parentToolCallId": "search-1",
+				"codebuddy.ai": {"parentToolUseId": "agent-1"}
+			}
+		}
 	}`)
 	if evs := mapper.mapSessionUpdate("s1", child); len(evs) != 1 || evs[0].IsSubagent {
 		t.Fatalf("got %+v, want flat parent ID to take precedence", evs)
+	}
+}
+
+func TestSessionUpdateMapper_paramsMetaFallback(t *testing.T) {
+	var mapper sessionUpdateMapper
+
+	parent := json.RawMessage(`{
+		"sessionId": "s1",
+		"update": {"sessionUpdate": "tool_call", "toolCallId": "agent-1", "title": "Agent", "kind": "other"}
+	}`)
+	mapper.mapSessionUpdate("s1", parent)
+
+	child := json.RawMessage(`{
+		"sessionId": "s1",
+		"_meta": {"codebuddy.ai/parentToolCallId": "agent-1"},
+		"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "child text"}}
+	}`)
+	if evs := mapper.mapSessionUpdate("s1", child); len(evs) != 1 || !evs[0].IsSubagent {
+		t.Fatalf("got %+v, want params._meta fallback to mark child event", evs)
+	}
+}
+
+func TestSessionUpdateMapper_marksEventsWhenBothMetaEmpty(t *testing.T) {
+	var mapper sessionUpdateMapper
+
+	parent := json.RawMessage(`{
+		"sessionId": "s1",
+		"update": {"sessionUpdate": "tool_call", "toolCallId": "agent-1", "title": "Agent", "kind": "other"}
+	}`)
+	mapper.mapSessionUpdate("s1", parent)
+
+	child := json.RawMessage(`{
+		"sessionId": "s1",
+		"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "main text"}}
+	}`)
+	if evs := mapper.mapSessionUpdate("s1", child); len(evs) != 1 || evs[0].IsSubagent {
+		t.Fatalf("got %+v, want unmarked event when both _meta locations are absent", evs)
+	}
+}
+
+func TestSessionUpdateMapper_marksEventsWhenMetaIsEmptyObject(t *testing.T) {
+	var mapper sessionUpdateMapper
+
+	parent := json.RawMessage(`{
+		"sessionId": "s1",
+		"update": {"sessionUpdate": "tool_call", "toolCallId": "agent-1", "title": "Agent", "kind": "other"}
+	}`)
+	mapper.mapSessionUpdate("s1", parent)
+
+	child := json.RawMessage(`{
+		"sessionId": "s1",
+		"update": {
+			"sessionUpdate": "agent_message_chunk",
+			"content": {"type": "text", "text": "main text"},
+			"_meta": {}
+		}
+	}`)
+	if evs := mapper.mapSessionUpdate("s1", child); len(evs) != 1 || evs[0].IsSubagent {
+		t.Fatalf("got %+v, want unmarked event when update._meta is empty object", evs)
+	}
+}
+
+func TestSessionUpdateMapper_marksEventsWhenParentToolCallIDIsWhitespace(t *testing.T) {
+	var mapper sessionUpdateMapper
+
+	parent := json.RawMessage(`{
+		"sessionId": "s1",
+		"update": {"sessionUpdate": "tool_call", "toolCallId": "agent-1", "title": "Agent", "kind": "other"}
+	}`)
+	mapper.mapSessionUpdate("s1", parent)
+
+	for _, tt := range []struct {
+		name   string
+		params string
+	}{
+		{
+			name:   "update._meta whitespace",
+			params: `{"sessionId": "s1", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "main"}, "_meta": {"codebuddy.ai/parentToolCallId": "  "}}}`,
+		},
+		{
+			name:   "update._meta blank fallback to params._meta whitespace",
+			params: `{"sessionId": "s1", "_meta": {"codebuddy.ai/parentToolCallId": "  "}, "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "main"}}}`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if evs := mapper.mapSessionUpdate("s1", json.RawMessage(tt.params)); len(evs) != 1 || evs[0].IsSubagent {
+				t.Fatalf("got %+v, want unmarked event when parentToolCallId is whitespace-only", evs)
+			}
+		})
+	}
+}
+
+func TestSessionUpdateMapper_marksEventsWhenNoParentRegistered(t *testing.T) {
+	child := json.RawMessage(`{
+		"sessionId": "s1",
+		"update": {
+			"sessionUpdate": "agent_message_chunk",
+			"content": {"type": "text", "text": "orphan text"},
+			"_meta": {"codebuddy.ai/parentToolCallId": "orphan-1"}
+		}
+	}`)
+	var mapper sessionUpdateMapper
+	if evs := mapper.mapSessionUpdate("s1", child); len(evs) != 1 || evs[0].IsSubagent {
+		t.Fatalf("got %+v, want unmarked event when parentToolCallId has no registered Agent parent", evs)
 	}
 }
 

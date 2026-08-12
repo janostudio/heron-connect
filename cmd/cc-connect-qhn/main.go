@@ -1079,7 +1079,7 @@ func main() {
 		apiSrv.Start()
 	}
 
-	slog.Info("cc-connect-qhn is running", "projects", len(engines))
+	slog.Info("cc-connect-qhn is running", "projects", len(engines), "version", version)
 
 	// After startup, check if we were restarted and send success notification
 	if notify := core.ConsumeRestartNotify(cfg.DataDir); notify != nil {
