@@ -1,0 +1,22 @@
+# Discord + Claude Code
+# Gateway WebSocket，无需公网 IP
+
+[log]
+level = "info"
+
+[[projects]]
+name = "my-bot"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "/path/to/your/project"
+mode = "default"
+
+[[projects.platforms]]
+type = "discord"
+
+[projects.platforms.options]
+token = "your-discord-bot-token"
+allow_from = "*"

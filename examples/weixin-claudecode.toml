@@ -1,0 +1,22 @@
+# 微信个人号（ilink）+ Claude Code
+# 使用 `heron-connect weixin setup` 扫码获取 token
+
+[log]
+level = "info"
+
+[[projects]]
+name = "my-bot"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "/path/to/your/project"
+mode = "default"
+
+[[projects.platforms]]
+type = "weixin"
+
+[projects.platforms.options]
+token = "your-ilink-bot-bearer-token"
+allow_from = "*"

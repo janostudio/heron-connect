@@ -1,0 +1,25 @@
+# LINE + Claude Code
+# HTTP Webhook，需要公网 URL（可用 ngrok/cloudflared）
+
+[log]
+level = "info"
+
+[[projects]]
+name = "my-bot"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "/path/to/your/project"
+mode = "default"
+
+[[projects.platforms]]
+type = "line"
+
+[projects.platforms.options]
+channel_secret = "your-line-channel-secret"
+channel_token = "your-line-channel-access-token"
+port = "8080"
+callback_path = "/callback"
+allow_from = "*"

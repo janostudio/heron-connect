@@ -1,0 +1,870 @@
+package core
+
+import (
+	"context"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+	"unicode/utf8"
+)
+
+// StreamPreviewCfg controls the streaming preview behavior.
+type StreamPreviewCfg struct {
+	Enabled           bool     // global toggle
+	DisabledPlatforms []string // platforms where streaming preview is disabled (e.g. "feishu")
+	IntervalMs        int      // minimum ms between updates (default 1500)
+	MinDeltaChars     int      // minimum new chars before sending an update (default 30)
+	MaxChars          int      // 预览最大长度 (默认 4000)
+}
+
+// DefaultStreamPreviewCfg returns sensible defaults.
+func DefaultStreamPreviewCfg() StreamPreviewCfg {
+	return StreamPreviewCfg{
+		Enabled:           true,
+		DisabledPlatforms: nil,
+		IntervalMs:        1500,
+		MinDeltaChars:     30,
+		MaxChars:          4000,
+	}
+}
+
+// streamPreview manages the state and throttling of a single streaming preview.
+// It accumulates text from EventText events and periodically pushes
+// updates to the platform via MessageUpdater.UpdateMessage.
+type streamPreview struct {
+	mu sync.Mutex
+
+	cfg       StreamPreviewCfg
+	platform  Platform
+	replyCtx  any
+	ctx       context.Context
+	transform func(string) string
+
+	fullText          string // accumulated full text so far
+	lastSentText      string // what was last successfully sent to the platform
+	lastSentAt        time.Time
+	lastSentViaUpdate bool // true if lastSentText was delivered via UpdateMessage (not SendPreviewStart)
+	previewMsgID      any  // platform-specific ID for the preview message (returned by SendPreviewStart)
+	degraded          bool // if true, stop trying (platform doesn't support it or permanent error)
+
+	rollover                *StreamPreviewRolloverConfig
+	rolloverFinalized       bool
+	rolloverCommittedSource string
+	rolloverFence           string
+	closed                  bool
+
+	timer     *time.Timer
+	timerStop chan struct{} // closed when preview ends
+
+	pendingStatus CardStatus // last status set via setStatus(); applied on recovery
+	mode          string
+}
+
+// ToolStepKind identifies the kind of progress row shown in rich cards.
+type ToolStepKind string
+
+const (
+	ToolStepKindTool     ToolStepKind = "tool"
+	ToolStepKindThinking ToolStepKind = "thinking"
+)
+
+// ToolStep is one summarized progress row shown in rich progress cards.
+type ToolStep struct {
+	Kind     ToolStepKind // progress row kind; empty means tool for backward compatibility
+	Name     string       // tool name (e.g. "Bash", "Edit")
+	Summary  string       // human-readable summary shown in the card
+	Result   string       // optional tool output/result summary
+	Status   string       // optional tool status (e.g. completed/failed)
+	ExitCode *int         // optional process exit code
+	Success  *bool        // optional success flag
+	Done     bool         // true once a tool result has been observed
+}
+
+// RichCardSupporter is an optional interface for platforms that can build
+// native rich cards combining tool steps, markdown content, and an elapsed
+// time footer. `elapsed` is measured from turn start; pass 0 to hide the
+// footer.
+type RichCardSupporter interface {
+	BuildRichCard(status CardStatus, title string, steps []ToolStep, markdown string, streaming bool, elapsed time.Duration) string
+}
+
+// MarkdownTableSplitter is an optional interface for platforms that need
+// platform-specific markdown table chunking before final send.
+type MarkdownTableSplitter interface {
+	SplitMarkdownByTables(md string, maxTables int) []string
+}
+
+// PreviewStarter is an optional interface for platforms that can initiate a
+// streaming preview message and return a handle for subsequent updates.
+type PreviewStarter interface {
+	// SendPreviewStart sends the initial preview message and returns a handle
+	// that can be passed to UpdateMessage for edits. Returns nil handle if
+	// preview is not supported for this context.
+	SendPreviewStart(ctx context.Context, replyCtx any, content string) (previewHandle any, err error)
+}
+
+// PreviewCleaner is an optional interface for platforms that need to clean up
+// the preview message after the final response is sent (e.g. Discord deletes
+// the preview and sends a fresh message).
+type PreviewCleaner interface {
+	DeletePreviewMessage(ctx context.Context, previewHandle any) error
+}
+
+// PreviewFinishPreference is an optional interface for platforms that want to
+// keep the preview message as the final delivered message on normal completion.
+type PreviewFinishPreference interface {
+	KeepPreviewOnFinish() bool
+}
+
+// PreviewFinalizer is an optional interface for platforms that need a distinct
+// finalize step for preview messages. This is useful when the streaming update
+// API differs from the terminal completion API even when both target the same
+// visible message.
+type PreviewFinalizer interface {
+	FinalizePreviewMessage(ctx context.Context, previewHandle any, content string) error
+}
+
+func newStreamPreview(cfg StreamPreviewCfg, p Platform, replyCtx any, ctx context.Context, transform func(string) string) *streamPreview {
+	sp := &streamPreview{
+		cfg:       cfg,
+		platform:  p,
+		replyCtx:  replyCtx,
+		ctx:       ctx,
+		transform: transform,
+		timerStop: make(chan struct{}),
+	}
+	if mp, ok := p.(StreamPreviewModeProvider); ok {
+		sp.mode = strings.ToLower(strings.TrimSpace(mp.StreamPreviewMode()))
+	}
+	if rp, ok := p.(StreamPreviewRolloverProvider); ok {
+		cfg := rp.StreamPreviewRolloverConfig()
+		if cfg.PreviewMaxBytes > 0 && cfg.FollowupMaxBytes > 0 {
+			sp.rollover = &cfg
+		}
+	}
+	return sp
+}
+
+func (sp *streamPreview) previewMode() string {
+	if sp.mode == "" {
+		return "default"
+	}
+	return sp.mode
+}
+
+// canPreview returns true if the platform supports message updating and is not disabled.
+func (sp *streamPreview) canPreview() bool {
+	sp.mu.Lock()
+	degraded := sp.degraded
+	sp.mu.Unlock()
+	if degraded || !sp.cfg.Enabled {
+		return false
+	}
+	// Check if platform is in disabled list
+	platformName := sp.platform.Name()
+	for _, disabled := range sp.cfg.DisabledPlatforms {
+		if strings.EqualFold(disabled, platformName) {
+			return false
+		}
+	}
+	_, ok := sp.platform.(MessageUpdater)
+	return ok
+}
+
+// appendText adds new text content and triggers a throttled flush if needed.
+func (sp *streamPreview) appendText(text string) {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	if sp.closed || sp.degraded || !sp.cfg.Enabled {
+		return
+	}
+
+	sp.fullText += text
+
+	displayText := sp.displayTextLocked()
+
+	delta := len([]rune(displayText)) - len([]rune(sp.lastSentText))
+	elapsed := time.Since(sp.lastSentAt)
+	interval := time.Duration(sp.cfg.IntervalMs) * time.Millisecond
+
+	if delta < sp.cfg.MinDeltaChars && !sp.lastSentAt.IsZero() {
+		sp.scheduleFlushLocked(interval)
+		return
+	}
+
+	if elapsed < interval && !sp.lastSentAt.IsZero() {
+		remaining := interval - elapsed
+		sp.scheduleFlushLocked(remaining)
+		return
+	}
+
+	sp.cancelTimerLocked()
+	sp.flushLocked(displayText)
+}
+
+// appendTextNow adds new text content and immediately flushes the preview,
+// bypassing normal throttling. Use this for high-signal progress events such as
+// tool start/result so they are visible before the turn completes.
+func (sp *streamPreview) appendTextNow(text string) {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	if sp.closed || sp.degraded || !sp.cfg.Enabled {
+		return
+	}
+
+	sp.fullText += text
+
+	displayText := sp.displayTextLocked()
+
+	sp.cancelTimerLocked()
+	sp.flushLocked(displayText)
+}
+
+func (sp *streamPreview) displayTextLocked() string {
+	text := sp.fullText
+	if sp.rollover != nil {
+		return text
+	}
+	if maxChars := sp.cfg.MaxChars; maxChars > 0 && len([]rune(text)) > maxChars {
+		return string([]rune(text)[:maxChars]) + "…"
+	}
+	return text
+}
+
+func (sp *streamPreview) scheduleFlushLocked(delay time.Duration) {
+	if sp.timer != nil {
+		return // already scheduled
+	}
+	sp.timer = time.AfterFunc(delay, func() {
+		sp.mu.Lock()
+		defer sp.mu.Unlock()
+		sp.timer = nil
+		if sp.closed || sp.degraded {
+			return
+		}
+		sp.flushLocked(sp.displayTextLocked())
+	})
+}
+
+func (sp *streamPreview) cancelTimerLocked() {
+	if sp.timer != nil {
+		sp.timer.Stop()
+		sp.timer = nil
+	}
+}
+
+// flushLocked sends the current preview text to the platform. Must hold sp.mu.
+func (sp *streamPreview) flushLocked(text string) {
+	if sp.closed {
+		return
+	}
+	if sp.rollover != nil {
+		sp.flushRolloverLocked(text)
+		return
+	}
+	if sp.transform != nil {
+		text = sp.transform(text)
+	}
+	if text == sp.lastSentText || text == "" {
+		return
+	}
+
+	updater, ok := sp.platform.(MessageUpdater)
+	if !ok {
+		slog.Warn("stream preview: platform does not support UpdateMessage, degrading",
+			"platform", sp.platform.Name())
+		sp.degraded = true
+		return
+	}
+
+	if sp.previewMsgID == nil {
+		// First preview: try to send a new preview message
+		if starter, ok := sp.platform.(PreviewStarter); ok {
+			slog.Debug("stream preview: sending first preview via SendPreviewStart", "text_len", len(text))
+			handle, err := starter.SendPreviewStart(sp.ctx, sp.replyCtx, text)
+			if err != nil {
+				slog.Warn("stream preview: start failed, degrading",
+					"error", err,
+					"platform", sp.platform.Name())
+				sp.degraded = true
+				return
+			}
+			sp.previewMsgID = handle
+		} else {
+			if err := sp.platform.Send(sp.ctx, sp.replyCtx, text); err != nil {
+				slog.Debug("stream preview: initial send failed", "error", err)
+				sp.degraded = true
+				return
+			}
+			sp.previewMsgID = sp.replyCtx
+		}
+		sp.lastSentText = text
+		sp.lastSentViaUpdate = false
+		sp.lastSentAt = time.Now()
+		return
+	}
+
+	// Update existing preview message
+	slog.Debug("stream preview: updating via UpdateMessage", "text_len", len(text))
+	if err := updater.UpdateMessage(sp.ctx, sp.previewMsgID, text); err != nil {
+		slog.Warn("stream preview: update failed, degrading",
+			"error", err,
+			"platform", sp.platform.Name())
+		sp.degraded = true
+		return
+	}
+	sp.lastSentText = text
+	sp.lastSentViaUpdate = true
+	sp.lastSentAt = time.Now()
+}
+
+func (sp *streamPreview) flushRolloverLocked(source string) {
+	if source == "" {
+		return
+	}
+	if sp.rolloverFinalized {
+		_ = sp.emitRolloverFollowupsLocked(source, false)
+		return
+	}
+	if payload := sp.renderRolloverPayload(source); len([]byte(payload)) <= sp.rollover.PreviewMaxBytes {
+		sp.flushPreviewLocked(payload)
+		return
+	}
+	sp.finalizeRolloverPreviewLocked(source)
+	if sp.rolloverFinalized {
+		_ = sp.emitRolloverFollowupsLocked(source, false)
+	}
+}
+
+func (sp *streamPreview) renderRolloverPayload(source string) string {
+	if sp.transform != nil {
+		return sp.transform(source)
+	}
+	return source
+}
+
+func (sp *streamPreview) flushPreviewLocked(text string) {
+	if text == sp.lastSentText {
+		return
+	}
+	updater, ok := sp.platform.(MessageUpdater)
+	if !ok {
+		sp.degraded = true
+		return
+	}
+	if sp.previewMsgID == nil {
+		starter, ok := sp.platform.(PreviewStarter)
+		if !ok {
+			sp.degraded = true
+			return
+		}
+		handle, err := starter.SendPreviewStart(sp.ctx, sp.replyCtx, text)
+		if err != nil {
+			sp.degraded = true
+			return
+		}
+		sp.previewMsgID = handle
+		sp.lastSentViaUpdate = false
+	} else if err := updater.UpdateMessage(sp.ctx, sp.previewMsgID, text); err != nil {
+		sp.degraded = true
+		return
+	} else {
+		sp.lastSentViaUpdate = true
+	}
+	sp.lastSentText = text
+	sp.lastSentAt = time.Now()
+}
+
+func (sp *streamPreview) takeRenderedRolloverSegment(source string, maxBytes int, final bool) (string, string, string) {
+	segment := takeStreamSegment(source, maxBytes, final)
+	for segment != "" {
+		payload, nextFence := sp.renderFencedRolloverSegment(segment)
+		payload = sp.renderRolloverPayload(payload)
+		if len([]byte(payload)) <= maxBytes {
+			return segment, payload, nextFence
+		}
+		_, size := utf8.DecodeLastRuneInString(segment)
+		segment = segment[:len(segment)-size]
+	}
+	return "", "", ""
+}
+
+func (sp *streamPreview) renderFencedRolloverSegment(source string) (string, string) {
+	payload := source
+	activeFence := sp.rolloverFence
+	if activeFence != "" {
+		payload = activeFence + "\n" + payload
+	}
+	for _, line := range strings.SplitAfter(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "```") && !strings.HasPrefix(trimmed, "~~~") {
+			continue
+		}
+		marker := trimmed[:3]
+		if activeFence == "" {
+			activeFence = strings.TrimRight(line, "\r\n")
+			continue
+		}
+		if strings.HasPrefix(activeFence, marker) {
+			activeFence = ""
+		}
+	}
+	if activeFence != "" {
+		payload = strings.TrimRight(payload, "\n") + "\n" + activeFence[:3]
+	}
+	return payload, activeFence
+}
+
+func (sp *streamPreview) finalizeRolloverPreviewLocked(source string) bool {
+	segmentSource, payload, nextFence := sp.takeRenderedRolloverSegment(source, sp.rollover.PreviewMaxBytes, true)
+	if segmentSource == "" {
+		return false
+	}
+	sp.flushPreviewLocked(payload)
+	if sp.previewMsgID == nil || sp.degraded {
+		return false
+	}
+	finalizer, ok := sp.platform.(PreviewFinalizer)
+	if !ok {
+		sp.degraded = true
+		return false
+	}
+	if err := finalizer.FinalizePreviewMessage(sp.ctx, sp.previewMsgID, payload); err != nil {
+		slog.Warn("stream preview: rollover finalization failed", "error", err, "platform", sp.platform.Name())
+		return false
+	}
+	sp.rolloverCommittedSource = segmentSource
+	sp.rolloverFence = nextFence
+	sp.rolloverFinalized = true
+	return true
+}
+
+func (sp *streamPreview) emitRolloverFollowupsLocked(source string, final bool) bool {
+	if !strings.HasPrefix(source, sp.rolloverCommittedSource) {
+		slog.Warn("stream preview: rollover source no longer has committed prefix", "platform", sp.platform.Name())
+		return false
+	}
+	for remaining := source[len(sp.rolloverCommittedSource):]; remaining != ""; {
+		if !final && len(remaining) <= sp.rollover.FollowupMaxBytes {
+			return true
+		}
+		segmentSource, payload, nextFence := sp.takeRenderedRolloverSegment(remaining, sp.rollover.FollowupMaxBytes, final)
+		if segmentSource == "" {
+			return true
+		}
+		if err := sp.platform.Send(sp.ctx, sp.replyCtx, payload); err != nil {
+			slog.Warn("stream preview: rollover follow-up failed", "error", err, "platform", sp.platform.Name())
+			return false
+		}
+		sp.rolloverCommittedSource += segmentSource
+		sp.rolloverFence = nextFence
+		remaining = source[len(sp.rolloverCommittedSource):]
+	}
+	return true
+}
+
+// takeStreamSegment returns a UTF-8-safe segment bounded by maxBytes. When the
+// content is oversized it prefers paragraph and line boundaries near the end.
+func takeStreamSegment(text string, maxBytes int, final bool) string {
+	if text == "" || maxBytes <= 0 {
+		return ""
+	}
+	if len(text) <= maxBytes {
+		if final {
+			return text
+		}
+		return ""
+	}
+	end := maxBytes
+	for end > 0 && end < len(text) && text[end]>>6 == 0b10 {
+		end--
+	}
+	candidate := text[:end]
+	for _, boundary := range []string{"\n\n", "\n"} {
+		if idx := strings.LastIndex(candidate, boundary); idx > end/2 {
+			return text[:idx+len(boundary)]
+		}
+	}
+	return candidate
+}
+
+func (sp *streamPreview) finishRolloverLocked(finalSource string) bool {
+	if sp.rolloverFinalized {
+		if !strings.HasPrefix(finalSource, sp.rolloverCommittedSource) {
+			return false
+		}
+		if sp.emitRolloverFollowupsLocked(finalSource, true) {
+			return true
+		}
+		// Retry only the uncommitted source suffix once. A second failure leaves
+		// finish false so the engine's normal final-response fallback is used.
+		return sp.emitRolloverFollowupsLocked(finalSource, true)
+	}
+	if sp.previewMsgID == nil || sp.degraded || finalSource == "" {
+		return false
+	}
+	if len([]byte(sp.renderRolloverPayload(finalSource))) > sp.rollover.PreviewMaxBytes {
+		if !sp.finalizeRolloverPreviewLocked(finalSource) {
+			return false
+		}
+		if sp.emitRolloverFollowupsLocked(finalSource, true) {
+			return true
+		}
+		return sp.emitRolloverFollowupsLocked(finalSource, true)
+	}
+	finalizer, ok := sp.platform.(PreviewFinalizer)
+	if !ok {
+		return false
+	}
+	payload, _ := sp.renderFencedRolloverSegment(finalSource)
+	payload = sp.renderRolloverPayload(payload)
+	if err := finalizer.FinalizePreviewMessage(sp.ctx, sp.previewMsgID, payload); err != nil {
+		return false
+	}
+	sp.rolloverCommittedSource = finalSource
+	return true
+}
+
+// freeze stops the streaming preview permanently: cancels pending timers,
+// updates the preview message in-place with the accumulated text, and marks
+// the preview as degraded so no further updates are sent.
+// Call this when a permission prompt or other interruption occurs.
+func (sp *streamPreview) freeze() {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	sp.cancelTimerLocked()
+
+	if sp.previewMsgID != nil && !sp.degraded {
+		if updater, ok := sp.platform.(MessageUpdater); ok {
+			text := sp.fullText
+			maxChars := sp.cfg.MaxChars
+			if maxChars > 0 && len([]rune(text)) > maxChars {
+				text = string([]rune(text)[:maxChars]) + "…"
+			}
+			if text != "" {
+				if sp.transform != nil {
+					text = sp.transform(text)
+				}
+				_ = updater.UpdateMessage(sp.ctx, sp.previewMsgID, text)
+			}
+		}
+	}
+
+	sp.degraded = true
+}
+
+// discard removes the preview message when possible and disables further
+// preview updates. Call this when the caller intends to send a separate
+// non-preview message (for example after tool use or on terminal errors).
+func (sp *streamPreview) discard() {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	sp.closed = true
+	sp.cancelTimerLocked()
+
+	select {
+	case <-sp.timerStop:
+	default:
+		close(sp.timerStop)
+	}
+
+	if sp.previewMsgID != nil {
+		if cleaner, ok := sp.platform.(PreviewCleaner); ok {
+			slog.Debug("stream preview discard: deleting preview")
+			_ = cleaner.DeletePreviewMessage(sp.ctx, sp.previewMsgID)
+		}
+	}
+
+	sp.previewMsgID = nil
+	sp.degraded = true
+}
+
+// hasPreview returns true if a streaming preview has been started for this turn.
+func (sp *streamPreview) hasPreview() bool {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	return sp.previewMsgID != nil && !sp.closed && !sp.degraded
+}
+
+// ensurePreview sends a preview message if one hasn't been started yet.
+// If a preview already exists, it updates the existing preview with the given
+// content. Used for reassurance messages during long agent operations.
+func (sp *streamPreview) ensurePreview(content string) {
+	sp.mu.Lock()
+	if sp.closed || sp.degraded || !sp.cfg.Enabled {
+		sp.mu.Unlock()
+		return
+	}
+	if sp.previewMsgID != nil {
+		// Already have a preview, update it
+		sp.mu.Unlock()
+		sp.reassure(content)
+		return
+	}
+	sp.mu.Unlock()
+
+	// No preview yet, create one
+	updater, ok := sp.platform.(MessageUpdater)
+	if !ok {
+		sp.mu.Lock()
+		sp.degraded = true
+		sp.mu.Unlock()
+		return
+	}
+
+	transformed := content
+	if sp.transform != nil {
+		transformed = sp.transform(content)
+	}
+
+	if starter, ok := sp.platform.(PreviewStarter); ok {
+		handle, err := starter.SendPreviewStart(sp.ctx, sp.replyCtx, transformed)
+		if err != nil {
+			slog.Debug("stream preview: ensurePreview start failed", "error", err)
+			sp.mu.Lock()
+			sp.degraded = true
+			sp.mu.Unlock()
+			return
+		}
+		sp.mu.Lock()
+		sp.previewMsgID = handle
+		// Do NOT update lastSentText here — reassurance text is not real
+		// agent output. Keeping the old lastSentText ensures that when real
+		// content arrives via appendText, the delta calculation is correct.
+		sp.mu.Unlock()
+	} else {
+		_ = updater // suppress unused warning
+		sp.mu.Lock()
+		sp.degraded = true
+		sp.mu.Unlock()
+	}
+}
+
+func (sp *streamPreview) progressHandle(placeholder string) any {
+	sp.ensurePreview(placeholder)
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if sp.closed || sp.degraded {
+		return nil
+	}
+	return sp.previewMsgID
+}
+
+// reassure updates the existing preview message with reassurance content.
+// Does nothing if no preview is active.
+func (sp *streamPreview) reassure(content string) {
+	sp.mu.Lock()
+	if sp.closed || sp.degraded || sp.previewMsgID == nil {
+		sp.mu.Unlock()
+		return
+	}
+	sp.mu.Unlock()
+
+	transformed := content
+	if sp.transform != nil {
+		transformed = sp.transform(content)
+	}
+
+	updater, ok := sp.platform.(MessageUpdater)
+	if !ok {
+		sp.mu.Lock()
+		sp.degraded = true
+		sp.mu.Unlock()
+		return
+	}
+
+	if err := updater.UpdateMessage(sp.ctx, sp.previewMsgID, transformed); err != nil {
+		slog.Debug("stream preview: reassure update failed", "error", err)
+		sp.mu.Lock()
+		sp.degraded = true
+		sp.mu.Unlock()
+		return
+	}
+
+	sp.mu.Lock()
+	// Do NOT update lastSentText — reassurance text should not affect
+	// the delta calculation when real agent output arrives.
+	sp.lastSentAt = time.Now()
+	sp.mu.Unlock()
+}
+
+// finish is called when the agent response is complete. It cancels any pending
+// timer and optionally cleans up the preview message.
+// Returns true if a preview was active and the final message was sent via preview
+// (so the caller should skip sending the full response separately).
+func (sp *streamPreview) finish(finalText string) bool {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	sp.closed = true
+	sp.cancelTimerLocked()
+
+	select {
+	case <-sp.timerStop:
+	default:
+		close(sp.timerStop)
+	}
+
+	if sp.rollover != nil {
+		return sp.finishRolloverLocked(finalText)
+	}
+	if sp.transform != nil {
+		finalText = sp.transform(finalText)
+	}
+	if sp.previewMsgID == nil || sp.degraded {
+		if sp.previewMsgID != nil && sp.degraded {
+			// Try to recover degraded preview via UpdateMessage before falling back to delete
+			if finalText != "" {
+				if updater, ok := sp.platform.(MessageUpdater); ok {
+					if err := updater.UpdateMessage(sp.ctx, sp.previewMsgID, finalText); err == nil {
+						if sp.pendingStatus != "" {
+							if statusUpdater, ok := sp.platform.(PreviewStatusUpdater); ok {
+								statusUpdater.SetPreviewStatus(sp.previewMsgID, sp.pendingStatus)
+							}
+						}
+						return true
+					} else {
+						slog.Debug("stream preview finish: degraded UpdateMessage failed, cleaning up", "error", err)
+					}
+				}
+			}
+			if cleaner, ok := sp.platform.(PreviewCleaner); ok {
+				slog.Debug("stream preview finish: deleting stale preview (degraded)")
+				_ = cleaner.DeletePreviewMessage(sp.ctx, sp.previewMsgID)
+			}
+		}
+		slog.Debug("stream preview finish: no active preview", "hasHandle", sp.previewMsgID != nil, "degraded", sp.degraded)
+		return false
+	}
+
+	keepPreview := false
+	if pref, ok := sp.platform.(PreviewFinishPreference); ok {
+		keepPreview = pref.KeepPreviewOnFinish()
+	}
+
+	// If platform wants to delete the preview and send fresh, let it.
+	if cleaner, ok := sp.platform.(PreviewCleaner); ok && !keepPreview {
+		slog.Debug("stream preview finish: deleting preview (PreviewCleaner)")
+		_ = cleaner.DeletePreviewMessage(sp.ctx, sp.previewMsgID)
+		return false
+	}
+
+	updater, ok := sp.platform.(MessageUpdater)
+	if !ok {
+		slog.Debug("stream preview finish: no MessageUpdater")
+		return false
+	}
+
+	if finalText == "" {
+		slog.Debug("stream preview finish: empty final text")
+		return false
+	}
+
+	if finalizer, ok := sp.platform.(PreviewFinalizer); ok {
+		slog.Debug("stream preview finish: finalizing preview via PreviewFinalizer",
+			"text_len", len(finalText), "lastSent_len", len(sp.lastSentText),
+			"same", finalText == sp.lastSentText, "viaUpdate", sp.lastSentViaUpdate)
+		if err := finalizer.FinalizePreviewMessage(sp.ctx, sp.previewMsgID, finalText); err != nil {
+			slog.Debug("stream preview finish: preview finalizer FAILED, cleaning up preview", "error", err)
+			if cleaner, ok := sp.platform.(PreviewCleaner); ok {
+				_ = cleaner.DeletePreviewMessage(sp.ctx, sp.previewMsgID)
+			}
+			return false
+		}
+		if sp.pendingStatus != "" {
+			if statusUpdater, ok := sp.platform.(PreviewStatusUpdater); ok {
+				statusUpdater.SetPreviewStatus(sp.previewMsgID, sp.pendingStatus)
+			}
+		}
+		slog.Debug("stream preview finish: success via PreviewFinalizer")
+		return true
+	}
+
+	// If the final text is identical to what was last sent via UpdateMessage,
+	// skip the redundant API call. This prevents duplicate messages on platforms
+	// (e.g. Feishu) where patching with identical content may fail.
+	// Only skip when lastSentViaUpdate is true — if the text was only sent via
+	// SendPreviewStart (first flush), we must still call UpdateMessage because
+	// it may apply different formatting (e.g. Markdown→HTML for Telegram).
+	if finalText == sp.lastSentText && sp.lastSentViaUpdate {
+		slog.Debug("stream preview finish: text unchanged since last UpdateMessage, skipping",
+			"text_len", len(finalText))
+		return true
+	}
+
+	// Try to update the preview in-place with the full final text.
+	// maxChars only throttles intermediate streaming updates; at finish time
+	// we always attempt a single final update regardless of length.
+	slog.Debug("stream preview finish: sending final UpdateMessage",
+		"text_len", len(finalText), "lastSent_len", len(sp.lastSentText),
+		"same", finalText == sp.lastSentText, "viaUpdate", sp.lastSentViaUpdate)
+	if err := updater.UpdateMessage(sp.ctx, sp.previewMsgID, finalText); err != nil {
+		slog.Debug("stream preview finish: final update FAILED, cleaning up preview", "error", err)
+		// Update failed (e.g. text too long for platform edit API).
+		// Try to delete the stale preview so caller can send a fresh message.
+		if cleaner, ok := sp.platform.(PreviewCleaner); ok {
+			_ = cleaner.DeletePreviewMessage(sp.ctx, sp.previewMsgID)
+		}
+		return false
+	}
+	if sp.pendingStatus != "" {
+		if statusUpdater, ok := sp.platform.(PreviewStatusUpdater); ok {
+			statusUpdater.SetPreviewStatus(sp.previewMsgID, sp.pendingStatus)
+		}
+	}
+	slog.Debug("stream preview finish: success via UpdateMessage")
+	return true
+}
+
+// setStatus updates the card header status of the active preview message.
+// If the preview is not yet active or is degraded, the status is saved and
+// applied when the preview recovers (at finish time).
+func (sp *streamPreview) setStatus(status CardStatus) {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	sp.pendingStatus = status
+	if sp.previewMsgID == nil || sp.closed || sp.degraded {
+		return
+	}
+	if updater, ok := sp.platform.(PreviewStatusUpdater); ok {
+		updater.SetPreviewStatus(sp.previewMsgID, status)
+	}
+}
+
+// detachPreview clears the preview message handle so that finish() won't
+// delete it. Call this after freeze() when the frozen preview should remain
+// visible as a permanent message (e.g. text before the first tool call).
+func (sp *streamPreview) detachPreview() {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	sp.previewMsgID = nil
+}
+
+// appendSeparator inserts a paragraph break into the accumulated text without
+// triggering a flush. Used in quiet mode to visually separate text segments
+// that span thinking/tool boundaries without creating separate messages.
+// Returns true if the separator was actually added.
+func (sp *streamPreview) appendSeparator(sep string) bool {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if sp.degraded || !sp.cfg.Enabled || sp.fullText == "" {
+		return false
+	}
+	sp.fullText += sep
+	return true
+}
+
+// needsDoneReaction returns true if the preview was delivered via in-place
+// UpdateMessage at least once, meaning the user only received a push for the
+// initial SendPreviewStart and subsequent updates were silent. In this case a
+// "done" reaction can notify the user that processing has completed.
+func (sp *streamPreview) needsDoneReaction() bool {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	return sp.previewMsgID != nil && sp.lastSentViaUpdate
+}

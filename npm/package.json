@@ -1,0 +1,44 @@
+{
+  "name": "@qinghuangniao/heron-connect",
+  "version": "1.0.0",
+  "description": "Multi-IM agent bridge connecting AI coding agents to messaging platforms",
+  "keywords": [
+    "claude-code",
+    "ai-coding",
+    "feishu",
+    "dingtalk",
+    "slack",
+    "telegram",
+    "discord",
+    "line",
+    "wechat-work",
+    "chatbot",
+    "bridge",
+    "agent"
+  ],
+  "homepage": "https://github.com/janostudio/heron-connect",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/janostudio/heron-connect.git"
+  },
+  "license": "MIT",
+  "author": "janostudio",
+  "bin": {
+    "heron-connect": "run.js"
+  },
+  "scripts": {
+    "prepare-release": "node release-assets.js build",
+    "sync-release": "node release-assets.js ensure",
+    "prepublishOnly": "node release-assets.js ensure",
+    "postinstall": "node install.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "install.js",
+    "run.js",
+    "release-assets.js",
+    "README.md"
+  ]
+}
