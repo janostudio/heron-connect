@@ -1,4 +1,4 @@
-# CC-Connect 流式功能探索分析报告
+# Heron Connect 流式功能探索分析报告
 
 生成时间: 2026-06-01
 探索深度: Very Thorough
@@ -712,7 +712,7 @@ type = "discord"
 
 ## 结论
 
-cc-connect 项目**已具备端到端的应用层流式输出能力**，但这是通过**消息编辑** (in-place updates) 而非**HTTP 流式响应** (SSE/chunked) 实现的。
+heron-connect 项目**已具备端到端的应用层流式输出能力**，但这是通过**消息编辑** (in-place updates) 而非**HTTP 流式响应** (SSE/chunked) 实现的。
 
 - ✅ **流式文本预览**: 完整、可靠、经过充分测试
 - ✅ **流式卡片**: DingTalk 支持高级流式卡片

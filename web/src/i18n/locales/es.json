@@ -165,8 +165,8 @@
     "rawConfig": "Config. sin procesar"
   },
   "login": {
-    "title": "CC-Connect Admin",
-    "subtitle": "Conéctese a su instancia de CC-Connect",
+    "title": "Heron Connect Admin",
+    "subtitle": "Conéctese a su instancia de Heron Connect",
     "token": "Token de API",
     "serverUrl": "URL del servidor",
     "connect": "Conectar",

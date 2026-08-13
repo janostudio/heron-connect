@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // Reply sends a response message via aibot_respond_msg using the stream format.

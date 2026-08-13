@@ -1,7 +1,7 @@
 {
-  "name": "@qinghuangniao/cc-connect-qhn",
-  "version": "2.0.6",
-  "description": "Unofficial personal fork of cc-connect for personal practice and self-use",
+  "name": "@qinghuangniao/heron-connect",
+  "version": "1.0.0",
+  "description": "Multi-IM agent bridge connecting AI coding agents to messaging platforms",
   "keywords": [
     "claude-code",
     "ai-coding",
@@ -14,19 +14,17 @@
     "wechat-work",
     "chatbot",
     "bridge",
-    "fork",
-    "personal-use",
-    "unofficial"
+    "agent"
   ],
-  "homepage": "https://github.com/janostudio/cc-connect-qhn",
+  "homepage": "https://github.com/janostudio/heron-connect",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/janostudio/cc-connect-qhn.git"
+    "url": "git+https://github.com/janostudio/heron-connect.git"
   },
   "license": "MIT",
   "author": "janostudio",
   "bin": {
-    "cc-connect-qhn": "run.js"
+    "heron-connect": "run.js"
   },
   "scripts": {
     "prepare-release": "node release-assets.js build",

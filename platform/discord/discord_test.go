@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // ── Thread tests (upstream) ──────────────────────────────────

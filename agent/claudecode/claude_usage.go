@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 	"github.com/creack/pty"
 )
 
@@ -61,7 +61,7 @@ func (a *Agent) runClaudeUsageProbe(ctx context.Context) (string, error) {
 	probeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	workDir, err := os.MkdirTemp("", "cc-connect-claude-usage-*")
+	workDir, err := os.MkdirTemp("", "heron-connect-claude-usage-*")
 	if err != nil {
 		return "", fmt.Errorf("claudecode: create usage temp dir: %w", err)
 	}

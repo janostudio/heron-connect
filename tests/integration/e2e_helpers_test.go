@@ -5,8 +5,8 @@ package integration
 import (
 	"strings"
 
-	"github.com/chenhg5/cc-connect/config"
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/config"
+	"github.com/janostudio/heron-connect/core"
 )
 
 func joinMsgContent(msgs []mockMessage) string {

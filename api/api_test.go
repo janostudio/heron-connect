@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 func TestHandleSend_RequiresMessageOrAttachment(t *testing.T) {

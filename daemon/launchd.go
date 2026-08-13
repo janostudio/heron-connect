@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	launchdLabel = "com.cc-connect-qhn.service"
+	launchdLabel = "com.heron-connect.service"
 )
 
 var runLaunchctl = func(args ...string) (string, error) {

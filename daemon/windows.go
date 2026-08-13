@@ -15,7 +15,7 @@ import (
 
 const (
 	windowsTaskName   = ServiceName
-	windowsScriptName = "cc-connect-qhn-daemon.ps1"
+	windowsScriptName = "heron-connect-daemon.ps1"
 )
 
 var runPowerShell = func(script string) (string, error) {

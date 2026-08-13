@@ -1,12 +1,12 @@
 # IM 群聊会话隔离与共享
 
-本页说明 cc-connect-qhn 如何为不同 IM 消息选择对话上下文，以及群聊中不同成员是否共享 Agent / ACP 会话。
+本页说明 heron-connect 如何为不同 IM 消息选择对话上下文，以及群聊中不同成员是否共享 Agent / ACP 会话。
 
 ## 核心规则
 
 平台适配器为每条入站消息生成 `SessionKey`。同一项目或工作区内：
 
-- 相同 `SessionKey` 使用同一个活动 cc-connect 会话，并复用其 Agent / ACP 上下文；
+- 相同 `SessionKey` 使用同一个活动 heron-connect 会话，并复用其 Agent / ACP 上下文；
 - 不同 `SessionKey` 使用独立会话、独立上下文和独立排队状态；
 - Core 不会再按群 ID 或频道 ID 合并不同的 `SessionKey`。
 

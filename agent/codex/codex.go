@@ -13,7 +13,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 func init() {
@@ -465,7 +465,7 @@ func (a *Agent) SkillDirs() []string {
 
 // CompressCommand returns "" because Codex native slash commands (/compact, /clear)
 // are not reliably executed in exec/resume mode — they may be treated as plain text.
-// See: https://github.com/chenhg5/cc-connect/issues/378
+// See: https://github.com/janostudio/heron-connect/issues/378
 func (a *Agent) CompressCommand() string { return "" }
 
 func codexSkillDirs(workDir, explicitCodexHome string) []string {

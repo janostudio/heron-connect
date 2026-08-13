@@ -19,7 +19,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // claudeSession manages a long-running Claude Code process using
@@ -73,7 +73,7 @@ func newClaudeSession(ctx context.Context, workDir, cliBin string, cliExtraArgs 
 	case "", core.ContinueSession:
 		// Truly fresh session — no resume, no continue.
 	default:
-		// Resuming a known session ID — this is cc-connect's own session
+		// Resuming a known session ID — this is heron-connect's own session
 		// from a previous connection, safe to resume directly.
 		innerArgs = append(innerArgs, "--resume", sessionID)
 	}
@@ -89,7 +89,7 @@ func newClaudeSession(ctx context.Context, workDir, cliBin string, cliExtraArgs 
 		innerArgs = append(innerArgs, "--system-prompt", systemPrompt)
 	}
 
-	// Always append cc-connect system prompt for functionality awareness
+	// Always append heron-connect system prompt for functionality awareness
 	if sysPrompt := core.AgentSystemPrompt(); sysPrompt != "" {
 		if platformPrompt != "" {
 			sysPrompt += "\n## Formatting\n" + platformPrompt + "\n"
@@ -149,14 +149,14 @@ func newClaudeSession(ctx context.Context, workDir, cliBin string, cliExtraArgs 
 	// grandchildren (shell, npm, git, ...) that the CLI may spawn.
 	core.PrepareCmdForKill(cmd)
 	// Filter out CLAUDECODE env var to prevent "nested session" detection,
-	// since cc-connect is a bridge, not a nested Claude Code session.
+	// since heron-connect is a bridge, not a nested Claude Code session.
 	env := filterEnv(os.Environ(), "CLAUDECODE")
 	if len(extraEnv) > 0 {
 		env = core.MergeEnv(env, extraEnv)
 	}
 	// When run_as_user is set, strip the supervisor's environment down to
 	// the allowlist before passing it to sudo. sudo --preserve-env also
-	// enforces this, but filtering here makes the cc-connect spawn argv
+	// enforces this, but filtering here makes the heron-connect spawn argv
 	// the single source of truth.
 	env = core.FilterEnvForSpawn(env, spawnOpts)
 	cmd.Env = env
@@ -535,7 +535,7 @@ func (cs *claudeSession) Send(prompt string, images []core.ImageAttachment, file
 		})
 	}
 
-	attachDir := filepath.Join(cs.workDir, ".cc-connect-qhn", "attachments")
+	attachDir := filepath.Join(cs.workDir, ".heron-connect", "attachments")
 	if err := os.MkdirAll(attachDir, 0o755); err != nil {
 		slog.Warn("claudeSession: mkdir attachments failed", "error", err, "path", attachDir)
 	}

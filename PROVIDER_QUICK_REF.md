@@ -1,4 +1,4 @@
-# CC-Connect Provider/Model — Quick Reference
+# Heron Connect Provider/Model — Quick Reference
 
 ## ⚡ 30-Second Summary
 
@@ -183,13 +183,13 @@ After deletion, `purgeProviderFromEngines(name)` removes it from all running age
 /model
 
 # CLI: Add provider at runtime
-cc-connect-qhn provider add --name relay --api-key sk-... --base-url https://...
+heron-connect provider add --name relay --api-key sk-... --base-url https://...
 
 # CLI: List providers
-cc-connect-qhn provider list --project my-project
+heron-connect provider list --project my-project
 
 # CLI: Delete provider
-cc-connect-qhn provider delete --name relay
+heron-connect provider delete --name relay
 ```
 
 ---

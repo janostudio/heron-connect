@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // toolInputCacheMaxEntries caps toolInputByID growth; beyond this we evict
@@ -222,8 +222,8 @@ func (s *acpSession) handshake(resumeSessionID string, authMethod string) error 
 			"terminal": false,
 		},
 		"clientInfo": map[string]any{
-			"name":    "cc-connect-qhn",
-			"title":   "cc-connect-qhn",
+			"name":    "heron-connect",
+			"title":   "heron-connect",
 			"version": core.CurrentVersion,
 		},
 	}
@@ -656,7 +656,7 @@ func (s *acpSession) GetContextUsage() *core.ContextUsage {
 
 // maybeAbsorbCurrentModeUpdate watches session/update notifications
 // for `current_mode_update` (server-driven mode switch, e.g. when the
-// user toggles modes via the Windsurf/IDE UI while cc-connect-qhn is
+// user toggles modes via the Windsurf/IDE UI while heron-connect is
 // connected). Keeping currentMode in sync here means the IM `/mode`
 // indicator reflects the true server state rather than the last
 // client-initiated value.
@@ -973,7 +973,7 @@ func extractACPReturnError(result json.RawMessage) string {
 }
 
 func (s *acpSession) appendImageRefs(prompt string, images []core.ImageAttachment) string {
-	attachDir := filepath.Join(s.workDir, ".cc-connect-qhn", "attachments")
+	attachDir := filepath.Join(s.workDir, ".heron-connect", "attachments")
 	if err := os.MkdirAll(attachDir, 0o755); err != nil {
 		slog.Warn("acp: mkdir attachments failed", "error", err)
 		return prompt

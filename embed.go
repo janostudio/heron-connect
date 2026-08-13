@@ -1,4 +1,4 @@
-package ccconnect
+package heronconnect
 
 import _ "embed"
 

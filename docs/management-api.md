@@ -1,4 +1,4 @@
-# cc-connect-qhn Management API Specification
+# heron-connect Management API Specification
 
 > **Version:** 1.1-draft  
 > **Status:** Draft — subject to change before implementation  
@@ -8,13 +8,13 @@
 
 ## 1. Overview
 
-The cc-connect-qhn Management API is an HTTP-based REST API that enables external applications (web dashboards, TUI clients, GUI desktop apps, Mac tray apps) to manage and monitor cc-connect-qhn instances. It complements the existing internal Unix socket API by providing a network-accessible, token-authenticated interface suitable for remote and local management tools.
+The heron-connect Management API is an HTTP-based REST API that enables external applications (web dashboards, TUI clients, GUI desktop apps, Mac tray apps) to manage and monitor heron-connect instances. It complements the existing internal Unix socket API by providing a network-accessible, token-authenticated interface suitable for remote and local management tools.
 
 ### 1.1 Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         cc-connect-qhn Process                               │
+│                         heron-connect Process                               │
 │                                                                          │
 │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐  │
 │  │  Unix Socket API │    │  Management API   │    │  Bridge Server   │  │
@@ -184,7 +184,7 @@ Returns system status and summary.
 
 | Field                 | Type     | Description                                      |
 |-----------------------|----------|--------------------------------------------------|
-| `version`             | string   | cc-connect-qhn version (e.g. `v1.2.0`)              |
+| `version`             | string   | heron-connect version (e.g. `v1.2.0`)              |
 | `uptime_seconds`      | number   | Process uptime in seconds                        |
 | `connected_platforms` | string[] | Platform types currently connected               |
 | `projects_count`      | number   | Number of configured projects                    |
@@ -252,7 +252,7 @@ Returns the current configuration with secrets redacted. Useful for debugging an
 {
   "ok": true,
   "data": {
-    "data_dir": "/home/user/.cc-connect-qhn",
+    "data_dir": "/home/user/.heron-connect",
     "language": "en",
     "projects": [
       {
@@ -309,7 +309,7 @@ Returns recent log entries.
         "time": "2026-03-10T10:30:00Z",
         "level": "info",
         "message": "api server started",
-        "attrs": {"socket": "/home/user/.cc-connect-qhn/run/api.sock"}
+        "attrs": {"socket": "/home/user/.heron-connect/run/api.sock"}
       }
     ]
   }

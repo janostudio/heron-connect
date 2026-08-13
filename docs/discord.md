@@ -1,11 +1,11 @@
 # Discord Setup Guide
 
-This guide walks you through connecting **cc-connect-qhn** to Discord, so you can chat with your local Claude Code via a Discord bot.
+This guide walks you through connecting **heron-connect** to Discord, so you can chat with your local Claude Code via a Discord bot.
 
 ## Prerequisites
 
 - A Discord account
-- A machine that can run cc-connect-qhn (no public IP needed)
+- A machine that can run heron-connect (no public IP needed)
 - Claude Code installed and configured
 
 > 💡 **Advantage**: Uses Gateway (WebSocket) — no public IP, no domain, no reverse proxy needed.
@@ -21,7 +21,7 @@ Go to [Discord Developer Portal](https://discord.com/developers/applications) an
 ### 1.2 Create a New Application
 
 1. Click "New Application" in the top right
-2. Enter an application name (e.g. `cc-connect-qhn`)
+2. Enter an application name (e.g. `heron-connect`)
 3. Agree to the Terms of Service
 4. Click "Create"
 
@@ -42,7 +42,7 @@ In the left sidebar, click "Bot".
 
 | Field | Suggested Value |
 |-------|----------------|
-| Username | `cc-connect-qhn` |
+| Username | `heron-connect` |
 | Avatar | Upload an icon you like |
 
 ---
@@ -89,7 +89,7 @@ Click "Save Changes".
 
 ---
 
-## Step 5: Configure cc-connect-qhn
+## Step 5: Configure heron-connect
 
 Add the token to your `config.toml`:
 
@@ -113,8 +113,8 @@ token = "MTk4NjIyNDgzNDcOTY3NDUxMg.G8vKqh.xxx..."
 # progress_style = "legacy" # Optional: legacy | compact | card
 ```
 
-> cc-connect-qhn automatically configures the required Intents (MESSAGE_CONTENT, GUILD_MESSAGES, DIRECT_MESSAGES).
-> With `thread_isolation = true`, cc-connect-qhn creates or reuses a Discord thread for each session and routes follow-up messages by thread channel ID.
+> heron-connect automatically configures the required Intents (MESSAGE_CONTENT, GUILD_MESSAGES, DIRECT_MESSAGES).
+> With `thread_isolation = true`, heron-connect creates or reuses a Discord thread for each session and routes follow-up messages by thread channel ID.
 > `progress_style = "compact"` merges thinking/tool updates into one editable message; `progress_style = "card"` renders a Discord-native embed progress card and still sends the final answer as a normal message.
 
 ---
@@ -165,14 +165,14 @@ Review the permissions and click "Authorize". Complete the CAPTCHA if prompted.
 
 ---
 
-## Step 8: Start cc-connect-qhn
+## Step 8: Start heron-connect
 
 ### 8.1 Launch
 
 ```bash
-cc-connect-qhn
+heron-connect
 # Or specify a config file
-cc-connect-qhn -config /path/to/config.toml
+heron-connect -config /path/to/config.toml
 ```
 
 ### 8.2 Verify Connection
@@ -180,9 +180,9 @@ cc-connect-qhn -config /path/to/config.toml
 You should see logs like:
 
 ```
-level=INFO msg="discord: connected" bot=cc-connect-qhn#0000
+level=INFO msg="discord: connected" bot=heron-connect#0000
 level=INFO msg="platform started" project=my-project platform=discord
-level=INFO msg="cc-connect-qhn is running" projects=1
+level=INFO msg="heron-connect is running" projects=1
 ```
 
 ---
@@ -205,9 +205,9 @@ Send a message in any channel where the bot has permissions.
 ```
 User: Help me analyze the current project structure
 
-cc-connect-qhn: 🤔 Thinking...
-cc-connect-qhn: 🔧 Tool: Bash(ls -la)
-cc-connect-qhn: Here's the project structure...
+heron-connect: 🤔 Thinking...
+heron-connect: 🔧 Tool: Bash(ls -la)
+heron-connect: Here's the project structure...
 ```
 
 If you enable `progress_style = "card"`, Discord shows one editable progress embed during the turn, then the final answer arrives as a separate normal message. This reduces channel noise compared with the legacy multi-message flow.
@@ -229,7 +229,7 @@ If you enable `progress_style = "card"`, Discord shows one editable progress emb
 ┌─────────────────────────────────────────────────────────────┐
 │                    Your Local Machine                         │
 │                                                              │
-│   cc-connect-qhn ◄──► Claude Code CLI ◄──► Your Project Code    │
+│   heron-connect ◄──► Claude Code CLI ◄──► Your Project Code    │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -245,7 +245,7 @@ If you enable `progress_style = "card"`, Discord shows one editable progress emb
 | **Heartbeat** | Automatic keepalive |
 | **Reconnection** | Automatic on disconnect |
 | **Intents** | Must declare required event types |
-| **Message limit** | 2000 characters per message (auto-split by cc-connect-qhn) |
+| **Message limit** | 2000 characters per message (auto-split by heron-connect) |
 | **Markdown** | Full native support |
 
 ---
@@ -261,7 +261,7 @@ Fix:
 2. Select your app → Bot
 3. Enable "Message Content Intent"
 4. Save changes
-5. Restart cc-connect-qhn
+5. Restart heron-connect
 
 ### Q: Bot connects then immediately disconnects?
 

@@ -47,7 +47,7 @@ ACP 的 `tool_call_update.rawInput` 会以极高频率逐字增长，例如：
 
 ACP 映射层已经对 `tool_call_update` 的 `in_progress` 状态做了抑制：
 
-- 文件：[agent/acp/mapping.go](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/agent/acp/mapping.go)
+- 文件：[agent/acp/mapping.go](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/agent/acp/mapping.go)
 
 `mapToolCallUpdate()` 中，`in_progress` / `pending` 直接返回 `nil`，不会作为 IM 可见事件发出。
 
@@ -62,7 +62,7 @@ ACP 映射层已经对 `tool_call_update` 的 `in_progress` 状态做了抑制�
 
 位置：
 
-- [core/engine.go](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/core/engine.go)
+- [core/engine.go](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/core/engine.go)
 
 这意味着只要 adapter 发出了工具相关事件，默认 stream 预览就会“立刻展示”。
 
@@ -74,7 +74,7 @@ ACP 映射层已经对 `tool_call_update` 的 `in_progress` 状态做了抑制�
 
 位置：
 
-- [platform/wecom/websocket.go](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/platform/wecom/websocket.go)
+- [platform/wecom/websocket.go](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/platform/wecom/websocket.go)
 
 因此如果 preview 层持续把工具态文本插进去，企微端就会稳定展示这些“半成品内容”。
 
@@ -114,7 +114,7 @@ ACP 映射层已经对 `tool_call_update` 的 `in_progress` 状态做了抑制�
 
 新增接口：
 
-- 文件：[core/interfaces.go](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/core/interfaces.go)
+- 文件：[core/interfaces.go](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/core/interfaces.go)
 
 ```go
 type StreamPreviewModeProvider interface {
@@ -131,7 +131,7 @@ type StreamPreviewModeProvider interface {
 
 位置：
 
-- [core/streaming.go](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/core/streaming.go)
+- [core/streaming.go](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/core/streaming.go)
 
 新增字段和方法：
 
@@ -144,7 +144,7 @@ type StreamPreviewModeProvider interface {
 
 位置：
 
-- [platform/wecom/websocket.go](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/platform/wecom/websocket.go)
+- [platform/wecom/websocket.go](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/platform/wecom/websocket.go)
 
 新增：
 
@@ -158,7 +158,7 @@ func (p *WSPlatform) StreamPreviewMode() string { return "tool_hold" }
 
 位置：
 
-- [core/engine.go](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/core/engine.go)
+- [core/engine.go](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/core/engine.go)
 
 在 `processInteractiveEvents()` 中新增判断：
 
@@ -180,7 +180,7 @@ func (p *WSPlatform) StreamPreviewMode() string { return "tool_hold" }
 
 位置：
 
-- [platform/wecom/websocket.go](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/platform/wecom/websocket.go)
+- [platform/wecom/websocket.go](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/platform/wecom/websocket.go)
 
 新增结构：
 
@@ -268,7 +268,7 @@ func (p *WSPlatform) StreamPreviewMode() string { return "tool_hold" }
 
 主要新增 / 维护的测试在：
 
-- [platform/wecom/websocket_test.go](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/platform/wecom/websocket_test.go)
+- [platform/wecom/websocket_test.go](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/platform/wecom/websocket_test.go)
 
 重点覆盖：
 
@@ -331,8 +331,8 @@ GOCACHE=$(pwd)/.gocache go test ./agent/acp ./core -run 'TestGetOrCreateInteract
 
 相关文件：
 
-- [agent/acp/session.go](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/agent/acp/session.go)
-- [core/engine_test.go](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/core/engine_test.go)
+- [agent/acp/session.go](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/agent/acp/session.go)
+- [core/engine_test.go](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/core/engine_test.go)
 
 如果线上仍有“企微没有推送”的现象，优先看三类信号：
 

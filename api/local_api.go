@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // APIServer exposes a local Unix socket API for external tools (e.g. cron jobs)

@@ -4,7 +4,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 const (
@@ -33,7 +33,7 @@ type bridgeCapabilitiesSnapshot struct {
 type bridgeCapabilitiesHost struct {
 	ID               string `json:"id"`
 	Hostname         string `json:"hostname,omitempty"`
-	CCConnectVersion string `json:"cc_connect_version,omitempty"`
+	HeronConnectVersion string `json:"heron_connect_version,omitempty"`
 	Commit           string `json:"commit,omitempty"`
 	BuildTime        string `json:"build_time,omitempty"`
 }
@@ -90,7 +90,7 @@ func (bs *BridgeServer) buildCapabilitiesSnapshot() bridgeCapabilitiesSnapshot {
 		Host: bridgeCapabilitiesHost{
 			ID:               hostName,
 			Hostname:         hostName,
-			CCConnectVersion: core.CurrentVersion,
+			HeronConnectVersion: core.CurrentVersion,
 			Commit:           CurrentCommit,
 			BuildTime:        CurrentBuildTime,
 		},

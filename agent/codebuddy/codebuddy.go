@@ -1,5 +1,5 @@
 // Package codebuddy integrates CodeBuddy Code CLI
-// (https://codebuddy.ai/) as a first-class cc-connect agent.
+// (https://codebuddy.ai/) as a first-class heron-connect agent.
 //
 // CodeBuddy Code supports headless mode via `codebuddy -p <prompt>
 // --output-format stream-json`, matching the same per-turn spawn +
@@ -10,7 +10,7 @@
 //
 // Authentication is delegated entirely to the local CodeBuddy Code
 // CLI: the spawned `codebuddy` subprocess reads credentials from
-// disk, so cc-connect never needs to see or forward any tokens.
+// disk, so heron-connect never needs to see or forward any tokens.
 package codebuddy
 
 import (
@@ -23,7 +23,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 func init() {

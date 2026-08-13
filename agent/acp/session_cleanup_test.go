@@ -10,7 +10,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // closeTestSessionPipes closes the pipe ends that newTestSession created,

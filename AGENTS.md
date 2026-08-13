@@ -1,14 +1,14 @@
-# CC-Connect Development Guide
+# Heron Connect Development Guide
 
 ## Project Overview
 
-CC-Connect is a bridge that connects AI coding agents (Claude Code, Codex, Gemini CLI, Cursor, etc.) with messaging platforms (Feishu/Lark, Telegram, Discord, Slack, DingTalk, WeChat Work, QQ, LINE). Users interact with their coding agent through their preferred messaging app.
+Heron Connect is a bridge that connects AI coding agents (Claude Code, Codex, Gemini CLI, Cursor, etc.) with messaging platforms (Feishu/Lark, Telegram, Discord, Slack, DingTalk, WeChat Work, QQ, LINE). Users interact with their coding agent through their preferred messaging app.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                   cmd/cc-connect-qhn                │  ← entry point, CLI, daemon
+│                   cmd/heron-connect                │  ← entry point, CLI, daemon
 ├─────────────────────────────────────────────────┤
 │                     config/                     │  ← TOML config parsing
 ├─────────────────────────────────────────────────┤
@@ -199,7 +199,7 @@ make build EXCLUDE=discord,dingtalk,qq,qqbot,line
 ### Direct build tag usage (without Make)
 
 ```bash
-go build -tags 'no_discord no_dingtalk no_qq no_qqbot no_line' ./cmd/cc-connect
+go build -tags 'no_discord no_dingtalk no_qq no_qqbot no_line' ./cmd/heron-connect
 ```
 
 Available tags: `no_acp`, `no_claudecode`, `no_codex`, `no_cursor`, `no_gemini`,
@@ -220,7 +220,7 @@ Available tags: `no_acp`, `no_claudecode`, `no_codex`, `no_cursor`, `no_gemini`,
 1. Create `platform/newplatform/newplatform.go`
 2. Implement `core.Platform` interface (and optional interfaces as needed)
 3. Register in `init()`: `core.RegisterPlatform("newplatform", factory)`
-4. Create `cmd/cc-connect-qhn/plugin_platform_newplatform.go` with `//go:build !no_newplatform` tag
+4. Create `cmd/heron-connect/plugin_platform_newplatform.go` with `//go:build !no_newplatform` tag
 5. Add `newplatform` to `ALL_PLATFORMS` in `Makefile`
 6. Add config example in `config.example.toml`
 7. Add unit tests
@@ -230,8 +230,8 @@ Available tags: `no_acp`, `no_claudecode`, `no_codex`, `no_cursor`, `no_gemini`,
 1. Create `agent/newagent/newagent.go`
 2. Implement `core.Agent` and `core.AgentSession` interfaces
 3. Register in `init()`: `core.RegisterAgent("newagent", factory)`
-4. Create `cmd/cc-connect-qhn/plugin_agent_newagent.go` with `//go:build !no_newagent` tag
+4. Create `cmd/heron-connect/plugin_agent_newagent.go` with `//go:build !no_newagent` tag
 5. Add `newagent` to `ALL_AGENTS` in `Makefile`
-6. Optionally implement `AgentDoctorInfo` for `cc-connect-qhn doctor` support
+6. Optionally implement `AgentDoctorInfo` for `heron-connect doctor` support
 7. Add config example in `config.example.toml`
 8. Add unit tests

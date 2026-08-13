@@ -1,8 +1,8 @@
-# CC-Connect: Custom Models & Providers Architecture
+# Heron Connect: Custom Models & Providers Architecture
 
 ## Overview
 
-CC-Connect supports **runtime provider/model switching** through a flexible system that allows:
+Heron Connect supports **runtime provider/model switching** through a flexible system that allows:
 - Defining providers globally (shared across projects)
 - Referencing global providers in projects
 - Defining inline providers per project
@@ -693,7 +693,7 @@ Response (200 OK):
 
 ### 6.1 Engine Setup (simplified)
 
-When cc-connect-qhn starts a project:
+When heron-connect starts a project:
 
 1. **Parse config** → load providers via `ResolveProviderRefs()`
 2. **Create agent** → call `New(opts)` (providers not set yet)
@@ -748,7 +748,7 @@ curl -X POST http://localhost:9820/api/v1/providers \
 ### Via CLI:
 
 ```bash
-cc-connect-qhn provider add \
+heron-connect provider add \
   --name azure-gpt \
   --api-key sk-azure-xxx \
   --base-url https://my-azure.openai.azure.com/v1 \

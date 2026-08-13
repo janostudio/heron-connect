@@ -3,7 +3,7 @@ package qq
 import (
 	"testing"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 func TestPlatform_Name(t *testing.T) {

@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers-extended-cc:executing-plans to implement this plan task-by-task.
 
-**Goal:** Enable a single cc-connect bot to serve multiple workspaces, routing messages to different Claude Code sessions based on Slack channel.
+**Goal:** Enable a single heron-connect bot to serve multiple workspaces, routing messages to different Claude Code sessions based on Slack channel.
 
 **Architecture:** Engine-level multiplexing. Add workspace resolution to Engine.handleMessage that maps channel → workspace directory, spawns/resumes per-workspace agent subprocesses, and manages idle reaping. Gated behind `mode = "multi-workspace"` in ProjectConfig so existing single-workspace projects are unaffected.
 
@@ -1135,7 +1135,7 @@ git commit -m "feat: add /workspace commands (init, unbind, list, status)"
 ### Task 10: Wire multi-workspace in main.go
 
 **Files:**
-- Modify: `cmd/cc-connect-qhn/main.go` (~line 139 project setup loop)
+- Modify: `cmd/heron-connect/main.go` (~line 139 project setup loop)
 
 **Step 1: Add multi-workspace setup after engine creation**
 
@@ -1167,7 +1167,7 @@ Expected: Compiles cleanly
 **Step 3: Commit**
 
 ```bash
-git add cmd/cc-connect-qhn/main.go
+git add cmd/heron-connect/main.go
 git commit -m "feat: wire multi-workspace mode setup in main.go"
 ```
 

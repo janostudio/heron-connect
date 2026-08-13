@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // ─── Phase 1: local session tracking & ListSessions fallback ────────

@@ -1,6 +1,6 @@
 # 使用指南
 
-cc-connect-qhn 完整功能使用指南。
+heron-connect 完整功能使用指南。
 
 ## 目录
 
@@ -180,10 +180,10 @@ env = { CLAUDE_CODE_USE_BEDROCK = "1", AWS_PROFILE = "bedrock" }
 ### CLI 命令
 
 ```bash
-cc-connect-qhn provider add --project my-backend --name relay --api-key sk-xxx --base-url https://api.relay.com
-cc-connect-qhn provider list --project my-backend
-cc-connect-qhn provider remove --project my-backend --name relay
-cc-connect-qhn provider import --project my-backend  # 从 cc-switch 导入
+heron-connect provider add --project my-backend --name relay --api-key sk-xxx --base-url https://api.relay.com
+heron-connect provider list --project my-backend
+heron-connect provider remove --project my-backend --name relay
+heron-connect provider import --project my-backend  # 从 cc-switch 导入
 ```
 
 ### 聊天命令
@@ -428,12 +428,12 @@ enclosure_style = "code"
 
 ```bash
 # 推荐：统一入口
-cc-connect-qhn feishu setup --project my-project
-cc-connect-qhn feishu setup --project my-project --app cli_xxx:sec_xxx
+heron-connect feishu setup --project my-project
+heron-connect feishu setup --project my-project --app cli_xxx:sec_xxx
 
 # 强制模式（一般不需要）
-cc-connect-qhn feishu new --project my-project
-cc-connect-qhn feishu bind --project my-project --app cli_xxx:sec_xxx
+heron-connect feishu new --project my-project
+heron-connect feishu bind --project my-project --app cli_xxx:sec_xxx
 ```
 
 区别说明：
@@ -459,14 +459,14 @@ cc-connect-qhn feishu bind --project my-project --app cli_xxx:sec_xxx
 
 ```bash
 # 推荐：终端展示二维码 + URL，微信扫码确认后自动写配置
-cc-connect-qhn weixin setup --project my-project
+heron-connect weixin setup --project my-project
 
 # 已有 Bearer Token（例如从 OpenClaw 导出）
-cc-connect-qhn weixin bind --project my-project --token '<token>'
-cc-connect-qhn weixin setup --project my-project --token '<token>'
+heron-connect weixin bind --project my-project --token '<token>'
+heron-connect weixin setup --project my-project --token '<token>'
 
 # 强制只走扫码（不接受 --token）
-cc-connect-qhn weixin new --project my-project
+heron-connect weixin new --project my-project
 ```
 
 区别说明：
@@ -483,7 +483,7 @@ cc-connect-qhn weixin new --project my-project
 - 绑定时默认调用 `getUpdates` 校验 Token；可用 `--skip-verify` 跳过。
 - 首次使用后请在微信里 **先发一条消息**，以便缓存 `context_token`，否则可能无法回复。
 
-常用参数：`--api-url`、`--cdn-url`、`--timeout`、`--qr-image`、`--route-tag`、`--bot-type`、`--debug`（详见 `cc-connect-qhn weixin help` 或 [weixin.md](./weixin.md)）。
+常用参数：`--api-url`、`--cdn-url`、`--timeout`、`--qr-image`、`--route-tag`、`--bot-type`、`--debug`（详见 `heron-connect weixin help` 或 [weixin.md](./weixin.md)）。
 
 ---
 
@@ -517,7 +517,7 @@ cc-connect-qhn weixin new --project my-project
 
 3. 启动：`ccr start`
 
-4. 配置 cc-connect-qhn：
+4. 配置 heron-connect：
 ```toml
 [projects.agent.options]
 router_url = "http://127.0.0.1:3456"
@@ -595,7 +595,7 @@ api_key = "sk-xxx"
 
 ## 图片与文件回传
 
-当 Agent 在本地生成了图片、PDF、日志包、报表等文件，需要把结果直接发回当前聊天时，可以使用 `cc-connect-qhn send` 的附件模式。
+当 Agent 在本地生成了图片、PDF、日志包、报表等文件，需要把结果直接发回当前聊天时，可以使用 `heron-connect send` 的附件模式。
 
 **当前支持平台：**
 - 飞书
@@ -615,9 +615,9 @@ api_key = "sk-xxx"
 /cron setup
 ```
 
-这两个命令写入的是同一份 cc-connect-qhn 指令。执行任意一个即可。这样 Agent 才会知道：
+这两个命令写入的是同一份 heron-connect 指令。执行任意一个即可。这样 Agent 才会知道：
 - 普通文本回复直接正常输出
-- 生成附件后用 `cc-connect-qhn send --image/--file` 回传
+- 生成附件后用 `heron-connect send --image/--file` 回传
 
 如果你以前已经执行过 setup，也建议升级后重新执行一次，以刷新到最新指令。
 
@@ -629,14 +629,14 @@ api_key = "sk-xxx"
 attachment_send = "off"
 ```
 
-默认值是 `on`。这个开关与 agent 的 `/mode` 独立，只影响 `cc-connect-qhn send --image/--file` 这条图片/文件回传路径。
+默认值是 `on`。这个开关与 agent 的 `/mode` 独立，只影响 `heron-connect send --image/--file` 这条图片/文件回传路径。
 
 ### CLI 用法
 
 ```bash
-cc-connect-qhn send --image /absolute/path/to/chart.png
-cc-connect-qhn send --file /absolute/path/to/report.pdf
-cc-connect-qhn send --file /absolute/path/to/report.pdf --image /absolute/path/to/chart.png
+heron-connect send --image /absolute/path/to/chart.png
+heron-connect send --file /absolute/path/to/report.pdf
+heron-connect send --file /absolute/path/to/report.pdf --image /absolute/path/to/chart.png
 ```
 
 说明：
@@ -684,10 +684,10 @@ cc-connect-qhn send --file /absolute/path/to/report.pdf --image /absolute/path/t
 ### CLI 命令
 
 ```bash
-cc-connect-qhn cron add --cron "0 6 * * *" --prompt "总结 GitHub trending" --desc "每日趋势"
-cc-connect-qhn cron list
-cc-connect-qhn cron edit <job-id> <field> <value>   # 可改 cron_expr / prompt / enabled / mute / timeout_mins 等
-cc-connect-qhn cron del <job-id>
+heron-connect cron add --cron "0 6 * * *" --prompt "总结 GitHub trending" --desc "每日趋势"
+heron-connect cron list
+heron-connect cron edit <job-id> <field> <value>   # 可改 cron_expr / prompt / enabled / mute / timeout_mins 等
+heron-connect cron del <job-id>
 ```
 
 可选：`--session-mode new-per-run` 每次触发使用新的 agent 会话（默认 `reuse` 与旧行为一致）。`--timeout-mins N` 设置单次调度最长等待分钟数（`0` 表示不限制；省略为 30 分钟）。
@@ -716,7 +716,7 @@ Claude Code 会自动创建定时任务。对依赖记忆文件的其他 Agent�
 ### 机器人间通信
 
 ```bash
-cc-connect-qhn relay send --to gemini "你觉得这个架构怎么样？"
+heron-connect relay send --to gemini "你觉得这个架构怎么样？"
 ```
 
 ---
@@ -726,13 +726,13 @@ cc-connect-qhn relay send --to gemini "你觉得这个架构怎么样？"
 后台服务运行。
 
 ```bash
-cc-connect-qhn daemon install --config ~/.cc-connect-qhn/config.toml
-cc-connect-qhn daemon start
-cc-connect-qhn daemon stop
-cc-connect-qhn daemon restart
-cc-connect-qhn daemon status
-cc-connect-qhn daemon logs [-f]
-cc-connect-qhn daemon uninstall
+heron-connect daemon install --config ~/.heron-connect/config.toml
+heron-connect daemon start
+heron-connect daemon stop
+heron-connect daemon restart
+heron-connect daemon status
+heron-connect daemon logs [-f]
+heron-connect daemon uninstall
 ```
 
 ---
@@ -806,7 +806,7 @@ token = "your-secret-token"     # 登录 token；/web setup 会自动生成
 cors_origins = ["*"]            # 允许的 CORS 来源；留空则不设置 CORS 头
 ```
 
-然后重启 cc-connect-qhn。
+然后重启 heron-connect。
 
 ### 构建选项
 
@@ -815,7 +815,7 @@ Web 前端资源默认编译进二进制。如果想排除（减小约 1MB）：
 ```bash
 make build-noweb
 # 或
-go build -tags 'no_web' ./cmd/cc-connect-qhn
+go build -tags 'no_web' ./cmd/heron-connect
 ```
 
 使用 `no_web` 构建时，`/web` 命令会提示 Web 管理后台不可用。
@@ -831,7 +831,7 @@ API 与 Web UI 共用同一端口。基础 URL：`http://<host>:<port>/api/v1`
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/api/v1/status` | 系统状态（版本、运行时间、已连接平台） |
-| `POST` | `/api/v1/restart` | 重启 cc-connect-qhn |
+| `POST` | `/api/v1/restart` | 重启 heron-connect |
 | `POST` | `/api/v1/reload` | 重新加载配置 |
 | `GET` | `/api/v1/projects` | 项目列表 |
 | `GET` | `/api/v1/sessions?project=<name>` | 查询项目的会话列表 |
@@ -847,7 +847,7 @@ API 与 Web UI 共用同一端口。基础 URL：`http://<host>:<port>/api/v1`
 
 > **状态：Beta。** 此功能自 v1.2.2-beta.5 起可用，协议在后续版本中可能调整。
 
-Bridge 提供 WebSocket + REST 服务，让外部适配器（自定义 UI、机器人、脚本等）可以接入 cc-connect-qhn —— 发送消息、接收 Agent 事件、管理会话。
+Bridge 提供 WebSocket + REST 服务，让外部适配器（自定义 UI、机器人、脚本等）可以接入 heron-connect —— 发送消息、接收 Agent 事件、管理会话。
 
 ### 通过聊天启用
 
@@ -866,7 +866,7 @@ path = "/bridge/ws"             # WebSocket 端点路径
 cors_origins = ["*"]            # 允许的 CORS 来源；留空则不设置 CORS
 ```
 
-然后重启 cc-connect-qhn。
+然后重启 heron-connect。
 
 ### 认证方式
 

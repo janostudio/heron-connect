@@ -1,4 +1,4 @@
-# cc-connect-qhn 配置示例
+# heron-connect 配置示例
 #
 # 各文件说明：
 #   feishu-claudecode.toml   — 飞书 + Claude Code（最常用）

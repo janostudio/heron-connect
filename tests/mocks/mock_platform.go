@@ -1,10 +1,10 @@
-// Package mocks provides mock implementations for testing cc-connect components.
+// Package mocks provides mock implementations for testing heron-connect components.
 package mocks
 
 import (
 	"context"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 	"github.com/stretchr/testify/mock"
 )
 

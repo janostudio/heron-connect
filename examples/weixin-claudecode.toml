@@ -1,5 +1,5 @@
 # 微信个人号（ilink）+ Claude Code
-# 使用 `cc-connect-qhn weixin setup` 扫码获取 token
+# 使用 `heron-connect weixin setup` 扫码获取 token
 
 [log]
 level = "info"

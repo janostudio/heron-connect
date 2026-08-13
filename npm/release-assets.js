@@ -8,8 +8,8 @@ const path = require("path");
 
 const PACKAGE = require("./package.json");
 
-const REPO = "janostudio/cc-connect-qhn";
-const APP = "cc-connect-qhn";
+const REPO = "janostudio/heron-connect";
+const APP = "heron-connect";
 const VERSION = `v${PACKAGE.version}`;
 const ROOT_DIR = path.resolve(__dirname, "..");
 const DIST_DIR = path.join(ROOT_DIR, "dist");

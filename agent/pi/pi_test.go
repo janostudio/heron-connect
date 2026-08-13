@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // ── normalizeMode ────────────────────────────────────────────
@@ -367,7 +367,7 @@ func TestSaveImagesToDisk_Empty(t *testing.T) {
 
 func TestCleanAttachments(t *testing.T) {
 	tmpDir := t.TempDir()
-	attachDir := filepath.Join(tmpDir, ".cc-connect-qhn", "attachments")
+	attachDir := filepath.Join(tmpDir, ".heron-connect", "attachments")
 	os.MkdirAll(attachDir, 0o755)
 
 	// Create some files.

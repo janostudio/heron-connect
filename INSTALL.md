@@ -1,14 +1,14 @@
-# cc-connect-qhn Installation & Configuration Guide
+# heron-connect Installation & Configuration Guide
 
-> **This document is designed to be read by AI coding agents (Claude Code, Cursor, Gemini CLI, etc.) to help users install and configure cc-connect-qhn.** You can feed this file directly to your AI agent.
+> **This document is designed to be read by AI coding agents (Claude Code, Cursor, Gemini CLI, etc.) to help users install and configure heron-connect.** You can feed this file directly to your AI agent.
 
-## What is cc-connect-qhn?
+## What is heron-connect?
 
-cc-connect-qhn bridges local AI coding assistants to messaging platforms (Feishu, DingTalk, Telegram, Slack, Discord, LINE, WeChat Work, QQ, **personal WeChat** via the **Weixin (ilink)** platform).
+heron-connect bridges local AI coding assistants to messaging platforms (Feishu, DingTalk, Telegram, Slack, Discord, LINE, WeChat Work, QQ, **personal WeChat** via the **Weixin (ilink)** platform).
 
-GitHub: https://github.com/janostudio/cc-connect-qhn
+GitHub: https://github.com/janostudio/heron-connect
 
-**IMPORTANT: If you are an AI agent helping a user install cc-connect-qhn, use interactive tools (like AskUserQuestion) to guide them through configuration choices:**
+**IMPORTANT: If you are an AI agent helping a user install heron-connect, use interactive tools (like AskUserQuestion) to guide them through configuration choices:**
 - Agent selection (Claude Code, Cursor, Gemini, etc.)
 - Platform selection (Feishu, Telegram, Discord, etc.)
 - API keys and authentication tokens
@@ -16,44 +16,44 @@ GitHub: https://github.com/janostudio/cc-connect-qhn
 
 Don't guess values—always ask the user to choose via interactive prompts.
 
-## Step 1: Install cc-connect-qhn
+## Step 1: Install heron-connect
 
 ### Option A: npm (recommended for most users)
 
 ```bash
-npm install -g @qinghuangniao/cc-connect-qhn
+npm install -g @qinghuangniao/heron-connect
 ```
 
-After installation, the `cc-connect-qhn` binary will be available globally.
+After installation, the `heron-connect` binary will be available globally.
 
 
 ### Option B: Homebrew (macOS / Linux)
 
 ```bash
-npm install -g @qinghuangniao/cc-connect-qhn
+npm install -g @qinghuangniao/heron-connect
 ```
 
 ### Option C: Download binary from GitHub Releases
 
-Go to https://github.com/janostudio/cc-connect-qhn/releases and download the binary for your platform.
+Go to https://github.com/janostudio/heron-connect/releases and download the binary for your platform.
 
 Typical artifact names (check the release page for exact filenames):
 
-- Linux: `cc-connect-qhn-<version>-linux-amd64` (or `.tar.gz`)
-- macOS: `cc-connect-qhn-<version>-darwin-amd64` / `arm64`
-- Windows: `cc-connect-qhn-<version>-windows-amd64.exe` (or `.zip`)
+- Linux: `heron-connect-<version>-linux-amd64` (or `.tar.gz`)
+- macOS: `heron-connect-<version>-darwin-amd64` / `arm64`
+- Windows: `heron-connect-<version>-windows-amd64.exe` (or `.zip`)
 
 ```bash
 # Example for Linux amd64 (replace URL with the asset link from the release you chose):
-curl -L -o cc-connect-qhn https://github.com/janostudio/cc-connect-qhn/releases/latest/download/cc-connect-qhn-linux-amd64
-chmod +x cc-connect-qhn
-sudo mv cc-connect-qhn /usr/local/bin/
+curl -L -o heron-connect https://github.com/janostudio/heron-connect/releases/latest/download/heron-connect-linux-amd64
+chmod +x heron-connect
+sudo mv heron-connect /usr/local/bin/
 ```
 
 On macOS, you may need to remove the quarantine attribute:
 
 ```bash
-xattr -d com.apple.quarantine cc-connect-qhn
+xattr -d com.apple.quarantine heron-connect
 ```
 
 ### Option D: Build from source
@@ -61,15 +61,15 @@ xattr -d com.apple.quarantine cc-connect-qhn
 Requires Go 1.25+.
 
 ```bash
-git clone https://github.com/janostudio/cc-connect-qhn.git
-cd cc-connect-qhn
+git clone https://github.com/janostudio/heron-connect.git
+cd heron-connect
 make build
-# Binary will be at ./cc-connect-qhn
+# Binary will be at ./heron-connect
 ```
 
 ## Step 2: Install your AI Agent
 
-cc-connect-qhn supports multiple local coding agents. Install at least one:
+heron-connect supports multiple local coding agents. Install at least one:
 
 ```bash
 # Claude Code
@@ -105,22 +105,22 @@ qodercli --version
 
 ## Step 3: Create config.toml
 
-> **💡 Recommended: Use the Web UI** — After installing, run `cc-connect-qhn web` to configure the web admin and open the dashboard in your browser. You can visually create projects, add platforms, manage API providers, and even chat with your agent directly from the browser — no need to edit TOML files by hand. **Note:** `cc-connect-qhn web` only configures and opens the browser — you still need to run `cc-connect-qhn` separately to start the service.
+> **💡 Recommended: Use the Web UI** — After installing, run `heron-connect web` to configure the web admin and open the dashboard in your browser. You can visually create projects, add platforms, manage API providers, and even chat with your agent directly from the browser — no need to edit TOML files by hand. **Note:** `heron-connect web` only configures and opens the browser — you still need to run `heron-connect` separately to start the service.
 
-If you prefer manual configuration, cc-connect-qhn looks for config in this order:
+If you prefer manual configuration, heron-connect looks for config in this order:
 1. `-config <path>` flag (explicit)
 2. `./config.toml` (current directory)
-3. `~/.cc-connect-qhn/config.toml` (global, **recommended**)
+3. `~/.heron-connect/config.toml` (global, **recommended**)
 
-If no config file exists, running `cc-connect-qhn` will auto-create a starter template at `~/.cc-connect-qhn/config.toml`.
+If no config file exists, running `heron-connect` will auto-create a starter template at `~/.heron-connect/config.toml`.
 
 **Manual config location:**
 
 ```bash
-mkdir -p ~/.cc-connect-qhn
+mkdir -p ~/.heron-connect
 # If you cloned the repo, copy the example:
-cp config.example.toml ~/.cc-connect-qhn/config.toml
-# Or just run cc-connect-qhn once — it will create a starter config automatically
+cp config.example.toml ~/.heron-connect/config.toml
+# Or just run heron-connect once — it will create a starter config automatically
 ```
 
 You can also use a local config in the current directory:
@@ -182,13 +182,13 @@ Connection: WebSocket long connection (SDK auto-negotiates)
 
 ```bash
 # Recommended: unified entry
-cc-connect-qhn feishu setup --project my-project
-cc-connect-qhn feishu setup --project my-project --app cli_xxx:sec_xxx
+heron-connect feishu setup --project my-project
+heron-connect feishu setup --project my-project --app cli_xxx:sec_xxx
 
 # Force modes (usually unnecessary)
-cc-connect-qhn feishu new --project my-project
+heron-connect feishu new --project my-project
 
-cc-connect-qhn feishu bind --project my-project --app cli_xxx:sec_xxx
+heron-connect feishu bind --project my-project --app cli_xxx:sec_xxx
 ```
 
 Notes:
@@ -196,7 +196,7 @@ Notes:
   - no credentials => same as `new`
   - with `--app`/`--app-id` => same as `bind`
 - `setup/new` prints a terminal QR code + URL for mobile scanning.
-- If `--project` does not exist, cc-connect-qhn creates it automatically.
+- If `--project` does not exist, heron-connect creates it automatically.
 - This flow fills `app_id` / `app_secret`; in QR onboarding flow, Feishu usually pre-configures permissions and event subscriptions.
 - Still verify app publish status and availability scope in Feishu Open Platform.
 
@@ -359,7 +359,7 @@ Connection: HTTP Webhook (you need ngrok, cloudflared, or a server with public I
    - URL: `https://<your-public-domain>:<port>/wecom/callback`
    - Token: any random string
    - EncodingAESKey: click "Random Generate" (43 chars)
-   - **Start cc-connect-qhn FIRST, then save** (to pass URL verification)
+   - **Start heron-connect FIRST, then save** (to pass URL verification)
 5. **Trusted IP** → add your server's outbound public IP
 6. (Optional) **WeChat Plugin** → scan QR to link personal WeChat
 
@@ -391,14 +391,14 @@ Personal WeChat uses Tencent’s **ilink bot HTTP API** (same family as OpenClaw
 1. Run:
 
    ```bash
-   cc-connect-qhn weixin setup --project my-project
+   heron-connect weixin setup --project my-project
    ```
 
 2. Scan the QR code (or open the printed URL) in WeChat and confirm.
 
-3. Restart cc-connect-qhn, then send a message from WeChat once so `context_token` is cached.
+3. Restart heron-connect, then send a message from WeChat once so `context_token` is cached.
 
-If you already have a Bearer token, use `cc-connect-qhn weixin bind --project my-project --token '<token>'`.
+If you already have a Bearer token, use `heron-connect weixin bind --project my-project --token '<token>'`.
 
 **Detailed guide (Chinese):** [docs/weixin.md](docs/weixin.md)
 
@@ -428,36 +428,36 @@ allow_from = "*"                 # allowed QQ user IDs: "12345,67890" or "*" for
 
 ---
 
-## Step 5: Run cc-connect-qhn
+## Step 5: Run heron-connect
 
 **Open the Web UI (recommended):**
 
 ```bash
-cc-connect-qhn web    # configure web admin & open browser (does NOT start cc-connect-qhn)
-cc-connect-qhn        # start the service
+heron-connect web    # configure web admin & open browser (does NOT start heron-connect)
+heron-connect        # start the service
 ```
 
-> **Note:** `cc-connect-qhn web` only configures the web admin and opens the dashboard in your browser — it does **not** start the cc-connect-qhn service itself. You still need to run `cc-connect-qhn` (or `cc-connect-qhn --config <path>`) separately to actually start the bridge. Think of it as two steps: configure first, then run.
+> **Note:** `heron-connect web` only configures the web admin and opens the dashboard in your browser — it does **not** start the heron-connect service itself. You still need to run `heron-connect` (or `heron-connect --config <path>`) separately to actually start the bridge. Think of it as two steps: configure first, then run.
 
-**Important: If you are running inside a Claude Code session** (e.g., Claude Code helped you install and configure cc-connect-qhn), you must unset the `CLAUDECODE` environment variable before starting, otherwise Claude Code will refuse to launch as a subprocess:
+**Important: If you are running inside a Claude Code session** (e.g., Claude Code helped you install and configure heron-connect), you must unset the `CLAUDECODE` environment variable before starting, otherwise Claude Code will refuse to launch as a subprocess:
 
 ```bash
-unset CLAUDECODE && cc-connect-qhn
+unset CLAUDECODE && heron-connect
 ```
 
-Alternatively, open a **separate terminal** and run cc-connect-qhn there — this avoids the issue entirely.
+Alternatively, open a **separate terminal** and run heron-connect there — this avoids the issue entirely.
 
 **Normal startup:**
 
 ```bash
 # Run with config.toml in current directory
-cc-connect-qhn
+heron-connect
 
 # Or specify config path
-cc-connect-qhn -config /path/to/config.toml
+heron-connect -config /path/to/config.toml
 
 # Check version
-cc-connect-qhn --version
+heron-connect --version
 ```
 
 You should see logs like:
@@ -465,7 +465,7 @@ You should see logs like:
 ```
 level=INFO msg="platform started" project=my-project platform=feishu
 level=INFO msg="engine started" project=my-project agent=claudecode platforms=1
-level=INFO msg="cc-connect-qhn is running" projects=1
+level=INFO msg="heron-connect is running" projects=1
 ```
 
 ## Step 6: Chat Commands
@@ -494,7 +494,7 @@ During a session, Claude may ask for tool permissions. Reply:
 
 ## Step 7: Enable Natural Language Scheduling (Non-Claude-Code Agents)
 
-cc-connect-qhn supports scheduled tasks (cron jobs). You can always create them via slash commands (`/cron add ...`) or CLI (`cc-connect-qhn cron add ...`), but to let the agent **understand natural language** like "every day at 6am, summarize trending repos", the agent needs to know about cc-connect-qhn's cron CLI.
+heron-connect supports scheduled tasks (cron jobs). You can always create them via slash commands (`/cron add ...`) or CLI (`heron-connect cron add ...`), but to let the agent **understand natural language** like "every day at 6am, summarize trending repos", the agent needs to know about heron-connect's cron CLI.
 
 **Claude Code** handles this automatically via `--append-system-prompt` — no extra setup needed.
 
@@ -512,56 +512,56 @@ cc-connect-qhn supports scheduled tasks (cron jobs). You can always create them 
 **Content to add** (copy-paste into the file):
 
 ```markdown
-# cc-connect-qhn Integration
+# heron-connect Integration
 
-This project is managed via cc-connect-qhn, a bridge to messaging platforms.
+This project is managed via heron-connect, a bridge to messaging platforms.
 
 ## Scheduled tasks (cron)
 When the user asks you to do something on a schedule (e.g. "every day at 6am",
 "every Monday morning"), use the Bash/shell tool to run:
 
-  cc-connect-qhn cron add --cron "<min> <hour> <day> <month> <weekday>" --prompt "<task description>" --desc "<short label>"
+  heron-connect cron add --cron "<min> <hour> <day> <month> <weekday>" --prompt "<task description>" --desc "<short label>"
 
 Environment variables CC_PROJECT and CC_SESSION_KEY are already set — do NOT
 specify --project or --session-key.
 
 Examples:
-  cc-connect-qhn cron add --cron "0 6 * * *" --prompt "Collect GitHub trending repos and send a summary" --desc "Daily GitHub Trending"
-  cc-connect-qhn cron add --cron "0 9 * * 1" --prompt "Generate a weekly project status report" --desc "Weekly Report"
+  heron-connect cron add --cron "0 6 * * *" --prompt "Collect GitHub trending repos and send a summary" --desc "Daily GitHub Trending"
+  heron-connect cron add --cron "0 9 * * 1" --prompt "Generate a weekly project status report" --desc "Weekly Report"
 
 To list, edit, or delete cron jobs:
-  cc-connect-qhn cron list
-  cc-connect-qhn cron edit <job-id> <field> <value>
-  cc-connect-qhn cron del <job-id>
+  heron-connect cron list
+  heron-connect cron edit <job-id> <field> <value>
+  heron-connect cron del <job-id>
 
 Use `cron edit` to modify a single field instead of delete-and-recreate.
 Common editable fields: cron_expr, prompt, exec, description, enabled (true/false), mute (true/false), timeout_mins (int).
-Run `cc-connect-qhn cron edit --help` for the full field list.
+Run `heron-connect cron edit --help` for the full field list.
 
 Examples:
-  cc-connect-qhn cron edit abc123 cron_expr "0 9 * * *"
-  cc-connect-qhn cron edit abc123 enabled false
-  cc-connect-qhn cron edit abc123 prompt "Updated daily summary task"
+  heron-connect cron edit abc123 cron_expr "0 9 * * *"
+  heron-connect cron edit abc123 enabled false
+  heron-connect cron edit abc123 prompt "Updated daily summary task"
 
 ## Send message to current chat
 To proactively send a message back to the user's chat session (use --stdin heredoc for long/multi-line messages):
 
-  cc-connect-qhn send --stdin <<'CCEOF'
+  heron-connect send --stdin <<'CCEOF'
   your message here (any special characters are safe)
   CCEOF
 
 For short single-line messages:
 
-  cc-connect-qhn send -m "short message"
+  heron-connect send -m "short message"
 ```
 
-After adding this file, the agent will be able to translate natural language scheduling requests into `cc-connect-qhn cron add` commands automatically.
+After adding this file, the agent will be able to translate natural language scheduling requests into `heron-connect cron add` commands automatically.
 
-> **Tip:** You may want to add `AGENTS.md` / `.cursorrules` / `GEMINI.md` to your `.gitignore` if you don't want cc-connect-qhn instructions committed to version control.
+> **Tip:** You may want to add `AGENTS.md` / `.cursorrules` / `GEMINI.md` to your `.gitignore` if you don't want heron-connect instructions committed to version control.
 
 ## Multi-Project Setup
 
-A single cc-connect-qhn process can manage multiple projects. Each project has its own agent, work directory, and platforms:
+A single heron-connect process can manage multiple projects. Each project has its own agent, work directory, and platforms:
 
 ```toml
 [[projects]]
@@ -676,49 +676,49 @@ app_token = "xapp-xxx"
 ### Check current version
 
 ```bash
-cc-connect-qhn --version
+heron-connect --version
 ```
 
 ### npm users
 
 ```bash
-npm update -g @qinghuangniao/cc-connect-qhn
+npm update -g @qinghuangniao/heron-connect
 ```
 
 ### Binary users
 
-Check the latest release at https://github.com/janostudio/cc-connect-qhn/releases and compare with your local version. To upgrade:
+Check the latest release at https://github.com/janostudio/heron-connect/releases and compare with your local version. To upgrade:
 
 ```bash
 # Linux/macOS — replace with your platform suffix
-curl -L -o /usr/local/bin/cc-connect-qhn https://github.com/janostudio/cc-connect-qhn/releases/latest/download/cc-connect-qhn-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
-chmod +x /usr/local/bin/cc-connect-qhn
+curl -L -o /usr/local/bin/heron-connect https://github.com/janostudio/heron-connect/releases/latest/download/heron-connect-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+chmod +x /usr/local/bin/heron-connect
 ```
 
 ### Source users
 
 ```bash
-cd cc-connect-qhn
+cd heron-connect
 git pull
 make build
 ```
 
-After upgrading, restart the running cc-connect-qhn process.
+After upgrading, restart the running heron-connect process.
 
 ## Step 8: Run as Background Service (Optional)
 
-You can run cc-connect-qhn as a daemon managed by the OS init system (Linux systemd user service, macOS launchd LaunchAgent, Windows Task Scheduler task).
+You can run heron-connect as a daemon managed by the OS init system (Linux systemd user service, macOS launchd LaunchAgent, Windows Task Scheduler task).
 
 ### Install the daemon
 
 ```bash
-cc-connect-qhn daemon install --config ~/.cc-connect-qhn/config.toml
+heron-connect daemon install --config ~/.heron-connect/config.toml
 ```
 
 You can also point the daemon at the directory that contains `config.toml`:
 
 ```bash
-cc-connect-qhn daemon install --work-dir ~/.cc-connect-qhn
+heron-connect daemon install --work-dir ~/.heron-connect
 ```
 
 Optional flags: `--config PATH`, `--log-file PATH`, `--log-max-size N` (MB), `--work-dir DIR`, `--force` (overwrite existing unit). `--config` points to a config file, while `--work-dir` points to the directory containing `config.toml`.
@@ -726,32 +726,32 @@ Optional flags: `--config PATH`, `--log-file PATH`, `--log-max-size N` (MB), `--
 ### Control the service
 
 ```bash
-cc-connect-qhn daemon start
-cc-connect-qhn daemon stop
-cc-connect-qhn daemon restart
-cc-connect-qhn daemon status
+heron-connect daemon start
+heron-connect daemon stop
+heron-connect daemon restart
+heron-connect daemon status
 ```
 
 ### View logs
 
 ```bash
-cc-connect-qhn daemon logs           # tail current log
-cc-connect-qhn daemon logs -f         # follow (like tail -f)
-cc-connect-qhn daemon logs -n 100     # last 100 lines
-cc-connect-qhn daemon logs --log-file /path/to/log  # custom log file
+heron-connect daemon logs           # tail current log
+heron-connect daemon logs -f         # follow (like tail -f)
+heron-connect daemon logs -n 100     # last 100 lines
+heron-connect daemon logs --log-file /path/to/log  # custom log file
 ```
 
 Logs auto-rotate at the configured max size and keep one backup.
 
-On Windows, `daemon install` creates a native Task Scheduler task named `cc-connect-qhn`.
+On Windows, `daemon install` creates a native Task Scheduler task named `heron-connect`.
 The task runs at user logon and is also started immediately after installation. The
-installer writes a small PowerShell launcher under `~/.cc-connect-qhn` so the scheduled
+installer writes a small PowerShell launcher under `~/.heron-connect` so the scheduled
 task uses the selected config directory, log file, PATH, and proxy environment.
 
 ### Uninstall
 
 ```bash
-cc-connect-qhn daemon uninstall
+heron-connect daemon uninstall
 ```
 
 ## Additional Features
@@ -768,12 +768,12 @@ The following additional features are available:
 - **Voice Reply (TTS)**: Text-to-speech via Qwen TTS / OpenAI TTS. Requires `ffmpeg` and `[tts]` config.
 - **Image Messages**: Send images to Claude Code for multimodal analysis
 - **API Provider Management**: Runtime switching between API providers via `/provider` command or CLI
-- **CLI Send**: `cc-connect-qhn send` to inject messages into active sessions from external processes
+- **CLI Send**: `heron-connect send` to inject messages into active sessions from external processes
 
 ## Troubleshooting
 
 - **"session already in use"** — A previous Claude Code process may still be running. Use `/new` to start a fresh session.
-- **No response from bot** — Check `cc-connect-qhn` logs. Set `level = "debug"` in `[log]` for verbose output.
+- **No response from bot** — Check `heron-connect` logs. Set `level = "debug"` in `[log]` for verbose output.
 - **WeChat Work can't send messages** — Ensure your outbound IP is in the Trusted IP whitelist. If using a proxy, check the proxy is reachable.
 - **LINE/WeChat Work can't receive messages** — Ensure your webhook URL is publicly accessible (ngrok/cloudflared running).
-- **macOS binary won't open** — Run `xattr -d com.apple.quarantine cc-connect-qhn` to remove quarantine flag.
+- **macOS binary won't open** — Run `xattr -d com.apple.quarantine heron-connect` to remove quarantine flag.

@@ -17,7 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // kimSession manages multi-turn conversations with the Kimi CLI.
@@ -70,7 +70,7 @@ func (ks *kimiSession) Send(prompt string, images []core.ImageAttachment, files 
 	}
 
 	// Save images and files into the workspace so Kimi CLI can access them.
-	attachDir := filepath.Join(ks.workDir, ".cc-connect-qhn", "attachments")
+	attachDir := filepath.Join(ks.workDir, ".heron-connect", "attachments")
 	if (len(images) > 0 || len(files) > 0) && os.MkdirAll(attachDir, 0o755) != nil {
 		attachDir = os.TempDir()
 	}

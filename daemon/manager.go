@@ -10,7 +10,7 @@ import (
 
 const (
 	DefaultLogMaxSize = 10 * 1024 * 1024 // 10 MB
-	ServiceName       = "cc-connect-qhn"
+	ServiceName       = "heron-connect"
 )
 
 type Config struct {
@@ -46,16 +46,16 @@ func NewManager() (Manager, error) {
 
 func DefaultLogFile() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".cc-connect-qhn", "logs", "cc-connect-qhn.log")
+	return filepath.Join(home, ".heron-connect", "logs", "heron-connect.log")
 }
 
 func DefaultDataDir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".cc-connect-qhn")
+	return filepath.Join(home, ".heron-connect")
 }
 
 // ── Metadata ────────────────────────────────────────────────
-// Stored at ~/.cc-connect-qhn/daemon.json so that `logs`, `status`,
+// Stored at ~/.heron-connect/daemon.json so that `logs`, `status`,
 // etc. can locate the log file without parsing service definitions.
 
 type Meta struct {

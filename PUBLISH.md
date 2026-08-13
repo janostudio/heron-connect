@@ -1,6 +1,6 @@
 # Publish
 
-这个项目的 npm 包发布名是 `@qinghuangniao/cc-connect-qhn`，命令名是 `cc-connect-qhn`。
+这个项目的 npm 包发布名是 `@qinghuangniao/heron-connect`，命令名是 `heron-connect`。
 
 这是个人 fork，仅用于个人练手、自用和实验。发布时除了 npm，还要保证 GitHub release 上已经有对应版本的二进制资源，因为 npm 安装阶段会自动下载对应平台的二进制包。
 
@@ -11,15 +11,15 @@
 - 已登录 npm：`npm whoami`
 - 已登录 GitHub CLI：`gh auth status`
 - 本地可以正常执行 Go 构建
-- 当前版本号已经在 [npm/package.json](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/npm/package.json) 更新
-- 如有必要，已更新 [CHANGELOG.md](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/CHANGELOG.md)
+- 当前版本号已经在 [npm/package.json](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/npm/package.json) 更新
+- 如有必要，已更新 [CHANGELOG.md](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/CHANGELOG.md)
 
 ## 标准发布流程
 
 进入 npm 包目录：
 
 ```bash
-cd /Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/npm
+cd /Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/npm
 ```
 
 建议先做一次本地打包检查：
@@ -49,7 +49,7 @@ npm publish
 如果你想分步执行，可以用：
 
 ```bash
-cd /Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/npm
+cd /Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/npm
 node release-assets.js build
 node release-assets.js ensure
 npm publish
@@ -66,26 +66,26 @@ npm publish
 先确认 npm 包版本：
 
 ```bash
-npm view @qinghuangniao/cc-connect-qhn version
+npm view @qinghuangniao/heron-connect version
 ```
 
 确认 GitHub release 资源：
 
 ```bash
-gh release view v1.3.11 --repo janostudio/cc-connect-qhn --json tagName,assets,url
+gh release view v1.3.11 --repo janostudio/heron-connect --json tagName,assets,url
 ```
 
 也可以直接验证某个平台资源是否可下载，例如 Linux amd64：
 
 ```bash
-curl -I -L https://github.com/janostudio/cc-connect-qhn/releases/download/v1.3.11/cc-connect-v1.3.11-linux-amd64.tar.gz
+curl -I -L https://github.com/janostudio/heron-connect/releases/download/v1.3.11/heron-connect-v1.3.11-linux-amd64.tar.gz
 ```
 
 最后找一台干净环境机器验证安装：
 
 ```bash
-npm install -g @qinghuangniao/cc-connect-qhn
-cc-connect-qhn --version
+npm install -g @qinghuangniao/heron-connect
+heron-connect --version
 ```
 
 ## 常见问题
@@ -100,6 +100,6 @@ cc-connect-qhn --version
 
 ### 3. 为什么不能只发 npm，不发 GitHub release
 
-因为这个 npm 包本身只是包装层，安装时会执行 [npm/install.js](/Users/jahweijiang/Documents/agent-qhn/projects/cc-connect-qhn/npm/install.js)，再去 GitHub release 下载对应平台的真实二进制。
+因为这个 npm 包本身只是包装层，安装时会执行 [npm/install.js](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/npm/install.js)，再去 GitHub release 下载对应平台的真实二进制。
 
 如果 release 资源缺失，安装一定失败。

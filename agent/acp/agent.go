@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 func init() {
@@ -63,7 +63,7 @@ type Agent struct {
 	modelsCache     []core.ModelOption
 	modelsCurrent   string
 
-	// localSessions tracks sessions started by cc-connect so /list can
+	// localSessions tracks sessions started by heron-connect so /list can
 	// still return something useful when the ACP server does not
 	// implement session/list (e.g. CodeBuddy). Entries are populated
 	// on StartSession and updated when the first agent_message_chunk
@@ -85,7 +85,7 @@ type localSessionInfo struct {
 
 // sessionCallbacks lets a running acpSession report what it learned
 // during the handshake back to its parent Agent. The session is owned
-// by cc-connect's engine (not the agent), so without this the agent
+// by heron-connect's engine (not the agent), so without this the agent
 // would never see availableModes / capability advertisements.
 type sessionCallbacks interface {
 	reportModes(block acpModesBlock)
@@ -305,7 +305,7 @@ func (a *Agent) CLIDisplayName() string {
 
 // -- ModeSwitcher --
 //
-// cc-connect's engine treats ModeSwitcher as the point of truth for
+// heron-connect's engine treats ModeSwitcher as the point of truth for
 // both displaying `/mode` options and applying a mode selection. For
 // the generic ACP adapter we keep the Key == ACP modeId so downstream
 // `session/set_mode` calls don't need any translation.
@@ -326,7 +326,7 @@ func (a *Agent) SetMode(mode string) {
 	slog.Info("acp: mode changed for future sessions", "mode", normalised)
 }
 
-// GetMode returns the mode cc-connect will treat as "current" when
+// GetMode returns the mode heron-connect will treat as "current" when
 // rendering the `/mode` picker or applying SetLiveMode.
 //
 // Precedence: the most recent explicit SetMode wins (that's the user's
@@ -489,7 +489,7 @@ func (a *Agent) SetModel(model string) {
 	slog.Info("acp: model changed for future sessions", "model", model)
 }
 
-// GetModel returns the model cc-connect will treat as "current" for
+// GetModel returns the model heron-connect will treat as "current" for
 // the next StartSession. Falls back to whatever the server advertised
 // as currentModelId during the last handshake.
 func (a *Agent) GetModel() string {

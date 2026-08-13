@@ -1,11 +1,11 @@
-# cc-connect-qhn
+# heron-connect
 
 一个桥接服务，把本地 AI 编码 Agent 连接到聊天平台，让你在飞书、Telegram、Discord、Slack 等消息应用里直接和 AI 编程助手对话。
 
 ```
 你发送消息
   → 聊天平台（飞书 / Telegram / Discord / Slack 等）
-    → cc-connect-qhn（桥接层）
+    → heron-connect（桥接层）
       → 本地 AI Agent（Claude Code / Codex / Gemini CLI 等）
         → 处理代码任务，结果回传到聊天
 ```
@@ -17,10 +17,10 @@
 ### 1. 安装
 
 ```bash
-npm install -g @qinghuangniao/cc-connect-qhn
+npm install -g @qinghuangniao/heron-connect
 ```
 
-安装后可用命令为 `cc-connect-qhn`。
+安装后可用命令为 `heron-connect`。
 
 ### 2. 安装 AI Agent
 
@@ -34,12 +34,12 @@ claude --version
 ### 3. 创建配置文件
 
 ```bash
-cc-connect-qhn
+heron-connect
 ```
 
-首次运行会自动生成 `~/.cc-connect-qhn/config.toml`，按提示编辑填入 Agent 和平台凭据。
+首次运行会自动生成 `~/.heron-connect/config.toml`，按提示编辑填入 Agent 和平台凭据。
 
-配置文件查找顺序：`--config <path>` → `./config.toml` → `~/.cc-connect-qhn/config.toml`
+配置文件查找顺序：`--config <path>` → `./config.toml` → `~/.heron-connect/config.toml`
 
 最简配置示例（Claude Code + 飞书）：
 
@@ -70,13 +70,13 @@ app_secret = "xxxxxxxxxxxxxxxxxxxxxxxx"
 ### 4. 启动
 
 ```bash
-cc-connect-qhn --config ./config.toml
+heron-connect --config ./config.toml
 ```
 
 正常启动日志：
 
 ```
-level=INFO msg="cc-connect-qhn is running" projects=1
+level=INFO msg="heron-connect is running" projects=1
 ```
 
 ### 5. 聊天命令
@@ -135,7 +135,7 @@ Agent 请求工具权限时回复 `allow` / `deny` / `allow all`。
 内嵌 React 前端，提供项目管理、会话管理、定时任务编辑、在线聊天：
 
 ```bash
-cc-connect-qhn web     # 打开管理界面
+heron-connect web     # 打开管理界面
 ```
 
 配置：
@@ -172,7 +172,7 @@ work_dir = "/path/to/frontend"
 ### 定时任务
 
 ```bash
-cc-connect-qhn cron add --cron "0 6 * * *" --prompt "汇总 GitHub trending" --desc "每日 Trending"
+heron-connect cron add --cron "0 6 * * *" --prompt "汇总 GitHub trending" --desc "每日 Trending"
 ```
 
 或直接在聊天中告诉 Agent："每天早上 6 点汇总 GitHub trending"。
@@ -180,9 +180,9 @@ cc-connect-qhn cron add --cron "0 6 * * *" --prompt "汇总 GitHub trending" --d
 ### 后台守护进程
 
 ```bash
-cc-connect-qhn daemon install --config ~/.cc-connect-qhn/config.toml
-cc-connect-qhn daemon start
-cc-connect-qhn daemon logs -f
+heron-connect daemon install --config ~/.heron-connect/config.toml
+heron-connect daemon start
+heron-connect daemon logs -f
 ```
 
 支持 Linux systemd / macOS launchd / Windows Task Scheduler。
@@ -248,7 +248,7 @@ make test-fast
 
 ```text
 .
-├── cmd/cc-connect-qhn      # CLI 入口和子命令
+├── cmd/heron-connect      # CLI 入口和子命令
 ├── core                # engine、session、hooks、i18n
 ├── config              # TOML 配置加载
 ├── agent               # Claude Code、Codex、Gemini、ACP 等
@@ -277,7 +277,3 @@ make test-fast
 ## 许可证
 
 MIT
-
----
-
-本项目 fork 自 [cc-connect](https://github.com/chenhg5/cc-connect)，基线 `v1.3.3-beta.2`。

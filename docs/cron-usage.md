@@ -1,8 +1,8 @@
-# cc-connect-qhn 定时任务 (Cron) 使用指南
+# heron-connect 定时任务 (Cron) 使用指南
 
 ## 概述
 
-cc-connect-qhn 内置了完整的定时任务系统，支持在指定时间自动执行 AI 提示词或 Shell 命令，并将结果推送到聊天平台。
+heron-connect 内置了完整的定时任务系统，支持在指定时间自动执行 AI 提示词或 Shell 命令，并将结果推送到聊天平台。
 
 核心能力：
 
@@ -34,8 +34,8 @@ Web UI             →
 <dataDir>/crons/jobs.json
 ```
 
-- `dataDir` 取自 `config.toml` 的顶层 `data_dir` 配置，默认值为 `~/.cc-connect-qhn`。
-- 因此默认路径通常是 `~/.cc-connect-qhn/crons/jobs.json`。
+- `dataDir` 取自 `config.toml` 的顶层 `data_dir` 配置，默认值为 `~/.heron-connect`。
+- 因此默认路径通常是 `~/.heron-connect/crons/jobs.json`。
 - 文件不存在或为空时不会报错，调度器按空任务列表启动；首次创建任务时目录和文件会自动生成。
 
 ### 文件格式
@@ -96,20 +96,20 @@ Web UI             →
 
 ### 直接查看与备份
 
-- **查看全部任务**：直接 `cat ~/.cc-connect-qhn/crons/jobs.json`，或用 `jq` 过滤：
+- **查看全部任务**：直接 `cat ~/.heron-connect/crons/jobs.json`，或用 `jq` 过滤：
 
   ```bash
   # 只看启用的任务
-  jq '.[] | select(.enabled == true) | {id, cron_expr, prompt, exec}' ~/.cc-connect-qhn/crons/jobs.json
+  jq '.[] | select(.enabled == true) | {id, cron_expr, prompt, exec}' ~/.heron-connect/crons/jobs.json
 
   # 只看某个项目的任务
-  jq '.[] | select(.project == "default")' ~/.cc-connect-qhn/crons/jobs.json
+  jq '.[] | select(.project == "default")' ~/.heron-connect/crons/jobs.json
   ```
 
 - **备份/迁移**：直接复制 `jobs.json` 即可。新机器放到对应 `dataDir/crons/` 目录下重启进程即可恢复。
 - **批量导入**：可以先停掉进程，编辑 `jobs.json` 追加任务对象（确保 `id` 唯一、`cron_expr` 合法），再启动。
 
-> ⚠️ **不要在进程运行时手改 `jobs.json`**。运行期间内存中的任务状态会覆盖磁盘文件。如需手动编辑，务必先停止 cc-connect-qhn 进程。
+> ⚠️ **不要在进程运行时手改 `jobs.json`**。运行期间内存中的任务状态会覆盖磁盘文件。如需手动编辑，务必先停止 heron-connect 进程。
 
 ### TOML 配置的关系
 
@@ -167,11 +167,11 @@ Web UI             →
 
 ### 方式二：CLI 命令行
 
-在运行 cc-connect-qhn 的机器上使用命令行管理：
+在运行 heron-connect 的机器上使用命令行管理：
 
 ```bash
 # 添加 AI 提示词任务
-cc-connect-qhn cron add \
+heron-connect cron add \
   --project default \
   --session-key feishu:user_xxx:chat_xxx \
   --cron "0 9 * * 1" \
@@ -179,7 +179,7 @@ cc-connect-qhn cron add \
   --desc "每周工作总结"
 
 # 添加 Shell 命令任务
-cc-connect-qhn cron add \
+heron-connect cron add \
   --project default \
   --session-key feishu:user_xxx:chat_xxx \
   --cron "0 2 * * *" \
@@ -187,7 +187,7 @@ cc-connect-qhn cron add \
   --desc "每日自动构建"
 
 # 指定会话模式（每次新建独立会话）
-cc-connect-qhn cron add \
+heron-connect cron add \
   --project default \
   --session-key feishu:user_xxx:chat_xxx \
   --cron "0 9 * * 1" \
@@ -196,16 +196,16 @@ cc-connect-qhn cron add \
   --timeout-mins 60
 
 # 列出所有任务
-cc-connect-qhn cron list
+heron-connect cron list
 
 # 查看任务详情
-cc-connect-qhn cron info <任务ID>
+heron-connect cron info <任务ID>
 
 # 编辑任务
-cc-connect-qhn cron edit <任务ID> --enabled false
+heron-connect cron edit <任务ID> --enabled false
 
 # 删除任务
-cc-connect-qhn cron del <任务ID>
+heron-connect cron del <任务ID>
 ```
 
 **CLI 参数说明**：
@@ -221,7 +221,7 @@ cc-connect-qhn cron del <任务ID>
 | `--session-mode` | 否 | 会话模式：`reuse`（复用）或 `new_per_run`（每次新建） |
 | `--timeout-mins` | 否 | 超时时间（分钟），默认 30，设为 0 表示不限制 |
 
-> **提示**：如果通过 AI Agent 内部调用（如 Claude Code 中的 `cc-connect-qhn cron add`），`--project` 和 `--session-key` 可以通过环境变量 `CC_PROJECT` 和 `CC_SESSION_KEY` 自动填充。
+> **提示**：如果通过 AI Agent 内部调用（如 Claude Code 中的 `heron-connect cron add`），`--project` 和 `--session-key` 可以通过环境变量 `CC_PROJECT` 和 `CC_SESSION_KEY` 自动填充。
 
 ### 方式三：管理 API（REST）
 
@@ -321,7 +321,7 @@ curl -X DELETE http://localhost:8080/api/v1/cron/<任务ID>
 
 ## Cron 表达式参考
 
-cc-connect-qhn 使用标准 5 字段 Cron 表达式：
+heron-connect 使用标准 5 字段 Cron 表达式：
 
 ```
 ┌────────── 分钟 (0-59)
@@ -362,7 +362,7 @@ cc-connect-qhn 使用标准 5 字段 Cron 表达式：
 - **mute**：完全静默，不发送任何消息（适合纯后台任务）
 
 设置方式：
-- CLI: `cc-connect-qhn cron edit <ID> --mute` （通过管理 API 设置 `mute` 字段）
+- CLI: `heron-connect cron edit <ID> --mute` （通过管理 API 设置 `mute` 字段）
 - 聊天命令: `/cron mute <任务ID>` / `/cron unmute <任务ID>`
 - 全局默认 silent: 在 `config.toml` 中设置 `[cron] silent = true`
 
@@ -377,7 +377,7 @@ cc-connect-qhn 使用标准 5 字段 Cron 表达式：
 超时后任务会被标记为失败，`LastError` 记录为 `"job timed out after <duration>"`。
 
 设置方式：
-- CLI: `cc-connect-qhn cron add --timeout-mins 60 ...`
+- CLI: `heron-connect cron add --timeout-mins 60 ...`
 - 管理 API: `{"timeout_mins": 60}`
 
 ---
@@ -415,32 +415,32 @@ session_mode = "reuse"  # 全局默认会话模式："reuse" 或 "new_per_run"
 
 ## AI Agent 自动创建
 
-在连接了 AI Agent（如 Claude Code）的场景下，Agent 的系统提示中已包含 cron 创建指令。用户可以直接用自然语言描述需求，Agent 会自动调用 `cc-connect-qhn cron add` 命令：
+在连接了 AI Agent（如 Claude Code）的场景下，Agent 的系统提示中已包含 cron 创建指令。用户可以直接用自然语言描述需求，Agent 会自动调用 `heron-connect cron add` 命令：
 
 > **用户**: "每天早上 9 点帮我查一下今天的天气"
 >
-> **Agent**: 自动执行 `cc-connect-qhn cron add --cron "0 9 * * *" --prompt "查一下今天的天气" --desc "每日天气查询"`
+> **Agent**: 自动执行 `heron-connect cron add --cron "0 9 * * *" --prompt "查一下今天的天气" --desc "每日天气查询"`
 
 ---
 
 ## 常见问题
 
 ### Q: 任务数据存在哪里？能直接看文件吗？
-A: 所有任务持久化在 `<dataDir>/crons/jobs.json`（默认 `~/.cc-connect-qhn/crons/jobs.json`），JSON 数组格式，可直接 `cat` 或用 `jq` 查看。详见上文「持久化存储」小节。注意进程运行期间不要手改这个文件，修改会被内存覆盖。
+A: 所有任务持久化在 `<dataDir>/crons/jobs.json`（默认 `~/.heron-connect/crons/jobs.json`），JSON 数组格式，可直接 `cat` 或用 `jq` 查看。详见上文「持久化存储」小节。注意进程运行期间不要手改这个文件，修改会被内存覆盖。
 
 ### Q: 能在 config.toml 里直接写死定时任务吗？
 A: 不能。`[cron]` 段只支持 `silent` 和 `session_mode` 两个全局默认字段，没有 `[[cron.jobs]]` 之类的任务表。任务只能通过运行时方式创建并落到 `jobs.json`。
 
 ### Q: 如何查看某个任务的下次执行时间？
-A: 使用 CLI `cc-connect-qhn cron info <任务ID>`，输出中会包含 `next_run` 字段。
+A: 使用 CLI `heron-connect cron info <任务ID>`，输出中会包含 `next_run` 字段。
 
 ### Q: 聊天命令创建的 cron 任务能跨会话执行吗？
 A: 不能。聊天命令创建的任务会绑定到**当前聊天会话**。如果需要跨会话，请使用 CLI 并指定 `--session-key`。
 
 ### Q: 任务执行失败了怎么排查？
 A: 
-1. 使用 `cc-connect-qhn cron list` 查看 `LastError` 字段
-2. 检查 cc-connect-qhn 的运行日志
+1. 使用 `heron-connect cron list` 查看 `LastError` 字段
+2. 检查 heron-connect 的运行日志
 3. 对于 Shell 任务，检查命令是否可执行、路径是否正确
 
 ### Q: 如何实现"每 30 分钟执行一次"？

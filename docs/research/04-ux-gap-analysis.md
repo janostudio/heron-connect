@@ -160,17 +160,17 @@ OpenClaw 的 `chunkMarkdownText` 会：
 
 **飞书（Feishu）：**
 - 支持 Interactive Card（交互式卡片），有按钮、进度、状态等
-- CC-Connect-QHN 已实现 `RichCardSupporter` 接口，但只在部分场景使用
+- Heron Connect-QHN 已实现 `RichCardSupporter` 接口，但只在部分场景使用
 - 代码块在飞书 Lark Markdown 中有特殊渲染，但转换不总是正确
 
 **DingTalk：**
 - 支持 AI Card（流式进度卡片），专用于 AI 对话场景
-- CC-Connect-QHN 有 `StreamingCardPlatform` 接口，已实现
+- Heron Connect-QHN 有 `StreamingCardPlatform` 接口，已实现
 - 但 tool steps 的展示不如 OpenClaw 丰富
 
 **Slack：**
 - 支持 Block Kit（复杂结构化布局）
-- CC-Connect-QHN 只发普通 Markdown（`markdown_slack.go` 做了方言转换）
+- Heron Connect-QHN 只发普通 Markdown（`markdown_slack.go` 做了方言转换）
 - 没有使用 Block Kit 展示工具进度
 
 ### 根因
@@ -223,7 +223,7 @@ type FormattingInstructionProvider interface {
 
 ### 场景
 
-- 工作用飞书机器人 + 个人用飞书机器人，需要两个 cc-connect 实例
+- 工作用飞书机器人 + 个人用飞书机器人，需要两个 heron-connect 实例
 - 同一 Agent 服务多个 Telegram 群组，但 allow_from 设置不同
 
 ### 现有的部分解决方案
@@ -232,7 +232,7 @@ type FormattingInstructionProvider interface {
 
 ### 影响评级：低
 
-需要多账号的场景相对少见，可以通过运行多个 cc-connect 进程解决。
+需要多账号的场景相对少见，可以通过运行多个 heron-connect 进程解决。
 
 ---
 

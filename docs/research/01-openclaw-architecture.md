@@ -4,7 +4,7 @@
 
 ## 一、项目概述
 
-OpenClaw 是一个 TypeScript/Node.js 实现的 AI 编码 Agent ↔ IM 平台桥接工具，与 CC-Connect-QHN 目标相同但架构风格迥异。
+OpenClaw 是一个 TypeScript/Node.js 实现的 AI 编码 Agent ↔ IM 平台桥接工具，与 Heron Connect-QHN 目标相同但架构风格迥异。
 
 **技术栈：**
 - TypeScript (ESM modules, strict 模式)
@@ -87,7 +87,7 @@ export interface ChannelPlugin {
 
 ### 关键设计思想：契约优先（Contract-First）
 
-与 CC-Connect-QHN 的运行时接口探测（`if updater, ok := p.(MessageUpdater); ok`）不同，OpenClaw 要求每个插件在初始化时**声明自己的能力集**：
+与 Heron Connect-QHN 的运行时接口探测（`if updater, ok := p.(MessageUpdater); ok`）不同，OpenClaw 要求每个插件在初始化时**声明自己的能力集**：
 
 ```typescript
 // 能力声明示例（飞书插件）
@@ -172,7 +172,7 @@ export async function runDraftStreamLoop(
 
 ### 4.3 `draft-chunker.ts`（Markdown 感知分块）
 
-这是 OpenClaw 体验明显优于 CC-Connect-QHN 的核心功能之一：
+这是 OpenClaw 体验明显优于 Heron Connect-QHN 的核心功能之一：
 
 ```typescript
 // src/core/draft/draft-chunker.ts（关键逻辑）
@@ -210,8 +210,8 @@ export function chunkMarkdownText(
 }
 ```
 
-**对比 CC-Connect-QHN：**
-- CC-Connect-QHN 的 `maxPlatformMessageLen = 4000` 直接按字符数截断
+**对比 Heron Connect-QHN：**
+- Heron Connect-QHN 的 `maxPlatformMessageLen = 4000` 直接按字符数截断
 - 没有代码块感知，会把 `\`\`\`python\n...` 截在中间
 - 会破坏 Markdown 表格结构
 

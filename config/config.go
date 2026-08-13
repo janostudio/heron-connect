@@ -83,7 +83,7 @@ var configMu sync.Mutex
 var ConfigPath string
 
 type Config struct {
-	DataDir        string `toml:"data_dir"` // session store directory, default ~/.cc-connect-qhn
+	DataDir        string `toml:"data_dir"` // session store directory, default ~/.heron-connect
 	AttachmentSend string `toml:"attachment_send"`
 	// Quiet is legacy: when true and [display] does not set thinking_messages / tool_messages,
 	// engines behave as if those flags were false. Per-project quiet overrides when set.
@@ -331,14 +331,14 @@ type ProjectConfig struct {
 	Platforms    []PlatformConfig   `toml:"platforms"`
 	Heartbeat    HeartbeatConfig    `toml:"heartbeat"`
 	AutoCompress AutoCompressConfig `toml:"auto_compress"`
-	// ResetOnIdleMins automatically rotates to a new cc-connect session after
+	// ResetOnIdleMins automatically rotates to a new heron-connect session after
 	// the current session has been inactive for the specified number of minutes.
 	// 0 or nil disables the behavior.
 	ResetOnIdleMins *int `toml:"reset_on_idle_mins,omitempty"`
 	// RunAsUser, when set, causes the agent command for this project to be
 	// spawned under a different Unix user via `sudo -n -iu <user> --`. This
 	// provides OS-level file-system isolation from the supervisor user who
-	// runs cc-connect itself. Requires passwordless sudo to the target user
+	// runs heron-connect itself. Requires passwordless sudo to the target user
 	// and is POSIX-only. See docs/usage.md "Running agents as a different
 	// Unix user" for setup and migration.
 	RunAsUser string `toml:"run_as_user,omitempty"`
@@ -386,7 +386,7 @@ type ProjectConfig struct {
 	Observe    *ObserveConfig  `toml:"observe,omitempty"`
 	References ReferenceConfig `toml:"references,omitempty"`
 	// FilterExternalSessions: when true, /list only shows sessions created by
-	// cc-connect, hiding sessions created by direct CLI usage in the same work_dir.
+	// heron-connect, hiding sessions created by direct CLI usage in the same work_dir.
 	// Default is false (show all sessions).
 	FilterExternalSessions *bool `toml:"filter_external_sessions,omitempty"`
 }
@@ -468,9 +468,9 @@ func Load(path string) (*Config, error) {
 
 	if cfg.DataDir == "" {
 		if home, err := os.UserHomeDir(); err == nil {
-			cfg.DataDir = filepath.Join(home, ".cc-connect-qhn")
+			cfg.DataDir = filepath.Join(home, ".heron-connect")
 		} else {
-			cfg.DataDir = ".cc-connect-qhn"
+			cfg.DataDir = ".heron-connect"
 		}
 	}
 	cfg.AttachmentSend = strings.ToLower(strings.TrimSpace(cfg.AttachmentSend))

@@ -3,7 +3,7 @@ package claudecode
 import (
 	"testing"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 func TestNew_ParsesProjectEnvFromOpts(t *testing.T) {

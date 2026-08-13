@@ -3,7 +3,7 @@ package bridge
 import (
 	"testing"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 func TestEngine_GetBridgePublishedCommands_IncludesBuiltinsAndCustoms(t *testing.T) {

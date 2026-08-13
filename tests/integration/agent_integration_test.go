@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chenhg5/cc-connect/agent/claudecode"
-	"github.com/chenhg5/cc-connect/agent/codex"
-	"github.com/chenhg5/cc-connect/agent/cursor"
-	"github.com/chenhg5/cc-connect/agent/gemini"
-	"github.com/chenhg5/cc-connect/agent/opencode"
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/agent/claudecode"
+	"github.com/janostudio/heron-connect/agent/codex"
+	"github.com/janostudio/heron-connect/agent/cursor"
+	"github.com/janostudio/heron-connect/agent/gemini"
+	"github.com/janostudio/heron-connect/agent/opencode"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // skipUnlessAgentReady skips the test when the agent CLI binary is not

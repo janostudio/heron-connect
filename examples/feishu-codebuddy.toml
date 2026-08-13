@@ -2,7 +2,7 @@
 # 使用 headless stream-json 模式，和 qoder/gemini/kimi 一致
 #
 # CodeBuddy Code 支持 `codebuddy -p <prompt> --output-format stream-json`
-# 的 headless 模式，cc-connect-qhn 自动封装 CLI 参数。
+# 的 headless 模式，heron-connect 自动封装 CLI 参数。
 
 [log]
 level = "info"

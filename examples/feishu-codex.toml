@@ -2,7 +2,7 @@
 # Codex 使用 full-auto 模式自动执行
 #
 # 支持第三方 OpenAI 兼容 provider（DeepSeek、MiniMax 等），
-# 无需额外安装 cc-switch，cc-connect-qhn 会自动写入 codex 的
+# 无需额外安装 cc-switch，heron-connect 会自动写入 codex 的
 # config.toml 和 auth.json。
 
 [log]
@@ -33,7 +33,7 @@ mode = "full-auto"
 # ── 第三方 provider 示例 ─────────────────────────────────
 # Codex 默认连接 api.openai.com，使用 `[[projects.agent.providers]]`
 # 可以接入任意 OpenAI 兼容的 API（DeepSeek、MiniMax、AIHubMix 等）。
-# cc-connect-qhn 会自动写入 codex 的 [model_providers] 和 auth.json，
+# heron-connect 会自动写入 codex 的 [model_providers] 和 auth.json，
 # 无需额外安装 cc-switch 等工具。
 
 # [[projects.agent.providers]]

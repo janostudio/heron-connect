@@ -1,10 +1,10 @@
-APP        := cc-connect-qhn
-MODULE     := github.com/chenhg5/cc-connect
-CMD        := ./cmd/cc-connect-qhn
+APP        := heron-connect
+MODULE     := github.com/janostudio/heron-connect
+CMD        := ./cmd/heron-connect
 DIST       := dist
 LOCAL_NPM_ROOT ?= $(shell npm root -g 2>/dev/null)
-LOCAL_CC_CONNECT_DIR ?= $(LOCAL_NPM_ROOT)/@qinghuangniao/cc-connect-qhn
-LOCAL_CC_CONNECT_BIN ?= $(LOCAL_CC_CONNECT_DIR)/bin/$(APP)
+LOCAL_HERON_CONNECT_DIR ?= $(LOCAL_NPM_ROOT)/@qinghuangniao/heron-connect
+LOCAL_HERON_CONNECT_BIN ?= $(LOCAL_HERON_CONNECT_DIR)/bin/$(APP)
 
 VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT     := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -82,27 +82,27 @@ build: web
 # suffix (for example: 1.3.3-beta.2.1 -> 1.3.3-beta.2.2).
 build-local: web
 	@if [ -z "$(LOCAL_NPM_ROOT)" ]; then \
-		echo "npm root -g failed; set LOCAL_CC_CONNECT_BIN manually."; \
+		echo "npm root -g failed; set LOCAL_HERON_CONNECT_BIN manually."; \
 		exit 1; \
 	fi
-	@if [ ! -d "$(LOCAL_CC_CONNECT_DIR)" ]; then \
-		echo "Global npm package not found: $(LOCAL_CC_CONNECT_DIR)"; \
-		echo "Install with: npm install -g @qinghuangniao/cc-connect-qhn"; \
-		echo "Or run: make build-local LOCAL_CC_CONNECT_BIN=/your/path/cc-connect-qhn"; \
+	@if [ ! -d "$(LOCAL_HERON_CONNECT_DIR)" ]; then \
+		echo "Global npm package not found: $(LOCAL_HERON_CONNECT_DIR)"; \
+		echo "Install with: npm install -g @qinghuangniao/heron-connect"; \
+		echo "Or run: make build-local LOCAL_HERON_CONNECT_BIN=/your/path/heron-connect"; \
 		exit 1; \
 	fi
 	@set -e; \
-		LOCAL_VERSION=$$(node npm/local-version.js next ./npm/package.json "$(LOCAL_CC_CONNECT_DIR)/package.json"); \
+		LOCAL_VERSION=$$(node npm/local-version.js next ./npm/package.json "$(LOCAL_HERON_CONNECT_DIR)/package.json"); \
 		echo "Building local npm version $$LOCAL_VERSION"; \
 		go build $(_TAGS_FLAG) -ldflags "-s -w -X main.version=$$LOCAL_VERSION -X main.commit=$(COMMIT) -X main.buildTime=$(BUILD_TIME)" -o $(APP) $(CMD); \
-		node npm/local-version.js write-package ./npm/package.json "$(LOCAL_CC_CONNECT_DIR)/package.json" "$$LOCAL_VERSION"; \
-		install -m 755 npm/run.js "$(LOCAL_CC_CONNECT_DIR)/run.js"; \
-		install -m 755 npm/install.js "$(LOCAL_CC_CONNECT_DIR)/install.js"; \
-		install -m 644 npm/README.md "$(LOCAL_CC_CONNECT_DIR)/README.md"; \
-		mkdir -p "$(dir $(LOCAL_CC_CONNECT_BIN))"; \
-		install -m 755 $(APP) "$(LOCAL_CC_CONNECT_BIN)"; \
-		echo "Updated local npm wrapper files in: $(LOCAL_CC_CONNECT_DIR)"; \
-		echo "Updated local npm binary: $(LOCAL_CC_CONNECT_BIN)"; \
+		node npm/local-version.js write-package ./npm/package.json "$(LOCAL_HERON_CONNECT_DIR)/package.json" "$$LOCAL_VERSION"; \
+		install -m 755 npm/run.js "$(LOCAL_HERON_CONNECT_DIR)/run.js"; \
+		install -m 755 npm/install.js "$(LOCAL_HERON_CONNECT_DIR)/install.js"; \
+		install -m 644 npm/README.md "$(LOCAL_HERON_CONNECT_DIR)/README.md"; \
+		mkdir -p "$(dir $(LOCAL_HERON_CONNECT_BIN))"; \
+		install -m 755 $(APP) "$(LOCAL_HERON_CONNECT_BIN)"; \
+		echo "Updated local npm wrapper files in: $(LOCAL_HERON_CONNECT_DIR)"; \
+		echo "Updated local npm binary: $(LOCAL_HERON_CONNECT_BIN)"; \
 		echo "Local npm version is now $$LOCAL_VERSION"
 
 build-noweb:
@@ -269,7 +269,7 @@ publish: pre-test
 	@echo "    1. Run release-local tests"
 	@echo "    2. Build binaries for all platforms"
 	@echo "    3. Upload to GitHub Release (v$$(node -p "require('./npm/package.json').version"))"
-	@echo "    4. Publish @qinghuangniao/cc-connect-qhn@$$(node -p "require('./npm/package.json').version") to npm"
+	@echo "    4. Publish @qinghuangniao/heron-connect@$$(node -p "require('./npm/package.json').version") to npm"
 	@echo ""
 	@read -r -p "Proceed? [y/N] " ans && [ "$$ans" = "y" ] || { echo "Aborted."; exit 1; }
 	@echo ""
@@ -281,6 +281,6 @@ publish: pre-test
 	cd npm && npm publish --access public
 	@echo "==> [4/4] Done."
 	@echo ""
-	@echo "Published: @qinghuangniao/cc-connect-qhn@$$(node -p "require('./npm/package.json').version")"
-	@echo "GitHub Release: https://github.com/janostudio/cc-connect-qhn/releases/tag/v$$(node -p "require('./npm/package.json').version")"
-	@echo "npm:           https://www.npmjs.com/package/@qinghuangniao/cc-connect-qhn"
+	@echo "Published: @qinghuangniao/heron-connect@$$(node -p "require('./npm/package.json').version")"
+	@echo "GitHub Release: https://github.com/janostudio/heron-connect/releases/tag/v$$(node -p "require('./npm/package.json').version")"
+	@echo "npm:           https://www.npmjs.com/package/@qinghuangniao/heron-connect"

@@ -14,8 +14,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/chenhg5/cc-connect/bridge"
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/bridge"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // --- stub types reproduced from core/engine_test.go (adapted for package management) ---

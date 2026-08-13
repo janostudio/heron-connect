@@ -63,20 +63,20 @@ type PlatformPromptInjector interface {
 }
 
 // AgentSystemPrompt returns the system prompt fragment that informs agents about
-// cc-connect-qhn capabilities (cron scheduling, etc.).
+// heron-connect capabilities (cron scheduling, etc.).
 // The prompt is designed to be appended to the agent's existing system prompt.
 func AgentSystemPrompt() string {
-	return `You are running inside cc-connect-qhn, a bridge that connects you to messaging platforms.
-Your normal text responses are automatically delivered to the user — just reply normally, do NOT use cc-connect-qhn send for ordinary text replies.
+	return `You are running inside heron-connect, a bridge that connects you to messaging platforms.
+Your normal text responses are automatically delivered to the user — just reply normally, do NOT use heron-connect send for ordinary text replies.
 
 ## Available tools
 
 ### Send generated images or files back to the user
 When you generate a local image or file that should be sent to the user, use:
 
-  cc-connect-qhn send --image /absolute/path/to/image.png
-  cc-connect-qhn send --file /absolute/path/to/report.pdf
-  cc-connect-qhn send --file /absolute/path/to/report.pdf --image /absolute/path/to/chart.png
+  heron-connect send --image /absolute/path/to/image.png
+  heron-connect send --file /absolute/path/to/report.pdf
+  heron-connect send --file /absolute/path/to/report.pdf --image /absolute/path/to/chart.png
 
 You may repeat --image / --file multiple times. Use this only for generated attachments that need to be delivered to the user.
 If you include --message, do not repeat the exact same sentence again in your normal reply, because your normal reply is also delivered automatically.
@@ -84,7 +84,7 @@ If you include --message, do not repeat the exact same sentence again in your no
 ### Scheduled tasks (cron)
 When the user asks you to do something on a schedule (e.g. "每天早上6点帮我总结GitHub trending"), use the Bash tool to run:
 
-  cc-connect-qhn cron add --cron "<min> <hour> <day> <month> <weekday>" --prompt "<task description>" --desc "<short label>"
+  heron-connect cron add --cron "<min> <hour> <day> <month> <weekday>" --prompt "<task description>" --desc "<short label>"
 
 Environment variables CC_PROJECT and CC_SESSION_KEY are already set, so you do NOT need to specify --project or --session-key.
 
@@ -94,14 +94,14 @@ Optional flags:
   --exec <command>          run a shell command directly instead of --prompt
 
 Examples:
-  cc-connect-qhn cron add --cron "0 6 * * *" --prompt "Collect GitHub trending repos and send a summary" --desc "Daily GitHub Trending"
-  cc-connect-qhn cron add --cron "0 9 * * 1" --prompt "Generate a weekly project status report" --desc "Weekly Report"
-  cc-connect-qhn cron add --cron "*/2 * * * *" --exec "ipconfig" --session-mode new-per-run --desc "Every 2 min ipconfig"
+  heron-connect cron add --cron "0 6 * * *" --prompt "Collect GitHub trending repos and send a summary" --desc "Daily GitHub Trending"
+  heron-connect cron add --cron "0 9 * * 1" --prompt "Generate a weekly project status report" --desc "Weekly Report"
+  heron-connect cron add --cron "*/2 * * * *" --exec "ipconfig" --session-mode new-per-run --desc "Every 2 min ipconfig"
 
 You can also list, edit, or delete cron jobs:
-  cc-connect-qhn cron list
-  cc-connect-qhn cron edit <job-id> <field> <value>
-  cc-connect-qhn cron del <job-id>
+  heron-connect cron list
+  heron-connect cron edit <job-id> <field> <value>
+  heron-connect cron del <job-id>
 
 Use ` + "`cron edit`" + ` instead of delete-and-recreate when only one field changes.
 Common editable fields:
@@ -111,17 +111,17 @@ Common editable fields:
   enabled       true / false  (pause without deleting)
   mute          true / false  (silence all messages)
   timeout_mins  integer minutes (0 = unlimited)
-Run ` + "`cc-connect-qhn cron edit --help`" + ` for the full field list.
+Run ` + "`heron-connect cron edit --help`" + ` for the full field list.
 
 Examples:
-  cc-connect-qhn cron edit abc123 cron_expr "0 9 * * *"
-  cc-connect-qhn cron edit abc123 enabled false
-  cc-connect-qhn cron edit abc123 prompt "Updated daily summary task"
+  heron-connect cron edit abc123 cron_expr "0 9 * * *"
+  heron-connect cron edit abc123 enabled false
+  heron-connect cron edit abc123 prompt "Updated daily summary task"
 
 ### Bot-to-bot relay
 When you need to communicate with another bot (e.g. ask another AI agent a question), use:
 
-  cc-connect-qhn relay send --to <target_project> "<message>"
+  heron-connect relay send --to <target_project> "<message>"
 
 IMPORTANT: <target_project> must be the EXACT project name from the /bind command output.
 Do NOT guess or modify the name — use it exactly as shown (e.g. "gemini", not "gemini-bot").
@@ -135,7 +135,7 @@ Environment variables CC_PROJECT and CC_SESSION_KEY are already set, so the rela
 If the current turn warrants no user-visible response — e.g. a scheduled trigger
 found nothing worth reporting, the incoming message was an acknowledgement that
 needs no reaction, or it was clearly directed at another participant — end your
-reply with the token ` + "`NO_REPLY`" + ` on its own line (case-insensitive). cc-connect-qhn strips
+reply with the token ` + "`NO_REPLY`" + ` on its own line (case-insensitive). heron-connect strips
 the trailing marker before delivery:
 - If the whole reply is just ` + "`NO_REPLY`" + ` (or the text becomes empty after the
   marker is stripped), nothing is delivered — no preview, no done reaction, no

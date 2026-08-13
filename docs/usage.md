@@ -1,6 +1,6 @@
 # Usage Guide
 
-Complete guide to using cc-connect-qhn features.
+Complete guide to using heron-connect features.
 
 ## Table of Contents
 
@@ -48,7 +48,7 @@ Each user gets an independent session with full conversation context. Manage ses
 
 During a session, the agent may request tool permissions. Reply **allow** / **deny** / **allow all**.
 
-cc-connect-qhn rotates to a fresh session automatically after long inactivity:
+heron-connect rotates to a fresh session automatically after long inactivity:
 
 ```toml
 [[projects]]
@@ -182,10 +182,10 @@ env = { CLAUDE_CODE_USE_BEDROCK = "1", AWS_PROFILE = "bedrock" }
 ### CLI Commands
 
 ```bash
-cc-connect-qhn provider add --project my-backend --name relay --api-key sk-xxx --base-url https://api.relay.com
-cc-connect-qhn provider list --project my-backend
-cc-connect-qhn provider remove --project my-backend --name relay
-cc-connect-qhn provider import --project my-backend  # from cc-switch
+heron-connect provider add --project my-backend --name relay --api-key sk-xxx --base-url https://api.relay.com
+heron-connect provider list --project my-backend
+heron-connect provider remove --project my-backend --name relay
+heron-connect provider import --project my-backend  # from cc-switch
 ```
 
 ### Chat Commands
@@ -288,13 +288,13 @@ Examples:
 
 ### What this is
 
-By default, every agent session cc-connect-qhn spawns runs as the same Unix
-user that runs `cc-connect-qhn` itself. If an agent misbehaves — reads a
+By default, every agent session heron-connect spawns runs as the same Unix
+user that runs `heron-connect` itself. If an agent misbehaves — reads a
 secret, overwrites a sibling repo, trashes `~/.ssh/` — it has the
 supervisor user's full file-system reach.
 
 `run_as_user` sets a per-project target Unix user. When it is set,
-cc-connect-qhn spawns that project's agent command via
+heron-connect spawns that project's agent command via
 
 ```
 sudo -n -iu <target-user> -- claude ...
@@ -351,7 +351,7 @@ supervisor — that grants the supervisor root, which is irrelevant here
 and dangerous.
 
 ```
-# /etc/sudoers.d/cc-connect-qhn (install with `sudo visudo -f ...`)
+# /etc/sudoers.d/heron-connect (install with `sudo visudo -f ...`)
 partseeker-orchestrator ALL=(partseeker-coder) NOPASSWD: ALL
 ```
 
@@ -369,7 +369,7 @@ sudo -n -iu partseeker-coder -- sudo -n true
 # must FAIL with "a password is required" or similar
 ```
 
-If that command succeeds, cc-connect-qhn will refuse to start. Remove any
+If that command succeeds, heron-connect will refuse to start. Remove any
 `NOPASSWD` sudo grants for the target user first.
 
 #### 4. Make the project's `work_dir` accessible to the target user
@@ -383,29 +383,29 @@ sudo setfacl -R -m u:partseeker-coder:rwX /home/leigh/workspace/sandboxed-repo
 sudo setfacl -R -dm u:partseeker-coder:rwX /home/leigh/workspace/sandboxed-repo
 ```
 
-cc-connect-qhn refuses to start if the target user cannot read+write the
+heron-connect refuses to start if the target user cannot read+write the
 `work_dir` root, and warns (non-fatal) for descendant paths that look
 inaccessible.
 
-#### 5. Audit the setup before starting cc-connect-qhn
+#### 5. Audit the setup before starting heron-connect
 
 ```bash
-cc-connect-qhn doctor user-isolation
+heron-connect doctor user-isolation
 ```
 
 This runs the full preflight (the three go/no-go gates from
-[#496](https://github.com/chenhg5/cc-connect/issues/496)) and an
+[#496](https://github.com/janostudio/heron-connect/issues/496)) and an
 **isolation probe**: it spawns a fixed shell script as the target user
 and reports what the target can read, what it's denied, and any
 cross-user leaks. Output goes to stdout plus a JSON report in
-`~/.cc-connect-qhn/audits/<timestamp>-<project>.json`.
+`~/.heron-connect/audits/<timestamp>-<project>.json`.
 
 Exit code 0 = clean. Exit code 1 = at least one fatal problem.
 
 You can inspect the probe script itself with:
 
 ```bash
-cc-connect-qhn doctor user-isolation --print-script
+heron-connect doctor user-isolation --print-script
 ```
 
 ### Configuration
@@ -457,7 +457,7 @@ Migration checklist:
       automatically by whichever Claude CLI session is running. The
       target user's token will **not** be refreshed unless the target
       user has an active session — which it often doesn't between
-      cc-connect-qhn spawns. The recommended fix is to symlink the target
+      heron-connect spawns. The recommended fix is to symlink the target
       user's credentials to the supervisor's file so both share one
       token that stays fresh:
 
@@ -490,9 +490,9 @@ Migration checklist:
       its own install or a system-wide install that both users can run.
 - [ ] **Shell profile** — `~/.profile` / `~/.bashrc` on the target user
       needs to set `PATH` and any tool init the agent depends on. Test
-      with `sudo -iu partseeker-coder` before wiring cc-connect-qhn.
+      with `sudo -iu partseeker-coder` before wiring heron-connect.
 
-After migration, run `cc-connect-qhn doctor user-isolation` again. The
+After migration, run `heron-connect doctor user-isolation` again. The
 `target home` section reports which expected paths are present and
 which are missing — missing isn't necessarily wrong, but it's your
 checklist.
@@ -506,7 +506,7 @@ behavior (spawn as supervisor) returns on the next restart.
 
 - **"passwordless sudo to user X is not configured"** — step 2 of setup
   is missing or the sudoers rule is scoped to the wrong supervisor. Fix
-  the rule, run `visudo -c` to validate syntax, then restart cc-connect-qhn.
+  the rule, run `visudo -c` to validate syntax, then restart heron-connect.
 - **"target user X can run passwordless sudo"** — step 3 failed. The
   error includes the output of `sudo -l` from the target context; find
   the offending rule and remove it.
@@ -518,7 +518,7 @@ behavior (spawn as supervisor) returns on the next restart.
   and re-audit.
 - **"descendant scan timed out"** — non-fatal. The `work_dir` is large
   enough that the permission walk exceeded its timeout. Run
-  `cc-connect-qhn doctor user-isolation` manually if you want the full
+  `heron-connect doctor user-isolation` manually if you want the full
   walk, or narrow the project's `work_dir`.
 
 ---
@@ -529,12 +529,12 @@ Use CLI to create or bind Feishu/Lark bot credentials and write them back to `co
 
 ```bash
 # Recommended: unified entry
-cc-connect-qhn feishu setup --project my-project
-cc-connect-qhn feishu setup --project my-project --app cli_xxx:sec_xxx
+heron-connect feishu setup --project my-project
+heron-connect feishu setup --project my-project --app cli_xxx:sec_xxx
 
 # Force modes (usually unnecessary)
-cc-connect-qhn feishu new --project my-project
-cc-connect-qhn feishu bind --project my-project --app cli_xxx:sec_xxx
+heron-connect feishu new --project my-project
+heron-connect feishu bind --project my-project --app cli_xxx:sec_xxx
 ```
 
 Differences:
@@ -559,16 +559,16 @@ Weixin personal chat uses the **ilink bot HTTP API** (long polling + `sendMessag
 **Full walkthrough (Chinese): [docs/weixin.md](./weixin.md).**
 
 ```bash
-cc-connect-qhn weixin setup --project my-project
-cc-connect-qhn weixin bind --project my-project --token '<token>'
-cc-connect-qhn weixin new --project my-project
+heron-connect weixin setup --project my-project
+heron-connect weixin bind --project my-project --token '<token>'
+heron-connect weixin new --project my-project
 ```
 
 Notes:
 - `setup` without `--token` runs QR login; with `--token` behaves like bind.
 - Auto-creates the project and/or a `weixin` platform block when missing.
 - After login, send a message from WeChat once so `context_token` is cached.
-- See `cc-connect-qhn weixin help` for flags (`--api-url`, `--cdn-url`, `--route-tag`, etc.).
+- See `heron-connect weixin help` for flags (`--api-url`, `--cdn-url`, `--route-tag`, etc.).
 
 ---
 
@@ -602,7 +602,7 @@ Notes:
 
 3. Start: `ccr start`
 
-4. Configure cc-connect-qhn:
+4. Configure heron-connect:
 ```toml
 [projects.agent.options]
 router_url = "http://127.0.0.1:3456"
@@ -613,7 +613,7 @@ router_api_key = "your-secret-key"  # optional
 
 ## Voice Messages (Speech-to-Text)
 
-Send voice messages — cc-connect-qhn transcribes them automatically.
+Send voice messages — heron-connect transcribes them automatically.
 
 **Supported:** Feishu, WeChat Work, Telegram, LINE, Discord, Slack
 
@@ -683,7 +683,7 @@ Switch: `/tts always` or `/tts voice_only`
 
 ## Image and File Send-Back
 
-When an agent generates a local image, PDF, report, bundle, or other file and needs to deliver it directly to the current chat, use attachment mode in `cc-connect-qhn send`.
+When an agent generates a local image, PDF, report, bundle, or other file and needs to deliver it directly to the current chat, use attachment mode in `heron-connect send`.
 
 **Currently supported platforms:**
 - Feishu
@@ -703,9 +703,9 @@ or:
 /cron setup
 ```
 
-These two commands write the same cc-connect-qhn instructions. Either one is enough. After that, the agent knows:
+These two commands write the same heron-connect instructions. Either one is enough. After that, the agent knows:
 - normal text replies should be returned normally
-- generated attachments should be sent back with `cc-connect-qhn send --image/--file`
+- generated attachments should be sent back with `heron-connect send --image/--file`
 
 If you have run setup before, run it again after upgrading so the instructions are refreshed to the latest version.
 
@@ -717,14 +717,14 @@ Add this to `config.toml` if you want to disable agent-driven attachment send-ba
 attachment_send = "off"
 ```
 
-The default is `on`. This switch is independent from the agent's `/mode` and only affects `cc-connect-qhn send --image/--file`.
+The default is `on`. This switch is independent from the agent's `/mode` and only affects `heron-connect send --image/--file`.
 
 ### CLI examples
 
 ```bash
-cc-connect-qhn send --image /absolute/path/to/chart.png
-cc-connect-qhn send --file /absolute/path/to/report.pdf
-cc-connect-qhn send --file /absolute/path/to/report.pdf --image /absolute/path/to/chart.png
+heron-connect send --image /absolute/path/to/chart.png
+heron-connect send --file /absolute/path/to/report.pdf
+heron-connect send --file /absolute/path/to/report.pdf --image /absolute/path/to/chart.png
 ```
 
 Notes:
@@ -745,7 +745,7 @@ Notes:
 
 - This command is for attachment delivery, not ordinary text replies.
 - The files must exist on the local machine where the agent runs.
-- There must be an active session; otherwise the command fails because cc-connect-qhn has no chat context to deliver to.
+- There must be an active session; otherwise the command fails because heron-connect has no chat context to deliver to.
 - Platform-specific file size and file type limits still apply.
 
 ---
@@ -772,10 +772,10 @@ Example:
 ### CLI Commands
 
 ```bash
-cc-connect-qhn cron add --cron "0 6 * * *" --prompt "Summarize GitHub trending" --desc "Daily Trending"
-cc-connect-qhn cron list
-cc-connect-qhn cron edit <job-id> <field> <value>   # e.g. cron_expr, prompt, enabled, mute, timeout_mins
-cc-connect-qhn cron del <job-id>
+heron-connect cron add --cron "0 6 * * *" --prompt "Summarize GitHub trending" --desc "Daily Trending"
+heron-connect cron list
+heron-connect cron edit <job-id> <field> <value>   # e.g. cron_expr, prompt, enabled, mute, timeout_mins
+heron-connect cron del <job-id>
 ```
 
 Optional: `--session-mode new-per-run` starts a fresh agent session on each run (default is `reuse`, same as before). `--timeout-mins N` sets how long the scheduler waits per run (`0` = no limit; omit = 30 minutes).
@@ -804,7 +804,7 @@ Cross-platform bot communication in group chats.
 ### Bot-to-Bot Communication
 
 ```bash
-cc-connect-qhn relay send --to gemini "What do you think about this architecture?"
+heron-connect relay send --to gemini "What do you think about this architecture?"
 ```
 
 ---
@@ -814,13 +814,13 @@ cc-connect-qhn relay send --to gemini "What do you think about this architecture
 Run as background service.
 
 ```bash
-cc-connect-qhn daemon install --config ~/.cc-connect-qhn/config.toml
-cc-connect-qhn daemon start
-cc-connect-qhn daemon stop
-cc-connect-qhn daemon restart
-cc-connect-qhn daemon status
-cc-connect-qhn daemon logs [-f]
-cc-connect-qhn daemon uninstall
+heron-connect daemon install --config ~/.heron-connect/config.toml
+heron-connect daemon start
+heron-connect daemon stop
+heron-connect daemon restart
+heron-connect daemon status
+heron-connect daemon logs [-f]
+heron-connect daemon uninstall
 ```
 
 ---
@@ -894,7 +894,7 @@ token = "your-secret-token"     # Login token; /web setup generates one automati
 cors_origins = ["*"]            # Allowed CORS origins; empty = no CORS headers
 ```
 
-Then restart cc-connect-qhn.
+Then restart heron-connect.
 
 ### Build Options
 
@@ -903,7 +903,7 @@ Web assets are compiled into the binary by default. To exclude them (saves ~1MB)
 ```bash
 make build-noweb
 # or
-go build -tags 'no_web' ./cmd/cc-connect-qhn
+go build -tags 'no_web' ./cmd/heron-connect
 ```
 
 When built with `no_web`, the `/web` command will report that web admin is not available.
@@ -919,7 +919,7 @@ Key endpoints:
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/v1/status` | System status (version, uptime, platforms) |
-| `POST` | `/api/v1/restart` | Restart cc-connect-qhn |
+| `POST` | `/api/v1/restart` | Restart heron-connect |
 | `POST` | `/api/v1/reload` | Reload configuration |
 | `GET` | `/api/v1/projects` | List projects |
 | `GET` | `/api/v1/sessions?project=<name>` | List sessions for a project |
@@ -935,7 +935,7 @@ Full API reference: [management-api.md](./management-api.md)
 
 > **Status: Beta.** This feature is available since v1.2.2-beta.5. The protocol may change in future releases.
 
-The Bridge exposes a WebSocket + REST server so external adapters (custom UIs, bots, scripts) can interact with cc-connect-qhn sessions — send messages, receive events, manage sessions.
+The Bridge exposes a WebSocket + REST server so external adapters (custom UIs, bots, scripts) can interact with heron-connect sessions — send messages, receive events, manage sessions.
 
 ### Enable via Chat
 
@@ -954,7 +954,7 @@ path = "/bridge/ws"             # WebSocket endpoint path
 cors_origins = ["*"]            # Allowed CORS origins; empty = no CORS
 ```
 
-Then restart cc-connect-qhn.
+Then restart heron-connect.
 
 ### Authentication
 

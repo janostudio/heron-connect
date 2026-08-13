@@ -17,7 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // piSession manages a multi-turn pi coding agent conversation.
@@ -414,7 +414,7 @@ func (s *piSession) CancelTurn() {
 // cleanAttachments removes files from the attachments directory to avoid
 // accumulating files across turns.
 func cleanAttachments(workDir string) {
-	attachDir := filepath.Join(workDir, ".cc-connect-qhn", "attachments")
+	attachDir := filepath.Join(workDir, ".heron-connect", "attachments")
 	entries, err := os.ReadDir(attachDir)
 	if err != nil {
 		return // directory may not exist yet
@@ -426,10 +426,10 @@ func cleanAttachments(workDir string) {
 	}
 }
 
-// saveImagesToDisk saves image attachments to workDir/.cc-connect-qhn/attachments/
+// saveImagesToDisk saves image attachments to workDir/.heron-connect/attachments/
 // and returns the list of absolute file paths.
 func saveImagesToDisk(workDir string, images []core.ImageAttachment) []string {
-	attachDir := filepath.Join(workDir, ".cc-connect-qhn", "attachments")
+	attachDir := filepath.Join(workDir, ".heron-connect", "attachments")
 	if err := os.MkdirAll(attachDir, 0o755); err != nil {
 		slog.Error("piSession: failed to create attachments dir", "error", err)
 		return nil

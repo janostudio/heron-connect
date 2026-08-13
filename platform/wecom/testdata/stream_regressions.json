@@ -77,7 +77,7 @@
   },
   {
     "name": "log_stream_5_partial_prefix_should_not_repeat_on_finalize",
-    "source": "cc-connect.log:91,117,132,133",
+    "source": "heron-connect.log:91,117,132,133",
     "mode": "stream_send",
     "req_id": "req_stream_5",
     "stream_id": "stream_5",

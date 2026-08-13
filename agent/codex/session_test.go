@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 func TestNormalizeReasoningEffort_RejectsMinimal(t *testing.T) {
@@ -272,7 +272,7 @@ func TestSend_WithImages_PassesImageArgsAndDefaultPrompt(t *testing.T) {
 	if imagePath == "" {
 		t.Fatalf("args missing --image: %v", args)
 	}
-	if !strings.HasPrefix(imagePath, filepath.Join(workDir, ".cc-connect-qhn", "images")+string(filepath.Separator)) {
+	if !strings.HasPrefix(imagePath, filepath.Join(workDir, ".heron-connect", "images")+string(filepath.Separator)) {
 		t.Fatalf("image path = %q, want under work dir image cache", imagePath)
 	}
 	data, err := os.ReadFile(imagePath)

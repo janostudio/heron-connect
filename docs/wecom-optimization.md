@@ -1,6 +1,6 @@
 # WeCom + Session 优化方案
 
-基于 `cc-connect-qhn-2026-07-21_144927.log`（403,417 行 / 478MB / 7 天）的日志分析。
+基于 `heron-connect-2026-07-21_144927.log`（403,417 行 / 478MB / 7 天）的日志分析。
 
 ---
 
@@ -25,7 +25,7 @@
 
 #### 1a. 将默认 `resetOnIdle` 改为 360 分钟
 ```
-文件: cmd/cc-connect-qhn/main.go
+文件: cmd/heron-connect/main.go
 const defaultResetOnIdleMins = 360  // 原来是 0
 ```
 含义：用户 360 分钟没发新消息到某个 session，下次发消息时自动创建新 session。

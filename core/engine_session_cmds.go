@@ -55,7 +55,7 @@ func (e *Engine) cmdNew(p Platform, msg *Message, args []string) {
 
 // applySessionFilter conditionally filters agent sessions based on the
 // filter_external_sessions config. When disabled (default), all sessions are
-// returned. When enabled, only sessions tracked by cc-connect are shown.
+// returned. When enabled, only sessions tracked by heron-connect are shown.
 func (e *Engine) applySessionFilter(sessions []AgentSessionInfo, sm *SessionManager) []AgentSessionInfo {
 	if !e.filterExternalSessions {
 		return sessions
@@ -63,7 +63,7 @@ func (e *Engine) applySessionFilter(sessions []AgentSessionInfo, sm *SessionMana
 	return filterOwnedSessions(sessions, sm.KnownAgentSessionIDs())
 }
 
-// filterOwnedSessions removes agent sessions that are not tracked by cc-connect's
+// filterOwnedSessions removes agent sessions that are not tracked by heron-connect's
 // session manager. This prevents external CLI sessions in the same work_dir from
 // appearing in /list, /switch, /delete, etc. If the session manager has no tracked
 // agent sessions at all (e.g. first run), all sessions are returned unfiltered.
@@ -86,7 +86,7 @@ const listPageSize = 20
 const dirCardPageSize = 20
 
 // sessionsFromSessionManager builds a fallback session list from
-// cc-connect's own SessionManager, scoped to userKey. Used when the
+// heron-connect's own SessionManager, scoped to userKey. Used when the
 // agent backend does not report sessions (e.g. ACP servers without
 // session/list support like CodeBuddy). Only sessions with a non-empty
 // AgentSessionID and matching the given agent name are included.
@@ -155,7 +155,7 @@ func (e *Engine) cmdList(p Platform, msg *Message, args []string) {
 		agentSessions = e.applySessionFilter(agentSessions, sessions)
 		// Fallback: when the agent backend doesn't report sessions
 		// (e.g. ACP servers like CodeBuddy that don't implement
-		// session/list), surface sessions tracked by cc-connect's own
+		// session/list), surface sessions tracked by heron-connect's own
 		// SessionManager so /list and /switch still work.
 		if len(agentSessions) == 0 {
 			agentSessions = sessionsFromSessionManager(sessions, agent.Name(), msg.SessionKey)
@@ -259,7 +259,7 @@ func (e *Engine) cmdSwitch(p Platform, msg *Message, args []string) {
 	agentSessions = e.applySessionFilter(agentSessions, sessions)
 	// Fallback: when the agent backend doesn't report sessions
 	// (e.g. ACP servers like CodeBuddy that don't implement
-	// session/list), surface sessions tracked by cc-connect's own
+	// session/list), surface sessions tracked by heron-connect's own
 	// SessionManager so /switch still works after restart.
 	if len(agentSessions) == 0 {
 		agentSessions = sessionsFromSessionManager(sessions, agent.Name(), msg.SessionKey)

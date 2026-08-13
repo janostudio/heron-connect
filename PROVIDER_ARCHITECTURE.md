@@ -1,4 +1,4 @@
-# CC-Connect Provider/Model Architecture Diagram
+# Heron Connect Provider/Model Architecture Diagram
 
 ## 1. Data Flow: Config → Runtime → Agent Spawn
 

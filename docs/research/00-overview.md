@@ -1,27 +1,27 @@
-# CC-Connect-QHN 架构调研总览
+# Heron Connect-QHN 架构调研总览
 
 > 创建时间：2026-05-28  
 > 背景：与 OpenClaw 的横向对比，为大重构提供依据
 
 ## 一、调研目的
 
-CC-Connect-QHN 是一个将 AI 编码 Agent（Claude Code、Codex、Gemini CLI 等）与 IM 平台（飞书、Telegram、Discord、Slack、DingTalk、微信等）连接的桥接工具。
+Heron Connect-QHN 是一个将 AI 编码 Agent（Claude Code、Codex、Gemini CLI 等）与 IM 平台（飞书、Telegram、Discord、Slack、DingTalk、微信等）连接的桥接工具。
 
-经过与 OpenClaw（同类 TypeScript 实现）的对比，发现 CC-Connect-QHN **在用户体验上明显落后**，需要做大规模重构。本调研文档记录了现状分析、差距根因和重构方案。
+经过与 OpenClaw（同类 TypeScript 实现）的对比，发现 Heron Connect-QHN **在用户体验上明显落后**，需要做大规模重构。本调研文档记录了现状分析、差距根因和重构方案。
 
 ## 二、调研范围
 
 | 文档 | 内容 |
 |------|------|
 | [01-openclaw-architecture.md](./01-openclaw-architecture.md) | OpenClaw 架构深度分析 |
-| [02-cc-connect-current-state.md](./02-cc-connect-current-state.md) | CC-Connect-QHN 现状分析 |
+| [02-heron-connect-current-state.md](./02-heron-connect-current-state.md) | Heron Connect-QHN 现状分析 |
 | [03-comparison.md](./03-comparison.md) | 架构与实现横向对比 |
 | [04-ux-gap-analysis.md](./04-ux-gap-analysis.md) | UX 差距根因分析（按优先级排序） |
 | [05-refactoring-plan.md](./05-refactoring-plan.md) | 大重构路线图 |
 
 ## 三、关键发现（Executive Summary）
 
-### 3.1 CC-Connect-QHN 的核心问题
+### 3.1 Heron Connect-QHN 的核心问题
 
 **问题 1：Engine 大单体（God Object）**
 - `core/engine.go` 共 **13,820 行**，包含消息路由、命令处理、卡片渲染、工作区管理、cron 调度等所有逻辑
@@ -72,7 +72,7 @@ CC-Connect-QHN 是一个将 AI 编码 Agent（Claude Code、Codex、Gemini CLI �
 ## 四、代码规模参考
 
 ```
-cc-connect-qhn/
+heron-connect/
 ├── core/                    59,847 行
 │   ├── engine.go           13,820 行  ← 最大问题
 │   ├── engine_test.go      12,688 行
@@ -94,7 +94,7 @@ cc-connect-qhn/
 
 ## 五、对比结论
 
-OpenClaw 的设计在以下方面明显优于 CC-Connect-QHN：
+OpenClaw 的设计在以下方面明显优于 Heron Connect-QHN：
 
 1. **流式分层清晰**：4 种明确的 streaming mode（off/partial/block/progress），统一的 `draft-stream-loop.ts` 驱动
 2. **Markdown 感知**：`chunkMarkdownText` 在代码块/表格边界分块，不破坏结构
@@ -102,7 +102,7 @@ OpenClaw 的设计在以下方面明显优于 CC-Connect-QHN：
 4. **丰富上下文**：`buildChannelInboundEventContext()` 为每条消息注入完整的频道/用户/历史上下文
 5. **插件完全解耦**：每个 ChannelPlugin 自声明所有能力，引擎无需 hardcode 平台知识
 
-CC-Connect-QHN 的优势在于：
+Heron Connect-QHN 的优势在于：
 - Go 语言性能更好，资源占用更低
 - 接口隔离设计（Interface Segregation）更灵活
 - 已有成熟的 cron、relay、workspace 等高级功能

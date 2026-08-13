@@ -17,8 +17,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/chenhg5/cc-connect/core"
-	"github.com/chenhg5/cc-connect/proxy"
+	"github.com/janostudio/heron-connect/core"
+	"github.com/janostudio/heron-connect/proxy"
 )
 
 func init() {
@@ -168,7 +168,7 @@ func New(opts map[string]any) (core.Agent, error) {
 	routerAPIKey, _ := opts["router_api_key"].(string)
 
 	// run_as_user: optional OS-user isolation. Injected into opts from
-	// the project-level config field by cmd/cc-connect-qhn/main.go.
+	// the project-level config field by cmd/heron-connect/main.go.
 	spawnOpts := core.SpawnOptions{}
 	spawnOpts.RunAsUser, _ = opts["run_as_user"].(string)
 	if env, ok := opts["run_as_env"].([]any); ok {
@@ -662,14 +662,14 @@ func (a *Agent) GetMode() string {
 
 // GetRunAsUser returns the target user for OS-isolation spawning, or ""
 // if no isolation is configured. Set at construction from the project-level
-// run_as_user field (injected into opts by cmd/cc-connect-qhn/main.go).
+// run_as_user field (injected into opts by cmd/heron-connect/main.go).
 //
 // This accessor exists specifically so multi-workspace mode can propagate
 // run_as_user from the parent (project-level) agent into per-workspace
 // agent instances created lazily by core.Engine.getOrCreateWorkspaceAgent.
 // Without this, workspace agents are constructed with a fresh opts map
 // that never contained run_as_user, silently dropping back to the legacy
-// supervisor-user spawn path — which is exactly the leak cc-connect#496
+// supervisor-user spawn path — which is exactly the leak heron-connect#496
 // is designed to prevent.
 func (a *Agent) GetRunAsUser() string {
 	a.mu.Lock()
@@ -708,7 +708,7 @@ func (a *Agent) GetRunAsEnv() []string {
 // propagate to every workspace agent. sessionEnv is excluded (runtime-only).
 //
 // run_as_user / run_as_env are also omitted because the engine has its own
-// dedicated propagation path via GetRunAsUser/GetRunAsEnv (see cc-connect#496).
+// dedicated propagation path via GetRunAsUser/GetRunAsEnv (see heron-connect#496).
 func (a *Agent) WorkspaceAgentOptions() map[string]any {
 	a.mu.RLock()
 	defer a.mu.RUnlock()

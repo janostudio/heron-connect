@@ -1,4 +1,4 @@
-# cc-connect-qhn 日志方案分析与优化建议
+# heron-connect 日志方案分析与优化建议
 
 ## 一、当前日志方案
 
@@ -20,9 +20,9 @@
 | 方式 | 说明 |
 |------|------|
 | stdout | 默认，纯文本 `TextHandler` |
-| 文件 | daemon 模式，路径 `~/.cc-connect-qhn/logs/cc-connect-qhn.log` |
+| 文件 | daemon 模式，路径 `~/.heron-connect/logs/heron-connect.log` |
 | 日志轮转 | 自实现 `RotatingWriter`，单文件最大 10MB，保留 1 个 `.1` 备份 |
-| 审计日志 | 企微 `~/.cc-connect-qhn/audit/wecom_access/{project}.jsonl`（JSON Lines） |
+| 审计日志 | 企微 `~/.heron-connect/audit/wecom_access/{project}.jsonl`（JSON Lines） |
 | 飞书 SDK 日志 | `sanitizingLogger` 包装，自动脱敏 URL 敏感参数 |
 
 ### 1.4 配置入口
@@ -39,7 +39,7 @@ level = "info"
 ### 1.5 日志格式示例
 
 ```
-time=2025-07-29T10:00:00.000Z level=INFO msg="cc-connect-qhn is running" projects=2
+time=2025-07-29T10:00:00.000Z level=INFO msg="heron-connect is running" projects=2
 ```
 
 ---
@@ -106,13 +106,13 @@ logger.With("project", name)      // 缩写
 #### 接入方式
 
 ```
-cc-connect-qhn → JSON 日志文件 → Promtail → Loki → Grafana
+heron-connect → JSON 日志文件 → Promtail → Loki → Grafana
 ```
 
 ##### Step 1：切换到 JSON 格式输出
 
 ```go
-// 改动点：cmd/cc-connect-qhn/main.go setupLogger
+// 改动点：cmd/heron-connect/main.go setupLogger
 func setupLogger(level slog.Leveler, w io.Writer) {
     opts := &slog.HandlerOptions{
         Level:     level,
@@ -130,7 +130,7 @@ func setupLogger(level slog.Leveler, w io.Writer) {
 {
   "time": "2025-07-29T10:00:00.000Z",
   "level": "INFO",
-  "msg": "cc-connect-qhn is running",
+  "msg": "heron-connect is running",
   "source": {"function": "main", "file": "cmd/main.go", "line": 42},
   "projects": 2
 }
@@ -184,13 +184,13 @@ clients:
   - url: http://localhost:3100/loki/api/v1/push  # 或 Grafana Cloud 地址
 
 scrape_configs:
-  - job_name: cc-connect-qhn
+  - job_name: heron-connect
     static_configs:
       - targets:
           - localhost
         labels:
-          job: cc-connect-qhn
-          __path__: /Users/*/.cc-connect-qhn/logs/*.log
+          job: heron-connect
+          __path__: /Users/*/.heron-connect/logs/*.log
     pipeline_stages:
       - json:
           expressions:
@@ -207,9 +207,9 @@ scrape_configs:
 ##### Step 5：Grafana 查询
 
 ```logql
-{job="cc-connect-qhn"} |= "error"
-{job="cc-connect-qhn"} | json | level="ERROR" | line_format "{{.msg}}"
-{job="cc-connect-qhn"} | json | rate(counter) [5m] by (level)
+{job="heron-connect"} |= "error"
+{job="heron-connect"} | json | level="ERROR" | line_format "{{.msg}}"
+{job="heron-connect"} | json | rate(counter) [5m] by (level)
 ```
 
 ### 3.2 日志采样

@@ -3,7 +3,7 @@ package bridge
 import (
 	"testing"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 func TestBridgeBuildCapabilitiesSnapshotIncludesProjectCatalog(t *testing.T) {
@@ -30,8 +30,8 @@ func TestBridgeBuildCapabilitiesSnapshotIncludesProjectCatalog(t *testing.T) {
 	if snapshot.Version != 1 {
 		t.Fatalf("version = %d, want 1", snapshot.Version)
 	}
-	if snapshot.Host.CCConnectVersion != "v9.9.9" {
-		t.Fatalf("cc_connect_version = %q, want %q", snapshot.Host.CCConnectVersion, "v9.9.9")
+	if snapshot.Host.HeronConnectVersion != "v9.9.9" {
+		t.Fatalf("heron_connect_version = %q, want %q", snapshot.Host.HeronConnectVersion, "v9.9.9")
 	}
 	if snapshot.Host.Commit != "abc123" {
 		t.Fatalf("commit = %q, want %q", snapshot.Host.Commit, "abc123")

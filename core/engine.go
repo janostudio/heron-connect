@@ -237,7 +237,7 @@ type Engine struct {
 	showContextIndicator bool
 	replyFooterEnabled   bool
 
-	// When true, /list etc. only show sessions tracked by cc-connect,
+	// When true, /list etc. only show sessions tracked by heron-connect,
 	// hiding sessions created by direct CLI usage in the same work_dir.
 	// Default false = show all sessions.
 	filterExternalSessions bool
@@ -1864,7 +1864,7 @@ func (e *Engine) getOrCreateWorkspaceAgent(workspace string) (Agent, *SessionMan
 	// this, per-workspace agents silently bypass the project-level
 	// run_as_user config because their opts map is freshly constructed
 	// above, not inherited from the project-level opts that main.go
-	// already decorated. See cc-connect#496 and the cc-connect/core/runas.go
+	// already decorated. See heron-connect#496 and the heron-connect/core/runas.go
 	// preamble for why run_as_user has to survive this copy.
 	if _, ok := opts["run_as_user"]; !ok {
 		if ma, ok := e.agent.(interface{ GetRunAsUser() string }); ok {
@@ -2051,7 +2051,7 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 		ccKey = ccSessionKey
 	}
 
-	// Inject per-session env vars so the agent subprocess can call `cc-connect cron add` etc.
+	// Inject per-session env vars so the agent subprocess can call `heron-connect cron add` etc.
 	if inj, ok := agent.(SessionEnvInjector); ok {
 		envVars := []string{
 			"CC_PROJECT=" + e.name,
@@ -2539,7 +2539,7 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 			e.executeSkill(p, msg, skill, args)
 			return true
 		}
-		// Not a cc-connect command — notify user, then fall through to agent
+		// Not a heron-connect command — notify user, then fall through to agent
 		e.send(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgUnknownCommand), "/"+cmd))
 		return false
 	}

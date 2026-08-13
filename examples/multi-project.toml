@@ -1,4 +1,4 @@
-# 多项目：飞书 + Telegram，共享同一个 cc-connect-qhn 进程
+# 多项目：飞书 + Telegram，共享同一个 heron-connect 进程
 # 每个项目有独立的 Agent 和工作目录
 
 [log]

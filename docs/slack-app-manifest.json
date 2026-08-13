@@ -4,13 +4,13 @@
     "minor_version": 1
   },
   "display_information": {
-    "name": "CC-Connect",
+    "name": "Heron Connect",
     "description": "Bridge between AI coding agents and Slack",
     "background_color": "#1a1a2e"
   },
   "features": {
     "bot_user": {
-      "display_name": "CC-Connect",
+      "display_name": "Heron Connect",
       "always_online": true
     },
     "slash_commands": [
@@ -111,7 +111,7 @@
       },
       {
         "command": "/version",
-        "description": "Show cc-connect-qhn version",
+        "description": "Show heron-connect version",
         "should_escape": false
       },
       {
@@ -185,7 +185,7 @@
       },
       {
         "command": "/restart",
-        "description": "Restart cc-connect-qhn service",
+        "description": "Restart heron-connect service",
         "should_escape": false
       },
       {

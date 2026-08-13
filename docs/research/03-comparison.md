@@ -1,10 +1,10 @@
-# 架构对比：OpenClaw vs CC-Connect-QHN
+# 架构对比：OpenClaw vs Heron Connect-QHN
 
 > 两个项目在相同目标下采用了截然不同的设计路径
 
 ## 一、总体对比矩阵
 
-| 维度 | OpenClaw | CC-Connect-QHN | 优劣 |
+| 维度 | OpenClaw | Heron Connect-QHN | 优劣 |
 |------|----------|----------------|------|
 | **语言** | TypeScript/Bun | Go | CC 性能更好 |
 | **平台数量** | 23+ | 12 | OC 更多 |
@@ -46,7 +46,7 @@ if (plugin.capabilities.streamingMode !== 'off') {
 }
 ```
 
-### CC-Connect-QHN：接口隔离（Interface Segregation）
+### Heron Connect-QHN：接口隔离（Interface Segregation）
 
 ```go
 // 运行时类型断言探测能力
@@ -65,7 +65,7 @@ if scp, ok := p.(StreamingCardPlatform); ok {
 
 **分析：**
 - OpenClaw 方案：能力在编译/初始化时已知，代码更清晰，但失去 Go 的类型安全
-- CC-Connect-QHN 方案：Go interface 类型安全，但 engine.go 中充满 `if _, ok := p.(X); ok` 判断
+- Heron Connect-QHN 方案：Go interface 类型安全，但 engine.go 中充满 `if _, ok := p.(X); ok` 判断
 - CC 方案的隐患：当平台忘记实现某个接口，或接口行为不一致时，很难发现
 
 ### 建议：能力注册表（兼顾两者）
@@ -108,7 +108,7 @@ draft-stream-loop.ts
 - 每种策略有独立的状态机
 - 完全感知 Markdown 结构（不截断代码块）
 
-### CC-Connect-QHN：多系统交叉
+### Heron Connect-QHN：多系统交叉
 
 ```
 AgentEventStream
@@ -138,7 +138,7 @@ engine.go (processInteractiveSession)
 ### 对比视图
 
 ```
-OpenClaw                          CC-Connect-QHN
+OpenClaw                          Heron Connect-QHN
 ─────────────────                 ─────────────────────────
 AgentEvent                        AgentEvent
     │                                 │
@@ -175,7 +175,7 @@ AgentEvent                        AgentEvent
 输出: ["# 标题\n\n代码:\n```python\ndef foo():\n    return 'bar'\n```", "后续文本..."]
 ```
 
-### CC-Connect-QHN：字符数截断
+### Heron Connect-QHN：字符数截断
 
 ```go
 // engine.go
@@ -200,7 +200,7 @@ def very_long_function():
 更多解释...
 ```
 
-CC-Connect-QHN 会在第 4000 个字符处截断，无论是否在代码块中间。
+Heron Connect-QHN 会在第 4000 个字符处截断，无论是否在代码块中间。
 
 ## 五、入站上下文对比
 
@@ -233,12 +233,12 @@ CC-Connect-QHN 会在第 4000 个字符处截断，无论是否在代码块中�
   [attached: file.py, 156 lines]
 ```
 
-### CC-Connect-QHN 注入的上下文
+### Heron Connect-QHN 注入的上下文
 
 ```
 给 AI 的系统提示中包含：
   (来自 AgentSystemPrompt())
-  - 可用工具说明（cc-connect send、cron add 等）
+  - 可用工具说明（heron-connect send、cron add 等）
   
   (来自 FormattingInstructionProvider 接口，如果平台实现了的话)
   - 格式化指令（部分平台）
@@ -265,7 +265,7 @@ CC-Connect-QHN 会在第 4000 个字符处截断，无论是否在代码块中�
 
 每个 `id` 独立维护会话上下文，互不干扰。
 
-### CC-Connect-QHN
+### Heron Connect-QHN
 
 ```toml
 # config.toml

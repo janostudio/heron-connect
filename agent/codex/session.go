@@ -18,7 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // codexSession manages a multi-turn Codex conversation.
@@ -157,7 +157,7 @@ func (cs *codexSession) stageImages(prompt string, images []core.ImageAttachment
 		return prompt, nil, nil
 	}
 
-	imgDir := filepath.Join(cs.workDir, ".cc-connect-qhn", "images")
+	imgDir := filepath.Join(cs.workDir, ".heron-connect", "images")
 	if err := os.MkdirAll(imgDir, 0o755); err != nil {
 		return "", nil, fmt.Errorf("codexSession: create image dir: %w", err)
 	}
@@ -638,7 +638,7 @@ func loadCodexRuntimeConfig(ctx context.Context, workDir string, extraEnv []stri
 
 	if err := rpcRequestOverIO(stdin, reader, nextID, "initialize", map[string]any{
 		"clientInfo": map[string]any{
-			"name":    "cc-connect-codex-runtime-config",
+			"name":    "heron-connect-codex-runtime-config",
 			"title":   "CC Connect Codex Runtime Config",
 			"version": "0.1.0",
 		},

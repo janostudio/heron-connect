@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // listSessionsProbeTimeout bounds how long we wait for a one-shot
@@ -214,8 +214,8 @@ func probeInitialize(ctx context.Context, tr *transport) (*acpInitializeResult, 
 			"terminal": false,
 		},
 		"clientInfo": map[string]any{
-			"name":    "cc-connect-qhn",
-			"title":   "cc-connect-qhn",
+			"name":    "heron-connect",
+			"title":   "heron-connect",
 			"version": core.CurrentVersion,
 		},
 	})

@@ -208,7 +208,7 @@ func (e *Engine) SetWebStatusFunc(fn func() string)                    { e.webSt
 // prepended to each message before forwarding it to the agent. When enabled,
 // the agent receives a preamble line like:
 //
-//	[cc-connect sender_id=ou_abc123 platform=feishu]
+//	[heron-connect sender_id=ou_abc123 platform=feishu]
 //
 // This allows the agent to identify who sent the message and adjust behavior
 // accordingly (e.g. personal task views, role-based access control).

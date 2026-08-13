@@ -1,13 +1,13 @@
-# CC-Connect-QHN 现状分析
+# Heron Connect-QHN 现状分析
 
-> 基于对 `projects/cc-connect-qhn` 源码的完整调研  
+> 基于对 `projects/heron-connect` 源码的完整调研  
 > 调研时间：2026-05-28
 
 ## 一、代码规模
 
 ```
-cc-connect-qhn/
-├── cmd/cc-connect-qhn/          ~2,000 行  ← CLI 入口、插件注册
+heron-connect/
+├── cmd/heron-connect/          ~2,000 行  ← CLI 入口、插件注册
 ├── config/                  ~1,500 行  ← TOML 配置解析
 ├── core/                   59,847 行  ← 核心引擎（含测试）
 │   ├── engine.go           13,820 行  ← ⚠️ 单体 God Object
@@ -106,10 +106,10 @@ func init() {
     })
 }
 
-// cmd/cc-connect-qhn/plugin_platform_feishu.go
+// cmd/heron-connect/plugin_platform_feishu.go
 //go:build !no_feishu
 package main
-import _ "cc-connect/platform/feishu"
+import _ "heron-connect/platform/feishu"
 ```
 
 ### 2.4 已有流式基础设施
@@ -154,9 +154,9 @@ type streamPreview struct {
 
 ### 2.6 高级功能（OpenClaw 没有）
 
-CC-Connect-QHN 有许多 OpenClaw 没有的高级功能：
+Heron Connect-QHN 有许多 OpenClaw 没有的高级功能：
 - **Cron 调度**：`/cron add` 定时任务
-- **Bot-to-Bot Relay**：`cc-connect relay send` 跨 Agent 通信
+- **Bot-to-Bot Relay**：`heron-connect relay send` 跨 Agent 通信
 - **多工作区**：一个 bot 管理多个项目工作区
 - **WebSocket Bridge**：`core/bridge.go`，支持 Web 前端
 - **多模型/Provider**：`/provider` 命令切换 API provider
@@ -282,7 +282,7 @@ type Message struct {
 
 ## 四、现有优势总结
 
-尽管存在问题，CC-Connect-QHN 在以下方面有扎实基础：
+尽管存在问题，Heron Connect-QHN 在以下方面有扎实基础：
 
 1. **接口设计成熟**：`core/interfaces.go` 的 Interface Segregation 设计非常灵活
 2. **流式基础设施**：`streaming.go` 的 `streamPreview` 实现了节流、降级、状态管理

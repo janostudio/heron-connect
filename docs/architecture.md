@@ -1,4 +1,4 @@
-# cc-connect-qhn Architecture
+# heron-connect Architecture
 
 This document describes every top-level directory in the repository and how the packages relate to one another.
 
@@ -27,16 +27,16 @@ This document describes every top-level directory in the repository and how the 
 ## Package Descriptions
 
 ### `agent/`
-One sub-package per supported AI coding agent (Claude Code, Codex, Gemini, Cursor, etc.). Each adapter implements the `core.Agent` interface, translating cc-connect-qhn session lifecycle calls into agent-specific API or subprocess calls.
+One sub-package per supported AI coding agent (Claude Code, Codex, Gemini, Cursor, etc.). Each adapter implements the `core.Agent` interface, translating heron-connect session lifecycle calls into agent-specific API or subprocess calls.
 
 ### `api/`
 Unix socket API server used by local tooling (TUI, CLI helpers). Exposes session listing, relay forwarding, and interactive message injection. Extracted from `core/` — imports `core/` and `relay/`, never the reverse.
 
 ### `bridge/`
-WebSocket bridge server that lets remote clients (desktop apps, web UIs, mobile) connect to cc-connect-qhn over a single authenticated WebSocket connection. Carries a capabilities snapshot so clients can discover which projects and commands are available. Extracted from `core/` — imports `core/`, never the reverse.
+WebSocket bridge server that lets remote clients (desktop apps, web UIs, mobile) connect to heron-connect over a single authenticated WebSocket connection. Carries a capabilities snapshot so clients can discover which projects and commands are available. Extracted from `core/` — imports `core/`, never the reverse.
 
 ### `cmd/`
-The `cc-connect-qhn` binary. Wires together all subsystems: reads `config.toml`, instantiates engines, starts platform adapters, and launches the bridge, webhook, API, and management servers. Contains build-tag-gated `plugin_*.go` files for selective agent and platform compilation.
+The `heron-connect` binary. Wires together all subsystems: reads `config.toml`, instantiates engines, starts platform adapters, and launches the bridge, webhook, API, and management servers. Contains build-tag-gated `plugin_*.go` files for selective agent and platform compilation.
 
 ### `config/`
 Parses `config.toml` using the TOML library. Defines `Config`, `ProjectConfig`, and related structs. No runtime logic — pure data unmarshalling.
@@ -55,7 +55,7 @@ The nucleus of the system. Defines:
 `core/` depends only on the Go standard library. No extracted package may be imported from `core/`.
 
 ### `daemon/`
-Platform-specific helpers for running cc-connect-qhn as a background service: generates `systemd` unit files on Linux and `launchd` plist files on macOS.
+Platform-specific helpers for running heron-connect as a background service: generates `systemd` unit files on Linux and `launchd` plist files on macOS.
 
 ### `docs/`
 Human-readable documentation: platform setup guides, management API reference, upgrade notes, research notes, and this architecture overview.
@@ -70,7 +70,7 @@ One sub-package per supported messaging platform (Telegram, Slack, Feishu, WeCha
 A lightweight local reverse proxy that rewrites requests to third-party AI provider endpoints. Used by the Claude Code agent adapter to transparently route API calls through a locally managed URL. Depends only on the Go standard library — no imports from `core/`.
 
 ### `relay/`
-Bot-to-bot relay manager. Allows one cc-connect-qhn instance to forward messages to another, enabling multi-hop or cross-platform relay chains. Extracted from `core/` — imports `core/`, never the reverse.
+Bot-to-bot relay manager. Allows one heron-connect instance to forward messages to another, enabling multi-hop or cross-platform relay chains. Extracted from `core/` — imports `core/`, never the reverse.
 
 ### `webhook/`
 HTTP webhook server that receives inbound messages from platforms that use push delivery (e.g., WeChat Work, DingTalk HTTP mode). Extracted from `core/` — imports `core/`, never the reverse.

@@ -165,8 +165,8 @@
     "rawConfig": "原始配置"
   },
   "login": {
-    "title": "CC-Connect 管理后台",
-    "subtitle": "连接到您的 CC-Connect 实例",
+    "title": "Heron Connect 管理后台",
+    "subtitle": "连接到您的 Heron Connect 实例",
     "token": "API 令牌",
     "serverUrl": "服务器地址",
     "connect": "连接",
