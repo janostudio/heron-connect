@@ -1528,7 +1528,7 @@ app_secret = "your-feishu-app-secret"
 # heron-connect 内置 `type = "codebuddy"` 的一级支持，自动封装 CLI 参数。
 #
 # Prerequisites / 前置条件:
-#   1. Install CodeBuddy Code CLI: npm install -g @anthropic-ai/codebuddy-code
+#   1. Install CodeBuddy Code CLI: npm install -g @tencent-ai/codebuddy-code
 #      安装 CodeBuddy Code CLI
 #   2. Run `codebuddy login` once — credentials are stored locally and the
 #      spawned subprocess reads them automatically. heron-connect never sees the token.

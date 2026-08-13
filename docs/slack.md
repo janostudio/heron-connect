@@ -47,7 +47,7 @@ In the left sidebar, click "App Home".
 | Field | Suggested Value |
 |-------|----------------|
 | Display Name (Bot Name) | `heron-connect` |
-| Default Username | `cc_connect` |
+| Default Username | `heron_connect` |
 
 ### 2.3 Always Show Bot Online
 
@@ -216,8 +216,8 @@ level=INFO msg="heron-connect is running" projects=1
 
 ### 9.2 Channel Usage
 
-1. Add the bot to a channel (`/invite @cc_connect`)
-2. @mention the bot: `@cc_connect help me analyze the code`
+1. Add the bot to a channel (`/invite @heron_connect`)
+2. @mention the bot: `@heron_connect help me analyze the code`
 3. The bot will respond
 
 ---
@@ -225,7 +225,7 @@ level=INFO msg="heron-connect is running" projects=1
 ## Usage Example
 
 ```
-User: @cc_connect Help me analyze the current project structure
+User: @heron_connect Help me analyze the current project structure
 
 heron-connect: 🤔 Thinking...
 heron-connect: 🔧 Tool: Bash(ls -la)

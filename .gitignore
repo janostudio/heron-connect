@@ -1,2 +1,4 @@
 dist/
 /heron-connect
+.npm-cache/
+node_modules/

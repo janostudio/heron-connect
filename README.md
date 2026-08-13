@@ -104,6 +104,7 @@ Agent 请求工具权限时回复 `allow` / `deny` / `allow all`。
 | Agent | 安装方式 |
 |-------|---------|
 | Claude Code | `npm install -g @anthropic-ai/claude-code` |
+| CodeBuddy Code | `npm install -g @tencent-ai/codebuddy-code` |
 | Codex | `npm install -g @openai/codex` |
 | Gemini CLI | `npm install -g @google/gemini-cli` |
 | Cursor Agent | [官方文档](https://docs.cursor.com/agent) |
@@ -130,15 +131,9 @@ Agent 请求工具权限时回复 `allow` / `deny` / `allow all`。
 
 ## 主要功能
 
-### Web 管理界面
+### Management API
 
-内嵌 React 前端，提供项目管理、会话管理、定时任务编辑、在线聊天：
-
-```bash
-heron-connect web     # 打开管理界面
-```
-
-配置：
+提供 HTTP 管理接口，用于项目管理、会话管理、定时任务编辑等：
 
 ```toml
 [management]
@@ -147,7 +142,7 @@ port = 9820
 token = "your-secret-token"
 ```
 
-访问 `http://localhost:9820`，用 token 登录。
+接口地址 `http://localhost:9820/api/`，详见 [docs/management-api.md](docs/management-api.md)。
 
 ### 多项目支持
 
@@ -220,14 +215,11 @@ token = "your-bridge-secret"
 ### 环境要求
 
 - Go 1.25+，见 [go.mod](go.mod)
-- Node.js + npm（构建前端）
 
 ### 构建
 
 ```bash
-cd web && npm install       # 首次
-make build                  # 构建前端 + 编译二进制
-make build-noweb            # 跳过前端，仅编译
+make build                  # 编译二进制
 make run                    # 构建后直接运行
 ```
 
@@ -255,7 +247,6 @@ make test-fast
 ├── platform            # 飞书、Telegram、Discord、Slack、QQ、微信等
 ├── daemon              # launchd / systemd / Windows 服务
 ├── tests               # e2e 和 release-local 测试
-├── web                 # React + Vite 管理后台
 ├── npm                 # npm 包发布配置
 └── docs                # 协议、接入、使用文档
 ```
@@ -273,6 +264,10 @@ make test-fast
 - [docs/management-api.md](docs/management-api.md) — Management API
 
 ---
+
+## 项目渊源
+
+heron-connect 起源于 [cc-connect](https://github.com/chenhg5/cc-connect)（基线 `v1.3.3-beta.2`），先以个人 fork `cc-connect-qhn` 形式迭代，后重构为独立项目并更名为 heron-connect。
 
 ## 许可证
 

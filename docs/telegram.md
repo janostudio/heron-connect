@@ -30,7 +30,7 @@ Enter a **display name** for your bot (e.g. `heron-connect`).
 
 ### 1.4 Set the Bot Username
 
-Enter a **username** (must end with `bot`, e.g. `cc_connect_bot`).
+Enter a **username** (must end with `bot`, e.g. `heron_connect_bot`).
 
 > 💡 **Naming rules:**
 > - Must end with `bot` (case-insensitive)
@@ -163,7 +163,7 @@ heron-connect -config /path/to/config.toml
 You should see logs like:
 
 ```
-level=INFO msg="telegram: connected" bot=cc_connect_bot
+level=INFO msg="telegram: connected" bot=heron_connect_bot
 level=INFO msg="platform started" project=my-project platform=telegram
 level=INFO msg="heron-connect is running" projects=1
 ```

@@ -19,7 +19,7 @@ const (
 	ProgressStyleCard = "card"
 
 	// ProgressCardPayloadPrefix marks a structured payload for card-style progress.
-	ProgressCardPayloadPrefix = "__cc_connect_progress_card_v1__:"
+	ProgressCardPayloadPrefix = "__heron_connect_progress_card_v1__:"
 
 	// Keep a margin below platform hard limit for markdown wrappers/code fences.
 	compactProgressMaxChars = maxPlatformMessageLen - 200

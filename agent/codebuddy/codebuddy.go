@@ -50,7 +50,7 @@ func New(opts map[string]any) (core.Agent, error) {
 	mode = normalizeMode(mode)
 
 	if _, err := exec.LookPath("codebuddy"); err != nil {
-		return nil, fmt.Errorf("codebuddy: 'codebuddy' not found in PATH, install with: npm install -g @anthropic-ai/codebuddy-code")
+		return nil, fmt.Errorf("codebuddy: 'codebuddy' not found in PATH, install with: npm install -g @tencent-ai/codebuddy-code")
 	}
 
 	return &Agent{
