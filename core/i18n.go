@@ -404,12 +404,6 @@ const (
 	MsgUpgradeSuccess     MsgKey = "upgrade_success"
 	MsgUpgradeDevBuild    MsgKey = "upgrade_dev_build"
 
-	MsgWebNotSupported MsgKey = "web_not_supported"
-	MsgWebNotEnabled   MsgKey = "web_not_enabled"
-	MsgWebSetupSuccess MsgKey = "web_setup_success"
-	MsgWebNeedRestart  MsgKey = "web_need_restart"
-	MsgWebStatus       MsgKey = "web_status"
-
 	MsgAliasEmpty      MsgKey = "alias_empty"
 	MsgAliasListHeader MsgKey = "alias_list_header"
 	MsgAliasAdded      MsgKey = "alias_added"
@@ -2838,51 +2832,6 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "⚠️ 當前為開發版本，無法檢查更新。請從源碼構建或安裝正式發佈版本。",
 		LangJapanese:           "⚠️ 開発ビルドのため、バージョン確認ができません。ソースからビルドするか、リリース版をインストールしてください。",
 		LangSpanish:            "⚠️ Compilación de desarrollo — la verificación de versión no está disponible. Compile desde el código fuente o instale una versión publicada.",
-	},
-	MsgWebNotSupported: {
-		LangEnglish:            "⚠️ Web admin is not available in this build. Rebuild without the `no_web` tag to enable it.",
-		LangChinese:            "⚠️ 当前版本未包含 Web 管理后台。请去掉 `no_web` 标签重新编译以启用。",
-		LangTraditionalChinese: "⚠️ 目前版本未包含 Web 管理後台。請移除 `no_web` 標籤重新編譯以啟用。",
-		LangJapanese:           "⚠️ このビルドにはWeb管理画面が含まれていません。`no_web` タグなしで再ビルドしてください。",
-		LangSpanish:            "⚠️ La administración web no está incluida en esta compilación. Recompile sin la etiqueta `no_web`.",
-	},
-	MsgWebNotEnabled: {
-		LangEnglish:            "ℹ️ Web admin is not enabled.\n\nUse `/web setup` to configure and enable it.",
-		LangChinese:            "ℹ️ Web 管理后台未启用。\n\n使用 `/web setup` 配置并启用。",
-		LangTraditionalChinese: "ℹ️ Web 管理後台未啟用。\n\n使用 `/web setup` 設定並啟用。",
-		LangJapanese:           "ℹ️ Web管理画面は有効になっていません。\n\n`/web setup` で設定して有効にしてください。",
-		LangSpanish:            "ℹ️ La administración web no está habilitada.\n\nUsa `/web setup` para configurarla.",
-	},
-	MsgWebSetupSuccess: {
-		LangEnglish: "✅ Web admin configured!\n\n" +
-			"🌐 URL: %s\n🔑 Token: `%s`\n\n" +
-			"Open the URL in your browser and use the token to log in.",
-		LangChinese: "✅ Web 管理后台配置完成！\n\n" +
-			"🌐 地址：%s\n🔑 令牌：`%s`\n\n" +
-			"在浏览器打开地址，使用令牌登录。",
-		LangTraditionalChinese: "✅ Web 管理後台設定完成！\n\n" +
-			"🌐 網址：%s\n🔑 權杖：`%s`\n\n" +
-			"在瀏覽器開啟網址，使用權杖登入。",
-		LangJapanese: "✅ Web管理画面の設定が完了しました！\n\n" +
-			"🌐 URL: %s\n🔑 トークン: `%s`\n\n" +
-			"ブラウザでURLを開き、トークンでログインしてください。",
-		LangSpanish: "✅ Administración web configurada!\n\n" +
-			"🌐 URL: %s\n🔑 Token: `%s`\n\n" +
-			"Abre la URL en tu navegador y usa el token para iniciar sesión.",
-	},
-	MsgWebNeedRestart: {
-		LangEnglish:            "🔄 Restart the service with `/restart` to activate the web admin.",
-		LangChinese:            "🔄 请使用 `/restart` 重启服务以激活 Web 管理后台。",
-		LangTraditionalChinese: "🔄 請使用 `/restart` 重新啟動服務以啟動 Web 管理後台。",
-		LangJapanese:           "🔄 `/restart` でサービスを再起動して、Web管理画面を有効にしてください。",
-		LangSpanish:            "🔄 Reinicia el servicio con `/restart` para activar la administración web.",
-	},
-	MsgWebStatus: {
-		LangEnglish:            "🌐 **Web Admin**\n\nURL: %s",
-		LangChinese:            "🌐 **Web 管理后台**\n\n地址：%s",
-		LangTraditionalChinese: "🌐 **Web 管理後台**\n\n網址：%s",
-		LangJapanese:           "🌐 **Web管理画面**\n\nURL: %s",
-		LangSpanish:            "🌐 **Administración Web**\n\nURL: %s",
 	},
 	MsgAliasEmpty: {
 		LangEnglish:            "No aliases configured. Use `/alias add <trigger> <command>` to create one.",

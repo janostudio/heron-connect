@@ -276,10 +276,6 @@ type Engine struct {
 	stopping            bool
 	replyFooterMu       sync.Mutex
 	replyFooterUsage    replyFooterUsageCache
-
-	// /web command callbacks
-	webSetupFunc  func() (port int, token string, needRestart bool, err error)
-	webStatusFunc func() (url string)
 }
 
 // workspaceInitFlow tracks a channel that is being onboarded to a workspace.
@@ -2506,8 +2502,6 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 		return true
 	case "whoami":
 		e.cmdWhoami(p, msg)
-	case "web":
-		e.cmdWeb(p, msg, args)
 	case "ps":
 		e.cmdPs(p, msg, args)
 	default:

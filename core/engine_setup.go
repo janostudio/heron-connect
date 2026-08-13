@@ -201,9 +201,6 @@ func (e *Engine) SetFilterExternalSessions(v bool) {
 	e.filterExternalSessions = v
 }
 
-func (e *Engine) SetWebSetupFunc(fn func() (int, string, bool, error)) { e.webSetupFunc = fn }
-func (e *Engine) SetWebStatusFunc(fn func() string)                    { e.webStatusFunc = fn }
-
 // SetInjectSender controls whether sender identity (platform and user ID) is
 // prepended to each message before forwarding it to the agent. When enabled,
 // the agent receives a preamble line like:
@@ -426,7 +423,6 @@ var privilegedCommands = map[string]bool{
 	"dir":     true,
 	"restart": true,
 	"upgrade": true,
-	"web":     true,
 	"diff":    true,
 }
 

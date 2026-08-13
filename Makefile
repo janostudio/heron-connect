@@ -38,7 +38,6 @@ PLATFORMS := \
 
 ALL_AGENTS    := acp claudecode codebuddy codex cursor devin gemini iflow kimi opencode pi qoder
 ALL_PLATFORMS := feishu telegram discord slack dingtalk wecom weixin qq qqbot line weibo max
-ALL_EXTRAS    := web
 
 COMMA := ,
 
@@ -61,26 +60,18 @@ ifdef EXCLUDE
   _EXCLUDE_TAGS += $(addprefix no_,$(subst $(COMMA), ,$(EXCLUDE)))
 endif
 
-ifdef NO_WEB
-  _EXCLUDE_TAGS += no_web
-endif
-
 _BUILD_TAGS := $(strip $(_EXCLUDE_TAGS))
 _TAGS_FLAG  := $(if $(_BUILD_TAGS),-tags '$(_BUILD_TAGS)',)
 
-.PHONY: build build-local build-noweb run clean test test-fast test-full test-smoke test-e2e test-release test-release-local test-performance pre-test lint release release-all web publish publish-dry-run
+.PHONY: build build-local run clean test test-fast test-full test-smoke test-e2e test-release test-release-local test-performance pre-test lint release release-all publish publish-dry-run
 
-web:
-	@if [ ! -d web/node_modules ]; then cd web && npm install; fi
-	cd web && npm run build
-
-build: web
+build:
 	go build $(_TAGS_FLAG) -ldflags "$(LDFLAGS)" -o $(APP) $(CMD)
 
 # Build a local-development binary and replace the global npm wrapper files
 # plus the real executable. Each invocation bumps the installed local version
 # suffix (for example: 1.3.3-beta.2.1 -> 1.3.3-beta.2.2).
-build-local: web
+build-local:
 	@if [ -z "$(LOCAL_NPM_ROOT)" ]; then \
 		echo "npm root -g failed; set LOCAL_HERON_CONNECT_BIN manually."; \
 		exit 1; \
@@ -104,9 +95,6 @@ build-local: web
 		echo "Updated local npm wrapper files in: $(LOCAL_HERON_CONNECT_DIR)"; \
 		echo "Updated local npm binary: $(LOCAL_HERON_CONNECT_BIN)"; \
 		echo "Local npm version is now $$LOCAL_VERSION"
-
-build-noweb:
-	go build $(_TAGS_FLAG) -tags 'no_web' -ldflags "$(LDFLAGS)" -o $(APP) $(CMD)
 
 run: build
 	./$(APP)

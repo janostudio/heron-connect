@@ -16,7 +16,6 @@ package core
 //   - looksLikeGitURL, resolveLocalDirPath, looksLikeLocalDir, extractRepoName, gitClone
 //   - contextIndicator, contextIndicatorText
 //   - isSilentReply, stripTrailingSilent, couldBeSilentPrefix, isEllipsisOnly, parseSelfReportedCtx
-//   - cmdWeb, cmdWebSetup, cmdWebStatus
 //
 // All methods remain func (e *Engine) receivers in package core.
 
@@ -824,59 +823,4 @@ func parseSelfReportedCtx(s string) int {
 	}
 	v, _ := strconv.Atoi(m[start:end])
 	return v
-}
-
-func (e *Engine) cmdWeb(p Platform, msg *Message, args []string) {
-	subCmd := ""
-	if len(args) > 0 {
-		subCmd = matchSubCommand(strings.ToLower(args[0]),
-			[]string{"setup", "status"})
-	}
-
-	switch subCmd {
-	case "setup":
-		e.cmdWebSetup(p, msg)
-	default:
-		e.cmdWebStatus(p, msg)
-	}
-}
-
-func (e *Engine) cmdWebSetup(p Platform, msg *Message) {
-	if !WebAssetsAvailable() {
-		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgWebNotSupported))
-		return
-	}
-	if e.webSetupFunc == nil {
-		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgWebNotSupported))
-		return
-	}
-
-	port, token, needRestart, err := e.webSetupFunc()
-	if err != nil {
-		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgError, err))
-		return
-	}
-	url := fmt.Sprintf("http://localhost:%d", port)
-	e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgWebSetupSuccess), url, token))
-	if needRestart {
-		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgWebNeedRestart))
-	}
-}
-
-func (e *Engine) cmdWebStatus(p Platform, msg *Message) {
-	if !WebAssetsAvailable() {
-		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgWebNotSupported))
-		return
-	}
-	if e.webStatusFunc == nil {
-		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgWebNotSupported))
-		return
-	}
-
-	url := e.webStatusFunc()
-	if url == "" {
-		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgWebNotEnabled))
-		return
-	}
-	e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgWebStatus), url))
 }
