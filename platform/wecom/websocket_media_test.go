@@ -121,6 +121,59 @@ func TestWsCollectInboundParts_mixedContainsFile(t *testing.T) {
 	}
 }
 
+func TestWsCollectInboundParts_quoteTextPrefixed(t *testing.T) {
+	t.Parallel()
+	raw := `{
+		"msgid": "q1",
+		"aibotid": "bot",
+		"chattype": "group",
+		"chatid": "g1",
+		"from": {"userid": "u1"},
+		"msgtype": "text",
+		"text": {"content": "这是我的回复"},
+		"quote": {"msgtype": "text", "text": {"content": "原始消息内容"}}
+	}`
+	var body wsMsgCallbackBody
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		t.Fatal(err)
+	}
+	texts, _, _ := wsCollectInboundParts(&body)
+	if len(texts) != 2 {
+		t.Fatalf("texts=%v, want main + quoted", texts)
+	}
+	if texts[0] != "这是我的回复" {
+		t.Fatalf("main text = %q, want no prefix", texts[0])
+	}
+	if texts[1] != "[引用消息] 原始消息内容" {
+		t.Fatalf("quoted text = %q, want [引用消息] prefix", texts[1])
+	}
+}
+
+func TestWsCollectInboundParts_quoteVoicePrefixed(t *testing.T) {
+	t.Parallel()
+	raw := `{
+		"msgid": "q2",
+		"aibotid": "bot",
+		"chattype": "group",
+		"chatid": "g1",
+		"from": {"userid": "u1"},
+		"msgtype": "text",
+		"text": {"content": "这是回复"},
+		"quote": {"msgtype": "voice", "voice": {"content": "引用的语音转写"}}
+	}`
+	var body wsMsgCallbackBody
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		t.Fatal(err)
+	}
+	texts, _, _ := wsCollectInboundParts(&body)
+	if len(texts) != 2 {
+		t.Fatalf("texts=%v, want main + quoted", texts)
+	}
+	if texts[1] != "[引用消息] 引用的语音转写" {
+		t.Fatalf("quoted voice text = %q, want [引用消息] prefix", texts[1])
+	}
+}
+
 func TestDecodeWeComAESKey_URLSafeUnpadded(t *testing.T) {
 	t.Parallel()
 	want := make([]byte, 32)

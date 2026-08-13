@@ -216,7 +216,7 @@ func probeInitialize(ctx context.Context, tr *transport) (*acpInitializeResult, 
 		"clientInfo": map[string]any{
 			"name":    "cc-connect-qhn",
 			"title":   "cc-connect-qhn",
-			"version": "1.4.8",
+			"version": core.CurrentVersion,
 		},
 	})
 	if err != nil {

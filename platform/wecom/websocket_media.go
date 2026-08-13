@@ -77,6 +77,12 @@ func wsCollectInboundParts(body *wsMsgCallbackBody) (texts []string, imgs, files
 			texts = append(texts, s)
 		}
 	}
+	appendQuotedText := func(s string) {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			texts = append(texts, "[引用消息] "+s)
+		}
+	}
 	appendImage := func(url, aeskey string) {
 		if url != "" {
 			imgs = append(imgs, wsMediaRef{URL: url, Aeskey: aeskey})
@@ -115,11 +121,11 @@ func wsCollectInboundParts(body *wsMsgCallbackBody) (texts []string, imgs, files
 		switch q.MsgType {
 		case "text":
 			if q.Text != nil {
-				appendText(q.Text.Content)
+				appendQuotedText(q.Text.Content)
 			}
 		case "voice":
 			if q.Voice != nil {
-				appendText(q.Voice.Content)
+				appendQuotedText(q.Voice.Content)
 			}
 		case "image":
 			if q.Image != nil {
