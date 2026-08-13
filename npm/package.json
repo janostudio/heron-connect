@@ -1,6 +1,6 @@
 {
   "name": "@qinghuangniao/heron-connect",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Multi-IM agent bridge connecting AI coding agents to messaging platforms",
   "keywords": [
     "claude-code",

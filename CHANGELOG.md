@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.1 (2026-08-13)
+
+### Changed
+
+- **品牌更名为 heron-connect**：项目从 cc-connect-qhn 更名为 heron-connect，npm 包改为 `@qinghuangniao/heron-connect`，二进制/命令、数据目录、GitHub 仓库与 Go module 路径全部同步更新。
+- **移除 Web 前端**：删除内嵌 React 前端与 `heron-connect web` 命令，保留 HTTP Management API。
+- **修正 CodeBuddy 安装包名**：从错误的 `@anthropic-ai/codebuddy-code` 更正为腾讯官方的 `@tencent-ai/codebuddy-code`。
+
 ## v2.0.6 (2026-08-12)
 
 ### Added
