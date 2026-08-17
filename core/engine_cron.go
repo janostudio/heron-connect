@@ -107,8 +107,9 @@ func (e *Engine) ExecuteCronJob(job *CronJob) error {
 		effectivePlatform = &mutePlatform{targetPlatform}
 	}
 
-	// Notify user that a cron job is executing (unless silent/muted)
-	if !job.Mute {
+	// Notify user that a cron job is executing (unless silent/muted).
+	// Shell jobs skip this: the script alone decides whether to push anything.
+	if !job.Mute && !job.IsShellJob() {
 		silent := false
 		if e.cronScheduler != nil {
 			silent = e.cronScheduler.IsSilent(job)
@@ -116,11 +117,7 @@ func (e *Engine) ExecuteCronJob(job *CronJob) error {
 		if !silent {
 			desc := job.Description
 			if desc == "" {
-				if job.IsShellJob() {
-					desc = truncateStr(job.Exec, 40)
-				} else {
-					desc = truncateStr(job.Prompt, 40)
-				}
+				desc = truncateStr(job.Prompt, 40)
 			}
 			e.send(targetPlatform, replyCtx, fmt.Sprintf("⏰ %s", desc))
 		}
@@ -302,7 +299,9 @@ func (e *Engine) executeCronShell(p Platform, replyCtx any, job *CronJob) error 
 		close(doneCh)
 	}()
 
-	// Wait briefly to see if the command finishes quickly
+	// Shell cron jobs run silently: the script decides whether to push a
+	// message, so we never send an in-progress "⏰ ⏳" notification. Wait for
+	// completion (or timeout), then let finishCronShell decide what to send.
 	select {
 	case <-doneCh:
 		return e.finishCronShell(p, replyCtx, shellCmd, &mu, &buf, cmdLabel)
@@ -317,82 +316,10 @@ func (e *Engine) executeCronShell(p Platform, replyCtx any, job *CronJob) error 
 		}
 		e.send(p, replyCtx, msg)
 		return fmt.Errorf("shell command timed out")
-	case <-time.After(quickFinishTimeout):
-		// Still running — fall through to progress mode
-	}
-
-	// Long-running command. Try in-place updates.
-	var previewHandle any
-	var useUpdate bool
-	if _, ok := p.(MessageUpdater); ok {
-		if starter, ok := p.(PreviewStarter); ok {
-			mu.Lock()
-			output := buf.String()
-			mu.Unlock()
-			progressMsg := fmt.Sprintf("⏰ ⏳ `%s`", cmdLabel)
-			if output != "" {
-				progressMsg = fmt.Sprintf("⏰ ⏳ `%s`\n\n%s", cmdLabel, truncateStr(output, 3000))
-			}
-			handle, err := starter.SendPreviewStart(e.ctx, replyCtx, progressMsg)
-			if err == nil && handle != nil {
-				previewHandle = handle
-				useUpdate = true
-			}
-		}
-	}
-	if !useUpdate {
-		e.send(p, replyCtx, fmt.Sprintf("⏰ ⏳ `%s`", cmdLabel))
-	}
-
-	updateDone := make(chan struct{})
-	if useUpdate {
-		go func() {
-			ticker := time.NewTicker(2 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ticker.C:
-					mu.Lock()
-					output := buf.String()
-					mu.Unlock()
-					msg := fmt.Sprintf("⏰ ⏳ `%s`", cmdLabel)
-					if output != "" {
-						msg = fmt.Sprintf("⏰ ⏳ `%s`\n\n%s", cmdLabel, truncateStr(output, 3000))
-					}
-					_ = updaterFor(p).UpdateMessage(e.ctx, previewHandle, msg)
-				case <-updateDone:
-					return
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
-	}
-
-	select {
-	case <-doneCh:
-		close(updateDone)
-		return e.finishCronShell(p, replyCtx, shellCmd, &mu, &buf, cmdLabel, useUpdate, previewHandle)
-	case <-ctx.Done():
-		close(updateDone)
-		killAndWait(shellCmd, doneCh)
-		mu.Lock()
-		output := buf.String()
-		mu.Unlock()
-		msg := fmt.Sprintf("⏰ ⚠️ timeout: `%s`", cmdLabel)
-		if output != "" {
-			msg = fmt.Sprintf("⏰ ⚠️ timeout: `%s`\n\n%s", cmdLabel, truncateStr(output, 3000))
-		}
-		if useUpdate {
-			_ = updaterFor(p).UpdateMessage(e.ctx, previewHandle, msg)
-		} else {
-			e.send(p, replyCtx, msg)
-		}
-		return fmt.Errorf("shell command timed out")
 	}
 }
 
-func (e *Engine) finishCronShell(p Platform, replyCtx any, cmd *exec.Cmd, mu *sync.Mutex, buf *bytes.Buffer, cmdLabel string, opts ...any) error {
+func (e *Engine) finishCronShell(p Platform, replyCtx any, cmd *exec.Cmd, mu *sync.Mutex, buf *bytes.Buffer, cmdLabel string) error {
 	mu.Lock()
 	output := buf.String()
 	mu.Unlock()
@@ -416,18 +343,6 @@ func (e *Engine) finishCronShell(p Platform, replyCtx any, cmd *exec.Cmd, mu *sy
 			finalMsg = fmt.Sprintf("⏰ ❌ `%s`\n\n%s\n\nerror: exit code %d", cmdLabel, truncateStr(errMsg, 3000), cmd.ProcessState.ExitCode())
 		} else {
 			finalMsg = fmt.Sprintf("⏰ ❌ `%s`\n\nerror: exit code %d", cmdLabel, cmd.ProcessState.ExitCode())
-		}
-	}
-
-	if len(opts) >= 2 {
-		if useUpdate, ok := opts[0].(bool); ok && useUpdate {
-			if handle := opts[1]; handle != nil {
-				_ = updaterFor(p).UpdateMessage(e.ctx, handle, finalMsg)
-				if !exitOK {
-					return fmt.Errorf("shell: exit code %d", cmd.ProcessState.ExitCode())
-				}
-				return nil
-			}
 		}
 	}
 

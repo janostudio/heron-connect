@@ -530,6 +530,81 @@ func TestCronStore_MarkRun(t *testing.T) {
 	}
 }
 
+func TestExecuteCronJob_ShellEmptyOutput_SendsNothing(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewCronStore(dir)
+	if err != nil {
+		t.Fatalf("NewCronStore() error = %v", err)
+	}
+	scheduler := NewCronScheduler(store)
+
+	platform := &stubCronReplyTargetPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "wecom"},
+	}
+	e := NewEngine("test", &stubAgent{}, []Platform{platform}, "", LangEnglish)
+	defer e.cancel()
+	e.cronScheduler = scheduler
+
+	// A shell job that produces no stdout and exits 0.
+	job := &CronJob{
+		ID:          "shell-empty",
+		SessionKey:  "wecom:ch:user",
+		Exec:        "true",
+		Description: "no-op check",
+	}
+	if err := store.Add(job); err != nil {
+		t.Fatalf("store.Add() error = %v", err)
+	}
+
+	if err := e.ExecuteCronJob(job); err != nil {
+		t.Fatalf("ExecuteCronJob() error = %v", err)
+	}
+
+	sent := platform.getSent()
+	if len(sent) != 0 {
+		t.Fatalf("expected no messages for empty-output shell job, got %d: %v", len(sent), sent)
+	}
+}
+
+func TestExecuteCronJob_ShellWithOutput_SendsOnlyResult(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewCronStore(dir)
+	if err != nil {
+		t.Fatalf("NewCronStore() error = %v", err)
+	}
+	scheduler := NewCronScheduler(store)
+
+	platform := &stubCronReplyTargetPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "wecom"},
+	}
+	e := NewEngine("test", &stubAgent{}, []Platform{platform}, "", LangEnglish)
+	defer e.cancel()
+	e.cronScheduler = scheduler
+
+	// A shell job that emits one line to stdout.
+	job := &CronJob{
+		ID:          "shell-out",
+		SessionKey:  "wecom:ch:user",
+		Exec:        "echo 'hello world'",
+		Description: "echo check",
+	}
+	if err := store.Add(job); err != nil {
+		t.Fatalf("store.Add() error = %v", err)
+	}
+
+	if err := e.ExecuteCronJob(job); err != nil {
+		t.Fatalf("ExecuteCronJob() error = %v", err)
+	}
+
+	sent := platform.getSent()
+	if len(sent) != 1 {
+		t.Fatalf("expected exactly one result message, got %d: %v", len(sent), sent)
+	}
+	if !strings.Contains(sent[0], "✅") || !strings.Contains(sent[0], "hello world") {
+		t.Fatalf("result should be a ✅ success with output, got %q", sent[0])
+	}
+}
+
 func TestCronStore_ListByProject(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewCronStore(dir)
