@@ -399,12 +399,16 @@ func (e *Engine) finishCronShell(p Platform, replyCtx any, cmd *exec.Cmd, mu *sy
 
 	exitOK := cmd.ProcessState.ExitCode() == 0
 
+	// For shell jobs, the script decides whether to push a message: if it
+	// succeeds with no stdout output, there is nothing to report, so skip
+	// sending entirely (no "✅ (no output)" noise). Failures still report.
+	if exitOK && strings.TrimSpace(output) == "" {
+		return nil
+	}
+
 	var finalMsg string
 	if exitOK {
 		result := strings.TrimSpace(output)
-		if result == "" {
-			result = "(no output)"
-		}
 		finalMsg = fmt.Sprintf("⏰ ✅ `%s`\n\n%s", cmdLabel, truncateStr(result, 3000))
 	} else {
 		errMsg := output
