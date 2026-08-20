@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -259,9 +260,9 @@ func (m *ManagementServer) Stop() {
 	}
 }
 
-// withStaticFallback wraps the API mux. API requests (/api/) and the bridge
-// WebSocket path are routed to their handlers; all other paths fall through to
-// the API mux (no web UI is embedded).
+// withStaticFallback wraps the API mux with a file server for the web UI.
+// API requests (/api/) go to the mux; everything else tries embedded static
+// files, falling back to index.html for SPA routing.
 func (m *ManagementServer) withStaticFallback(apiMux *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -272,7 +273,34 @@ func (m *ManagementServer) withStaticFallback(apiMux *http.ServeMux) http.Handle
 			m.bridgeServer.HandleWS(w, r)
 			return
 		}
-		apiMux.ServeHTTP(w, r)
+		assets := core.GetWebAssets()
+		if assets == nil {
+			apiMux.ServeHTTP(w, r)
+			return
+		}
+		m.setCORS(w, r)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		// Try to serve the exact file from the embedded FS.
+		urlPath := strings.TrimPrefix(r.URL.Path, "/")
+		if urlPath == "" {
+			urlPath = "index.html"
+		}
+		if f, err := assets.Open(urlPath); err == nil {
+			f.Close()
+			http.FileServer(http.FS(assets)).ServeHTTP(w, r)
+			return
+		}
+		// SPA fallback: serve index.html for any non-file route.
+		indexData, err := fs.ReadFile(assets, "index.html")
+		if err != nil {
+			apiMux.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(indexData)
 	})
 }
 

@@ -626,6 +626,7 @@ func helpCardGroups() []helpCardGroup {
 				{command: "/bind", action: "cmd:/bind"},
 				{command: "/workspace", action: "cmd:/workspace"},
 				{command: "/dir", action: "nav:/dir"},
+				{command: "/web", action: "cmd:/web"},
 				{command: "/version", action: "nav:/version"},
 				{command: "/upgrade", action: "nav:/upgrade"},
 				{command: "/restart", action: "cmd:/restart"},

@@ -587,10 +587,31 @@ func createProjectEngines(cfg *config.Config, configPath string, observeFlag *bo
 		capturedEngine := engine
 		capturedProjName := projName
 		engine.SetConfigReloadFunc(func() (*core.ConfigReloadResult, error) {
-		return reloadConfig(configPath, capturedProjName, capturedEngine)
-	})
+			return reloadConfig(configPath, capturedProjName, capturedEngine)
+		})
 
-	engines = append(engines, engine)
+		// Wire /web command callbacks
+		engine.SetWebSetupFunc(func() (int, string, bool, error) {
+			mgmtToken := core.GenerateToken(16)
+			bridgeToken := core.GenerateToken(16)
+			result, err := config.EnableWebAdmin(mgmtToken, bridgeToken)
+			if err != nil {
+				return 0, "", false, err
+			}
+			return result.ManagementPort, result.ManagementToken, !result.AlreadyEnabled, nil
+		})
+		engine.SetWebStatusFunc(func() string {
+			if cfg.Management.Enabled == nil || !*cfg.Management.Enabled {
+				return ""
+			}
+			port := cfg.Management.Port
+			if port == 0 {
+				port = 9820
+			}
+			return fmt.Sprintf("http://localhost:%d", port)
+		})
+
+		engines = append(engines, engine)
 		effectiveWorkDirs = append(effectiveWorkDirs, effectiveWorkDir)
 	}
 
@@ -654,6 +675,9 @@ func main() {
 			return
 		case "doctor":
 			runDoctor(os.Args[2:])
+			return
+		case "web":
+			runWeb(os.Args[2:])
 			return
 		}
 	}

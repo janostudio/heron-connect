@@ -331,11 +331,32 @@ level = "info" # debug, info, warn, error
 # path = "/bridge/ws"                 # URL path (default: "/bridge/ws") / URL 路径
 
 # =============================================================================
-# Management API (External Management Tools)
-# 管理 API（外部管理工具）
+# Management API + Web Admin UI (External Management Tools)
+# 管理 API + Web 管理后台（外部管理工具）
 # =============================================================================
 # HTTP REST API for external apps (web dashboards, TUI, GUI, Mac tray apps).
 # 为外部应用（Web 管理面板、TUI、GUI、Mac 托盘应用）提供 HTTP REST API。
+#
+# When [management] is enabled, the built-in Web Admin UI (embedded in the
+# binary) is also served at http://localhost:9820/. It provides a full
+# management dashboard: project/CRUD, session monitoring, cron editor,
+# provider management, chat interface, and i18n (en/zh/zh-TW/ja/es).
+# 当 [management] 启用时，内置的 Web 管理后台（已编译进二进制）也会托管在
+# http://localhost:9820/。它提供完整的管理面板：项目管理、会话监控、定时任务
+# 编辑、Provider 管理、聊天界面，以及多语言支持（英/中/繁中/日/西）。
+#
+# To open the web UI directly, run `heron-connect web` (auto-configures the
+# management token and opens the browser with token-based login), or send
+# `/web setup` / `/web status` in any chat to configure and view the URL.
+# 直接运行 `heron-connect web` 即可打开 Web 管理后台（自动配置 token 并用令牌
+# 自动登录浏览器）；也可在任意聊天中发送 `/web setup` 或 `/web status` 来
+# 配置和查看后台地址。
+#
+# Note: the web UI is only embedded when building WITHOUT the `no_web` build
+# tag (i.e. `make build` / `make build-noweb` respectively).
+# 注意：Web 管理后台仅在未使用 `no_web` 构建标签时才会编译进二进制
+# （对应 `make build` 与 `make build-noweb`）。
+#
 # See docs/management-api.md for the full API specification.
 # 完整 API 规范请参阅 docs/management-api.md。
 #

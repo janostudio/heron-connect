@@ -131,9 +131,9 @@ Agent 请求工具权限时回复 `allow` / `deny` / `allow all`。
 
 ## 主要功能
 
-### Management API
+### Web 管理后台 + Management API
 
-提供 HTTP 管理接口，用于项目管理、会话管理、定时任务编辑等：
+内置 Web 管理后台（已编译进二进制），提供项目管理、会话监控、定时任务编辑、Provider 管理、聊天界面等完整面板，支持中/英/繁中/日/西多语言：
 
 ```toml
 [management]
@@ -142,7 +142,17 @@ port = 9820
 token = "your-secret-token"
 ```
 
-接口地址 `http://localhost:9820/api/`，详见 [docs/management-api.md](docs/management-api.md)。
+启用后，打开 `http://localhost:9820/` 即可访问管理后台；也可直接运行：
+
+```bash
+heron-connect web           # 自动配置 token 并打开浏览器（token 自动登录）
+```
+
+或在任意聊天中发送 `/web setup`（配置）、`/web status`（查看地址）。
+
+> 说明：Web 后台仅在未使用 `no_web` 构建标签时编译进二进制（`make build` 默认包含，`make build-noweb` 不包含）。
+
+管理后台底层是 HTTP 管理接口（Management API），接口地址 `http://localhost:9820/api/`，用于项目管理、会话管理、定时任务编辑等，详见 [docs/management-api.md](docs/management-api.md)。
 
 ### 多项目支持
 
@@ -245,6 +255,7 @@ make test-fast
 ├── config              # TOML 配置加载
 ├── agent               # Claude Code、Codex、Gemini、ACP 等
 ├── platform            # 飞书、Telegram、Discord、Slack、QQ、微信等
+├── web                 # Web 管理后台（React，go:embed 进二进制）
 ├── daemon              # launchd / systemd / Windows 服务
 ├── tests               # e2e 和 release-local 测试
 ├── npm                 # npm 包发布配置

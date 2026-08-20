@@ -404,6 +404,12 @@ const (
 	MsgUpgradeSuccess     MsgKey = "upgrade_success"
 	MsgUpgradeDevBuild    MsgKey = "upgrade_dev_build"
 
+	MsgWebNotSupported MsgKey = "web_not_supported"
+	MsgWebNotEnabled   MsgKey = "web_not_enabled"
+	MsgWebSetupSuccess MsgKey = "web_setup_success"
+	MsgWebNeedRestart  MsgKey = "web_need_restart"
+	MsgWebStatus       MsgKey = "web_status"
+
 	MsgAliasEmpty      MsgKey = "alias_empty"
 	MsgAliasListHeader MsgKey = "alias_list_header"
 	MsgAliasAdded      MsgKey = "alias_added"
@@ -515,6 +521,12 @@ const (
 	MsgBuiltinCmdDir       MsgKey = "dir"
 	MsgBuiltinCmdDiff      MsgKey = "diff"
 	MsgBuiltinCmdPs        MsgKey = "ps"
+	MsgBuiltinCmdTts       MsgKey = "tts"
+	MsgBuiltinCmdWorkspace MsgKey = "workspace"
+	MsgBuiltinCmdWhoami    MsgKey = "whoami"
+	MsgBuiltinCmdWeb       MsgKey = "web"
+	MsgBuiltinCmdHeartbeat MsgKey = "heartbeat"
+	MsgBuiltinCmdCancel    MsgKey = "cancel"
 
 	MsgDiffEmpty       MsgKey = "diff_empty"
 	MsgDiffNoDiff2HTML MsgKey = "diff_no_diff2html"
@@ -2833,6 +2845,51 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "⚠️ 開発ビルドのため、バージョン確認ができません。ソースからビルドするか、リリース版をインストールしてください。",
 		LangSpanish:            "⚠️ Compilación de desarrollo — la verificación de versión no está disponible. Compile desde el código fuente o instale una versión publicada.",
 	},
+	MsgWebNotSupported: {
+		LangEnglish:            "⚠️ Web admin is not available in this build. Rebuild without the `no_web` tag to enable it.",
+		LangChinese:            "⚠️ 当前版本未包含 Web 管理后台。请去掉 `no_web` 标签重新编译以启用。",
+		LangTraditionalChinese: "⚠️ 目前版本未包含 Web 管理後台。請移除 `no_web` 標籤重新編譯以啟用。",
+		LangJapanese:           "⚠️ このビルドにはWeb管理画面が含まれていません。`no_web` タグなしで再ビルドしてください。",
+		LangSpanish:            "⚠️ La administración web no está incluida en esta compilación. Recompile sin la etiqueta `no_web`.",
+	},
+	MsgWebNotEnabled: {
+		LangEnglish:            "ℹ️ Web admin is not enabled.\n\nUse `/web setup` to configure and enable it.",
+		LangChinese:            "ℹ️ Web 管理后台未启用。\n\n使用 `/web setup` 配置并启用。",
+		LangTraditionalChinese: "ℹ️ Web 管理後台未啟用。\n\n使用 `/web setup` 設定並啟用。",
+		LangJapanese:           "ℹ️ Web管理画面は有効になっていません。\n\n`/web setup` で設定して有効にしてください。",
+		LangSpanish:            "ℹ️ La administración web no está habilitada.\n\nUsa `/web setup` para configurarla.",
+	},
+	MsgWebSetupSuccess: {
+		LangEnglish: "✅ Web admin configured!\n\n" +
+			"🌐 URL: %s\n🔑 Token: `%s`\n\n" +
+			"Open the URL in your browser and use the token to log in.",
+		LangChinese: "✅ Web 管理后台配置完成！\n\n" +
+			"🌐 地址：%s\n🔑 令牌：`%s`\n\n" +
+			"在浏览器打开地址，使用令牌登录。",
+		LangTraditionalChinese: "✅ Web 管理後台設定完成！\n\n" +
+			"🌐 網址：%s\n🔑 權杖：`%s`\n\n" +
+			"在瀏覽器開啟網址，使用權杖登入。",
+		LangJapanese: "✅ Web管理画面の設定が完了しました！\n\n" +
+			"🌐 URL: %s\n🔑 トークン: `%s`\n\n" +
+			"ブラウザでURLを開き、トークンでログインしてください。",
+		LangSpanish: "✅ Administración web configurada!\n\n" +
+			"🌐 URL: %s\n🔑 Token: `%s`\n\n" +
+			"Abre la URL en tu navegador y usa el token para iniciar sesión.",
+	},
+	MsgWebNeedRestart: {
+		LangEnglish:            "🔄 Restart the service with `/restart` to activate the web admin.",
+		LangChinese:            "🔄 请使用 `/restart` 重启服务以激活 Web 管理后台。",
+		LangTraditionalChinese: "🔄 請使用 `/restart` 重新啟動服務以啟動 Web 管理後台。",
+		LangJapanese:           "🔄 `/restart` でサービスを再起動して、Web管理画面を有効にしてください。",
+		LangSpanish:            "🔄 Reinicia el servicio con `/restart` para activar la administración web.",
+	},
+	MsgWebStatus: {
+		LangEnglish:            "🌐 **Web Admin**\n\nURL: %s",
+		LangChinese:            "🌐 **Web 管理后台**\n\n地址：%s",
+		LangTraditionalChinese: "🌐 **Web 管理後台**\n\n網址：%s",
+		LangJapanese:           "🌐 **Web管理画面**\n\nURL: %s",
+		LangSpanish:            "🌐 **Administración Web**\n\nURL: %s",
+	},
 	MsgAliasEmpty: {
 		LangEnglish:            "No aliases configured. Use `/alias add <trigger> <command>` to create one.",
 		LangChinese:            "暂无别名配置。使用 `/alias add <触发词> <命令>` 创建别名。",
@@ -3523,6 +3580,48 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "向正在執行的任務追加補充資訊",
 		LangJapanese:           "実行中のタスクに補足情報を送信",
 		LangSpanish:            "Enviar un P.S. a la tarea en curso",
+	},
+	MsgBuiltinCmdTts: {
+		LangEnglish:            "Toggle text-to-speech for replies",
+		LangChinese:            "切换回复的语音合成（TTS）",
+		LangTraditionalChinese: "切換回覆的語音合成（TTS）",
+		LangJapanese:           "返信の音声合成（TTS）を切り替え",
+		LangSpanish:            "Alternar conversión de texto a voz en respuestas",
+	},
+	MsgBuiltinCmdWorkspace: {
+		LangEnglish:            "Manage workspace channel bindings",
+		LangChinese:            "管理工作区频道绑定",
+		LangTraditionalChinese: "管理工作區頻道綁定",
+		LangJapanese:           "ワークスペースチャンネルバインディングを管理",
+		LangSpanish:            "Gestionar vínculos de canales del espacio de trabajo",
+	},
+	MsgBuiltinCmdWhoami: {
+		LangEnglish:            "Show your user/platform identity",
+		LangChinese:            "查看你的用户/平台身份",
+		LangTraditionalChinese: "查看你的使用者/平台身分",
+		LangJapanese:           "ユーザー/プラットフォームの識別情報を表示",
+		LangSpanish:            "Mostrar tu identidad de usuario/plataforma",
+	},
+	MsgBuiltinCmdWeb: {
+		LangEnglish:            "Open or configure the web admin dashboard",
+		LangChinese:            "打开或配置 Web 管理后台",
+		LangTraditionalChinese: "開啟或設定 Web 管理後台",
+		LangJapanese:           "Web管理画面を開くか設定する",
+		LangSpanish:            "Abrir o configurar el panel de administración web",
+	},
+	MsgBuiltinCmdHeartbeat: {
+		LangEnglish:            "Schedule periodic agent pings",
+		LangChinese:            "设置周期性的 Agent 心跳提醒",
+		LangTraditionalChinese: "設定週期性的 Agent 心跳提醒",
+		LangJapanese:           "定期的なエージェントのハートビートを設定",
+		LangSpanish:            "Programar pings periódicos del agente",
+	},
+	MsgBuiltinCmdCancel: {
+		LangEnglish:            "Cancel the current running task",
+		LangChinese:            "取消当前正在执行的任务",
+		LangTraditionalChinese: "取消目前正在執行的任務",
+		LangJapanese:           "実行中のタスクをキャンセル",
+		LangSpanish:            "Cancelar la tarea actual en ejecución",
 	},
 	MsgDiffEmpty: {
 		LangEnglish:            "No diff — clean working tree (or no changes vs `%s`).",
