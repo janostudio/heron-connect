@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.0.4 (2026-08-20)
+
+### Added
+
+- **恢复 Web 管理后台**：重新加入内嵌 React 前端（项目管理、会话监控、定时任务编辑、Provider 管理、聊天界面，支持中/英/繁中/日/西多语言），并恢复 `heron-connect web` 命令与聊天内 `/web setup`、`/web status` 命令。Web 后台在未使用 `no_web` 构建标签时随二进制编译（`make build` 默认包含，`make build-noweb` 不包含）。
+
+### Fixed
+
+- **补全命令描述**：为 `web`、`tts`、`whoami`、`workspace`、`heartbeat`、`cancel` 六个内置命令补齐 5 语言描述（此前在 bot 菜单/帮助卡片中会回退为原始命令名），并将 `/web` 加入帮助卡片的系统分组。
+
+### Changed
+
+- **文档补充**：在 README 与 `config.example.toml` 中补充 Web 管理后台的使用说明与 `[management]`/`[bridge]` 配置说明。
+
 ## v1.0.3 (2026-08-17)
 
 ### Changed
