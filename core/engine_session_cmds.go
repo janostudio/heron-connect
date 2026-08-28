@@ -31,26 +31,56 @@ func (e *Engine) cmdNew(p Platform, msg *Message, args []string) {
 		return
 	}
 
-	slog.Info("cmdNew: cleaning up old session", "session_key", msg.SessionKey)
-	e.cleanupInteractiveState(interactiveKey)
-	slog.Info("cmdNew: cleanup done, creating new session", "session_key", msg.SessionKey)
+	// For Web (bridge) messages, each conversation owns a unique session_key.
+	// A `/new` must start a brand-new conversation, so mint a fresh key rather
+	// than reusing the current conversation's key (which would just append a
+	// sibling session to the SAME key/agent thread — the cause of the earlier
+	// "all conversations collapse into one" bug). Non-bridge platforms keep
+	// their per-user key semantics.
+	targetKey := msg.SessionKey
+	if msg.Platform == "bridge" || msg.Platform == "web" {
+		project := e.name
+		if project == "" {
+			project = projectFromWebSessionKey(msg.SessionKey)
+		}
+		targetKey = MintWebSessionKey(project)
+	}
 
-	// Clear old session's agent session ID so it cannot be resumed
+	slog.Info("cmdNew: cleaning up old session", "session_key", msg.SessionKey, "new_session_key", targetKey)
+	e.cleanupInteractiveState(interactiveKey)
+	slog.Info("cmdNew: cleanup done, creating new session", "session_key", targetKey)
+
+	// Detach the old session's live agent session so it cannot be resumed,
+	// but PRESERVE its history/agent_type/name so it stays browsable in the
+	// Web list (it becomes a past conversation, not an empty shell).
 	old := sessions.GetOrCreateActive(msg.SessionKey)
-	old.SetAgentSessionID("", "")
-	old.ClearHistory()
+	old.DetachAgentSession()
 	sessions.Save()
 
 	name := ""
 	if len(args) > 0 {
 		name = strings.Join(args, " ")
 	}
-	sessions.NewSession(msg.SessionKey, name)
+	sessions.NewSession(targetKey, name)
 	if name != "" {
 		e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgNewSessionCreatedName), name))
 	} else {
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgNewSessionCreated))
 	}
+}
+
+// projectFromWebSessionKey extracts the project segment from a
+// `bridge:web-admin:<project>:...` session key, falling back to "".
+func projectFromWebSessionKey(key string) string {
+	const prefix = "bridge:web-admin:"
+	if !strings.HasPrefix(key, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(key, prefix)
+	if i := strings.Index(rest, ":"); i >= 0 {
+		return rest[:i]
+	}
+	return rest
 }
 
 // applySessionFilter conditionally filters agent sessions based on the
@@ -137,6 +167,36 @@ func lastUserMessageSnippet(history []HistoryEntry, maxRunes int) string {
 		return text
 	}
 	return ""
+}
+
+// firstUserMessageSnippet returns a truncated snippet of the first
+// user-role message in history, or "" if there is none. Used as the
+// fallback source for auto-generated session titles.
+func firstUserMessageSnippet(history []HistoryEntry, maxRunes int) string {
+	for i := 0; i < len(history); i++ {
+		if history[i].Role != "user" {
+			continue
+		}
+		text := strings.ReplaceAll(history[i].Content, "\n", " ")
+		text = strings.Join(strings.Fields(text), " ")
+		if text == "" {
+			return ""
+		}
+		r := []rune(text)
+		if len(r) > maxRunes {
+			return string(r[:maxRunes]) + "…"
+		}
+		return text
+	}
+	return ""
+}
+
+// isPlaceholderSessionName reports whether a session name is an unset
+// placeholder that may be replaced by an auto-generated title. It mirrors
+// the exclusion list used by the pending-name promotion in the turn-result
+// handler.
+func isPlaceholderSessionName(name string) bool {
+	return name == "" || name == "session" || name == "default"
 }
 
 func (e *Engine) cmdList(p Platform, msg *Message, args []string) {

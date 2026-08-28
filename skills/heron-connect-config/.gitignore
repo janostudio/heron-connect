@@ -1,0 +1,2 @@
+# 运行时状态：service.sh 生成的 config.toml 软链与系统服务元数据，勿提交
+state/

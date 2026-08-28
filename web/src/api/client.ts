@@ -64,6 +64,27 @@ class ApiClient {
     if (!res.ok) throw new ApiError(res.statusText, res.status);
     return res.text();
   }
+
+  /**
+   * Fetch a binary resource (e.g. a local file for the web preview) as a Blob.
+   * Unlike `raw`, it resolves even for non-2xx so the caller can render the
+   * error; the resolved object carries the HTTP status and content type.
+   */
+  async file(path: string): Promise<{ ok: boolean; status: number; contentType: string; blob: Blob }> {
+    const h: HeadersInit = {};
+    if (this.token) h['Authorization'] = `Bearer ${this.token}`;
+    const res = await fetch(`${API_BASE}${path}`, { headers: h });
+    if (res.status === 401 && this.onUnauthorized) {
+      this.onUnauthorized();
+    }
+    const blob = await res.blob();
+    return {
+      ok: res.ok,
+      status: res.status,
+      contentType: res.headers.get('Content-Type') || blob.type || 'application/octet-stream',
+      blob,
+    };
+  }
 }
 
 export class ApiError extends Error {

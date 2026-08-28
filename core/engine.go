@@ -175,9 +175,16 @@ type Engine struct {
 	speech                SpeechCfg
 	tts                   *TTSCfg
 	display               DisplayCfg
-	injectSender          bool
-	attachmentSendEnabled bool
-	startedAt             time.Time
+	// platformDisplayOverrides holds per-platform-name overrides of display,
+	// keyed by lowercase platform name (e.g. "web", "feishu"). Populated once
+	// at startup/reload via SetPlatformDisplayOverrides; read per-turn via
+	// resolveDisplayForPlatform. nil/empty map means "no overrides configured"
+	// — every platform falls back to display, identical to pre-existing
+	// behavior for projects that don't use [projects.platforms.display].
+	platformDisplayOverrides map[string]DisplayCfg
+	injectSender             bool
+	attachmentSendEnabled    bool
+	startedAt                time.Time
 
 	providerSaveFunc        func(providerName string) error
 	providerAddSaveFunc     func(p ProviderConfig) error
@@ -223,15 +230,28 @@ type Engine struct {
 	relayManager      RelayManagerAPI
 	eventIdleTimeout  time.Duration
 	maxQueuedMessages int
-	dirHistory        *DirHistory
-	baseWorkDir       string
-	projectState      *ProjectStateStore
+	// queuedMessagesMerge: when true, the whole pendingMessages queue is
+	// submitted to the agent as a single turn after the current turn
+	// completes (IM-friendly: consecutive messages form one request and one
+	// reply). False = serial, one message per turn (historical behavior).
+	// Zero value false keeps legacy tests unchanged; production default
+	// merge is wired from project config in main.go.
+	queuedMessagesMerge bool
+	dirHistory          *DirHistory
+	baseWorkDir         string
+	projectState        *ProjectStateStore
 
 	// Auto-compress settings
 	autoCompressEnabled   bool
 	autoCompressMaxTokens int
 	autoCompressMinGap    time.Duration
 	resetOnIdle           time.Duration
+	// resetOnIdleByPlatform holds per-platform overrides of resetOnIdle,
+	// keyed by lowercase platform name/type (e.g. "web", "wecom"), matching
+	// the platformDisplayOverrides convention. When a platform has an entry,
+	// it takes precedence over resetOnIdle for that platform. A zero entry
+	// disables rotation for that platform. nil/empty means "no overrides".
+	resetOnIdleByPlatform map[string]time.Duration
 
 	// When true, append [ctx: ~N%] (or model self-report) to assistant replies shown on platforms.
 	showContextIndicator bool
@@ -241,6 +261,12 @@ type Engine struct {
 	// hiding sessions created by direct CLI usage in the same work_dir.
 	// Default false = show all sessions.
 	filterExternalSessions bool
+
+	// When true, placeholder-named sessions get an auto-generated title
+	// after their first completed turn (agent summary preferred, first
+	// user message snippet as fallback). Wired from project config where
+	// the default is true; zero value false keeps legacy tests unchanged.
+	autoSessionTitle bool
 
 	// Multi-workspace mode
 	multiWorkspace    bool
@@ -310,8 +336,17 @@ type queuedMessage struct {
 
 // interactiveState tracks a running interactive agent session and its permission state.
 type interactiveState struct {
-	agentSession     AgentSession
-	platform         Platform
+	agentSession AgentSession
+	platform     Platform
+	// platformName is the logical platform name (e.g. "web", "feishu") used
+	// to look up per-platform display overrides. Distinct from platform's
+	// Name() because bridge-routed platforms (BridgePlatform) always report
+	// Name()=="bridge" regardless of the underlying registered adapter (web
+	// admin UI, or any future bridge-routed IM platform) — only the
+	// per-message Message.Platform string (mirrored here) carries that
+	// granularity. Empty means "no specific platform identity known", which
+	// resolveDisplayForPlatform treats as "use the engine default".
+	platformName     string
 	replyCtx         any
 	currentMessageID string
 	workspaceDir     string
@@ -855,6 +890,74 @@ func (e *Engine) findCurrentMessageSession(messageID string) (string, bool) {
 	return "", false
 }
 
+// resolveWeComQuotedSession maps a WeCom group quoted reply back to the original
+// session it referenced. WeCom's quote payload carries only the referenced message's
+// text (no id/root/sender), so we cannot key on an id. Instead we match the quoted
+// text against the assistant History of the group's other sessions.
+//
+// Matching rules (chosen to avoid cross-talk, per design):
+//   - quoted text is normalized (whitespace collapsed) and must be >= 12 chars,
+//     so short boilerplate ("好的"/"收到") never triggers a session switch;
+//   - scan every session whose key shares the group prefix "wecom:{chatID}:";
+//   - an assistant History entry whose normalized content contains the normalized
+//     quoted text counts as a hit for that session;
+//   - exactly one distinct session hits → return it (the user continues that discussion);
+//   - zero or multiple sessions hit → return "" so the caller keeps the personal
+//     session (safe fallback, no accidental cross-talk).
+func (e *Engine) resolveWeComQuotedSession(msg *Message, sessions *SessionManager) string {
+	chatID := extractChannelID(msg.SessionKey)
+	if chatID == "" {
+		return ""
+	}
+	prefix := "wecom:" + chatID + ":"
+	quoteNorm := normalizeWhitespace(msg.QuotedText)
+	if len([]rune(quoteNorm)) < 12 {
+		return ""
+	}
+
+	idToKey, _ := sessions.SessionKeyMap()
+
+	hitSession := ""
+	hits := 0
+	for _, s := range sessions.AllSessions() {
+		key := idToKey[s.ID]
+		if key == "" || !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if key == msg.SessionKey {
+			continue // don't match the sender's own (current) session
+		}
+		matched := false
+		for _, h := range s.History {
+			if h.Role != "assistant" {
+				continue
+			}
+			if strings.Contains(normalizeWhitespace(h.Content), quoteNorm) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		hits++
+		if hits > 1 {
+			// Multiple sessions contain the quoted text — ambiguous, bail out.
+			return ""
+		}
+		hitSession = key
+	}
+	if hits == 1 {
+		return hitSession
+	}
+	return ""
+}
+
+// normalizeWhitespace collapses all whitespace runs to a single space and trims.
+func normalizeWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 func (e *Engine) removeQueuedMessageByID(messageID string) (string, bool) {
 	e.interactiveMu.Lock()
 	states := make(map[string]*interactiveState, len(e.interactiveStates))
@@ -1172,7 +1275,32 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		interactiveKey = resolvedWorkspace + ":" + msg.SessionKey
 	}
 
-	session := sessions.GetOrCreateActive(msg.SessionKey)
+	// WeCom quoted-reply resolution: a user quoting a bot reply in a group chat
+	// should continue the ORIGINAL session rather than start a personal one.
+	// Protocol gives no quoted-message id, so we match the quoted text against
+	// assistant history of the group's other sessions. Unique hit → reuse it;
+	// no/multiple hit → keep the personal session (safe fallback, no cross-talk).
+	if msg.Platform == "wecom" && msg.QuotedText != "" {
+		if resolved := e.resolveWeComQuotedSession(msg, sessions); resolved != "" {
+			msg.SessionKey = resolved
+			interactiveKey = resolved
+			if e.multiWorkspace && wsSessions != nil {
+				interactiveKey = resolvedWorkspace + ":" + resolved
+			}
+		}
+	}
+
+	// Explicit per-conversation routing: when the client targets a specific
+	// heron session id (Web conversations now each own a unique session_key and
+	// send the id of the conversation it is showing), route to THAT session
+	// rather than the key's current active session. This keeps picking an old
+	// conversation (e.g. s89) from going to whatever is currently active under
+	// the key (e.g. s91 after an idle auto-reset). Falls back to the key-based
+	// active session when the id is absent or no longer exists.
+	session := sessions.FindByID(msg.SessionID)
+	if session == nil {
+		session = sessions.GetOrCreateActive(msg.SessionKey)
+	}
 	sessions.UpdateUserMeta(msg.SessionKey, msg.UserName, msg.ChatName)
 	if !session.TryLock() {
 		if e.stopCurrentMessageIfRecalled(interactiveKey) {
@@ -1222,7 +1350,13 @@ sessionLocked:
 }
 
 func (e *Engine) maybeAutoResetSessionOnIdle(p Platform, msg *Message, sessions *SessionManager, interactiveKey string, session *Session) *Session {
-	if e.resetOnIdle <= 0 || session == nil {
+	// Per-platform override takes precedence (0 = disabled for this platform).
+	// Match on msg.Platform (the platform type the client reports, e.g. "web")
+	// rather than p.Name(): for Web/bridge messages p is the BridgePlatform whose
+	// Name() is always "bridge", which would never match a `type = "web"`
+	// override and would wrongly fall back to the project-level value.
+	resetOnIdle := e.resolveResetOnIdleForPlatform(msg.Platform)
+	if resetOnIdle <= 0 || session == nil {
 		return nil
 	}
 
@@ -1233,7 +1367,7 @@ func (e *Engine) maybeAutoResetSessionOnIdle(p Platform, msg *Message, sessions 
 	}
 
 	lastActive := session.GetUpdatedAt()
-	if lastActive.IsZero() || time.Since(lastActive) < e.resetOnIdle {
+	if lastActive.IsZero() || time.Since(lastActive) < resetOnIdle {
 		return nil
 	}
 
@@ -1241,7 +1375,7 @@ func (e *Engine) maybeAutoResetSessionOnIdle(p Platform, msg *Message, sessions 
 		"session_key", msg.SessionKey,
 		"session_id", session.ID,
 		"idle_for", time.Since(lastActive),
-		"threshold", e.resetOnIdle,
+		"threshold", resetOnIdle,
 	)
 
 	// Check if the old session has an agent process that needs graceful
@@ -1274,7 +1408,7 @@ func (e *Engine) maybeAutoResetSessionOnIdle(p Platform, msg *Message, sessions 
 		return session
 	}
 
-	e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgSessionAutoResetIdle, int(e.resetOnIdle/time.Minute)))
+	e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgSessionAutoResetIdle, int(resetOnIdle/time.Minute)))
 	return newSession
 }
 
@@ -1332,6 +1466,73 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 	)
 	e.reply(p, msg.ReplyCtx, e.i18n.T(MsgMessageQueued))
 	return true
+}
+
+// takeQueuedBatchLocked pops the next batch of queued messages.
+// merge == false pops exactly one message (serial mode, the historical
+// behavior); merge == true pops the whole queue so everything accumulated
+// during the previous turn is submitted as a single prompt.
+// Caller must hold state.mu.
+func takeQueuedBatchLocked(state *interactiveState, merge bool) []queuedMessage {
+	pending := state.pendingMessages
+	if len(pending) == 0 {
+		return nil
+	}
+	n := 1
+	if merge && len(pending) > 1 {
+		n = len(pending)
+	}
+	batch := pending[:n]
+	state.pendingMessages = pending[n:]
+	return batch
+}
+
+// mergeQueuedBatch folds a FIFO batch of queued messages into a single
+// submission. Identity fields (messageID, platform, replyCtx, sender
+// fields) come from the LAST message so replies quote the newest bubble and
+// recall detection targets it; contents are joined with blank lines; images
+// and files are concatenated in order; fromVoice is true when any message
+// was spoken. A single-message batch degenerates to exactly the historical
+// per-message behavior. The prompt carries one sender header when all
+// messages share the same sender; otherwise each message keeps its own
+// header (shared-session channels may interleave multiple senders).
+func (e *Engine) mergeQueuedBatch(batch []queuedMessage) (merged queuedMessage, prompt string) {
+	if len(batch) == 0 {
+		return merged, ""
+	}
+	merged = batch[len(batch)-1]
+	merged.fromVoice = false
+	sameSender := true
+	var images []ImageAttachment
+	var files []FileAttachment
+	for _, q := range batch {
+		if q.fromVoice {
+			merged.fromVoice = true
+		}
+		images = append(images, q.images...)
+		files = append(files, q.files...)
+		if q.userID != batch[0].userID || q.userName != batch[0].userName ||
+			q.msgPlatform != batch[0].msgPlatform || q.msgSessionKey != batch[0].msgSessionKey ||
+			q.channelKey != batch[0].channelKey {
+			sameSender = false
+		}
+	}
+	merged.images = images
+	merged.files = files
+
+	if sameSender {
+		contents := make([]string, 0, len(batch))
+		for _, q := range batch {
+			contents = append(contents, q.content)
+		}
+		joined := strings.Join(contents, "\n\n")
+		return merged, e.buildSenderPrompt(joined, merged.userID, merged.userName, merged.msgPlatform, merged.msgSessionKey, merged.channelKey)
+	}
+	parts := make([]string, 0, len(batch))
+	for _, q := range batch {
+		parts = append(parts, e.buildSenderPrompt(q.content, q.userID, q.userName, q.msgPlatform, q.msgSessionKey, q.channelKey))
+	}
+	return merged, strings.Join(parts, "\n\n")
 }
 
 // ensureInteractiveStateForQueueing creates a placeholder interactiveState
@@ -1712,6 +1913,7 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	// Update reply context for this turn
 	state.mu.Lock()
 	state.platform = p
+	state.platformName = msg.Platform
 	state.replyCtx = msg.ReplyCtx
 	state.currentMessageID = msg.MessageID
 	state.lastTurnMessageID = msg.MessageID
@@ -2249,6 +2451,22 @@ func (e *Engine) cleanupInteractiveState(sessionKey string, expected ...*interac
 	}
 	delete(e.interactiveStates, sessionKey)
 	e.interactiveMu.Unlock()
+}
+
+// ForceNewSession creates a brand-new session for sessionKey, tearing down
+// any live interactive/agent state first. Mirrors the /new command's
+// behavior but is callable from non-message contexts (e.g. the web admin
+// HTTP API) that have no Platform/Message to route through cmdNew. Returns
+// the newly created session.
+func (e *Engine) ForceNewSession(sessionKey, name string) *Session {
+	e.cleanupInteractiveState(sessionKey)
+
+	old := e.sessions.GetOrCreateActive(sessionKey)
+	old.DetachAgentSession()
+
+	newSession := e.sessions.NewSession(sessionKey, name)
+	e.sessions.Save()
+	return newSession
 }
 
 func (e *Engine) closeAgentSessionAsync(sessionKey string, agentSession AgentSession) {

@@ -639,7 +639,7 @@ func loadCodexRuntimeConfig(ctx context.Context, workDir string, extraEnv []stri
 	if err := rpcRequestOverIO(stdin, reader, nextID, "initialize", map[string]any{
 		"clientInfo": map[string]any{
 			"name":    "heron-connect-codex-runtime-config",
-			"title":   "CC Connect Codex Runtime Config",
+			"title":   "Heron Connect Codex Runtime Config",
 			"version": "0.1.0",
 		},
 	}, nil); err != nil {

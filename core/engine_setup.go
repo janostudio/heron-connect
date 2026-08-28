@@ -131,6 +131,32 @@ func (e *Engine) SetDisplayConfig(cfg DisplayCfg) {
 	e.display = cfg
 }
 
+// SetPlatformDisplayOverrides registers per-platform display overrides,
+// keyed by platform name (matched case-insensitively against msg.Platform /
+// [[projects.platforms]].type at resolution time — see
+// resolveDisplayForPlatform). Call after SetDisplayConfig at startup and on
+// every config reload. Passing nil or an empty map clears all overrides
+// (every platform falls back to the engine default display), preserving
+// full backward compatibility for projects that don't use
+// [projects.platforms.display] blocks.
+func (e *Engine) SetPlatformDisplayOverrides(overrides map[string]DisplayCfg) {
+	e.platformDisplayOverrides = overrides
+}
+
+// resolveDisplayForPlatform returns the effective DisplayCfg for the given
+// platform name (case-insensitive), falling back to the engine default
+// e.display when platformName is empty or has no registered override. Cheap
+// map lookup; safe to call once per turn from processInteractiveEvents.
+func (e *Engine) resolveDisplayForPlatform(platformName string) DisplayCfg {
+	if platformName == "" || len(e.platformDisplayOverrides) == 0 {
+		return e.display
+	}
+	if cfg, ok := e.platformDisplayOverrides[strings.ToLower(strings.TrimSpace(platformName))]; ok {
+		return cfg
+	}
+	return e.display
+}
+
 // SetInstantReply configures the immediate confirmation reply.
 func (e *Engine) SetInstantReply(cfg InstantReplyCfg) {
 	e.instantReply = cfg
@@ -183,6 +209,30 @@ func (e *Engine) SetResetOnIdle(d time.Duration) {
 	e.resetOnIdle = d
 }
 
+// SetPlatformResetOnIdleOverrides registers per-platform reset-on-idle
+// overrides, keyed by lowercase platform name/type (e.g. "web", "wecom").
+// resolveResetOnIdleForPlatform falls back to the engine-wide value for any
+// platform not in the map, so entries only need to be present where an override
+// is desired. Call after SetResetOnIdle at startup and on hot-reload. A zero
+// entry disables rotation for that platform. Pass nil/empty to clear all
+// overrides.
+func (e *Engine) SetPlatformResetOnIdleOverrides(overrides map[string]time.Duration) {
+	e.resetOnIdleByPlatform = overrides
+}
+
+// resolveResetOnIdleForPlatform returns the effective reset-on-idle duration
+// for the given platform, applying a per-platform override when present.
+func (e *Engine) resolveResetOnIdleForPlatform(platformName string) time.Duration {
+	if platformName == "" || len(e.resetOnIdleByPlatform) == 0 {
+		return e.resetOnIdle
+	}
+	key := strings.ToLower(strings.TrimSpace(platformName))
+	if d, ok := e.resetOnIdleByPlatform[key]; ok {
+		return d
+	}
+	return e.resetOnIdle
+}
+
 // SetShowContextIndicator controls whether assistant replies include the [ctx: ~N%] suffix.
 func (e *Engine) SetShowContextIndicator(show bool) {
 	e.showContextIndicator = show
@@ -199,6 +249,22 @@ func (e *Engine) SetReplyFooterEnabled(show bool) {
 // Default false = show all sessions from the agent.
 func (e *Engine) SetFilterExternalSessions(v bool) {
 	e.filterExternalSessions = v
+}
+
+// SetAutoSessionTitle controls whether placeholder-named sessions get an
+// auto-generated title after their first completed turn. The project config
+// default is true; the engine zero value is false so unwired tests keep the
+// legacy behavior.
+func (e *Engine) SetAutoSessionTitle(v bool) {
+	e.autoSessionTitle = v
+}
+
+// SetQueuedMessagesMode controls how messages queued while the agent is busy
+// are submitted after the current turn completes: "merge" (default, empty
+// string) combines the whole queue into one prompt and one turn;
+// "serial" submits one message per turn (historical behavior).
+func (e *Engine) SetQueuedMessagesMode(mode string) {
+	e.queuedMessagesMerge = strings.ToLower(strings.TrimSpace(mode)) != "serial"
 }
 
 func (e *Engine) SetWebSetupFunc(fn func() (int, string, bool, error)) { e.webSetupFunc = fn }
@@ -651,6 +717,48 @@ func (e *Engine) IsSessionLive(sessionKey string) bool {
 	defer e.interactiveMu.Unlock()
 	_, ok := e.interactiveStates[sessionKey]
 	return ok
+}
+
+// SessionTurnState describes whether the agent is actively working for a
+// session, exposed to the management API so the Web admin UI can surface
+// per-session execution status (multiple sessions may run in parallel).
+type SessionTurnState struct {
+	// Running is true while a foreground turn is in progress (cancelCh set)
+	// or the unsolicited background reader is consuming agent events.
+	Running bool
+	// WaitingPermission is true while the turn is blocked on a user
+	// permission/AskUserQuestion response.
+	WaitingPermission bool
+	// TurnStartedAt is when the current foreground turn began (zero when no
+	// foreground turn has started in this interactive state).
+	TurnStartedAt time.Time
+}
+
+// InteractiveSessionTurnStates returns the per-session-key turn state for all
+// live interactive states. Lock order: interactiveMu is taken first to snapshot
+// the state map, then each state.mu is taken individually after release —
+// never nested, so this cannot deadlock against paths that take state.mu first.
+func (e *Engine) InteractiveSessionTurnStates() map[string]SessionTurnState {
+	e.interactiveMu.Lock()
+	states := make([]*interactiveState, 0, len(e.interactiveStates))
+	keys := make([]string, 0, len(e.interactiveStates))
+	for key, state := range e.interactiveStates {
+		keys = append(keys, key)
+		states = append(states, state)
+	}
+	e.interactiveMu.Unlock()
+
+	m := make(map[string]SessionTurnState, len(states))
+	for i, state := range states {
+		state.mu.Lock()
+		m[keys[i]] = SessionTurnState{
+			Running:           state.cancelCh != nil || state.unsolicitedCancel != nil,
+			WaitingPermission: state.pending != nil,
+			TurnStartedAt:     state.turnStartTime,
+		}
+		state.mu.Unlock()
+	}
+	return m
 }
 
 // ReloadConfig invokes the registered config-reload callback.

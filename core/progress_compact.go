@@ -21,9 +21,6 @@ const (
 	// ProgressCardPayloadPrefix marks a structured payload for card-style progress.
 	ProgressCardPayloadPrefix = "__heron_connect_progress_card_v1__:"
 
-	// Keep a margin below platform hard limit for markdown wrappers/code fences.
-	compactProgressMaxChars = maxPlatformMessageLen - 200
-
 	// Bound each platform progress-card API call so a hung upstream request
 	// does not block the whole turn forever.
 	compactProgressAPITimeout = 15 * time.Second
@@ -224,12 +221,20 @@ type compactProgressWriter struct {
 	content    string
 	entries    []string
 	items      []ProgressCardEntry
+	// entriesDropped counts entries evicted by the maxEntries cap so the
+	// markdown fallback can number visible entries with their true sequence
+	// position instead of restarting at 1 after a trim.
+	entriesDropped int
 	state      ProgressCardState
 	agentName  string
 	lang       Language
 	truncated  bool
 	lastSent   string
 	maxEntries int
+	// maxChars is the per-message character cap for this platform's preview text.
+	// 0 means unlimited (no trimming) — used when the platform does not implement
+	// MessageSizeLimitProvider (e.g. bridge/Web, which streams over WebSocket).
+	maxChars int
 
 	// Throttle message edits to avoid platform rate limits (e.g. Discord ~5 edits/5s).
 	minUpdateInterval time.Duration
@@ -271,6 +276,15 @@ type ProgressCardPayloadHintProvider interface {
 	SupportsProgressCardPayloadHint() bool
 }
 
+// ProgressMaxEntriesHintProvider is an optional interface that a replyCtx may
+// implement to override the coalesced progress entry cap for that reply target
+// (e.g. a bridge adapter that declared "progress_max_entries" in its register
+// metadata). Return value semantics: -1 = no override (use engine default);
+// 0 = unlimited; >0 = cap at that many entries.
+type ProgressMaxEntriesHintProvider interface {
+	ProgressMaxEntriesHint() int
+}
+
 func progressStyleForTarget(p Platform, replyCtx any) string {
 	if hint, ok := replyCtx.(ProgressStyleHintProvider); ok {
 		return NormalizeProgressStyle(hint.ProgressStyleHint())
@@ -301,6 +315,22 @@ func SuppressStandaloneToolResultEvent(p Platform) bool {
 	return progressStyleForPlatform(p) == ProgressStyleLegacy
 }
 
+// resolveProgressMaxChars returns the per-message character cap for a platform's
+// coalesced progress preview. Platforms that declare a limit via
+// MessageSizeLimitProvider get (limit - 200) to leave margin for markdown
+// wrappers/code fences; platforms that do not declare a limit (e.g. bridge/Web,
+// which has no practical single-message size bound over WebSocket) return 0,
+// meaning the preview is never trimmed.
+func resolveProgressMaxChars(p Platform) int {
+	if lim, ok := p.(MessageSizeLimitProvider); ok {
+		n := lim.MessageSizeLimit()
+		if n > 0 {
+			return n - 200
+		}
+	}
+	return 0
+}
+
 func newCompactProgressWriter(ctx context.Context, p Platform, replyCtx any, agentName string, lang Language, transform func(string) string) *compactProgressWriter {
 	w := &compactProgressWriter{
 		ctx:        ctx,
@@ -312,9 +342,17 @@ func newCompactProgressWriter(ctx context.Context, p Platform, replyCtx any, age
 		agentName:  normalizeProgressAgentLabel(agentName),
 		lang:       lang,
 		maxEntries: 10,
+		maxChars:   resolveProgressMaxChars(p),
 	}
 	if throttler, ok := p.(ProgressUpdateThrottler); ok {
 		w.minUpdateInterval = throttler.ProgressUpdateInterval()
+	}
+	// A reply target (e.g. the Web admin bridge adapter) may raise or remove
+	// the entry cap via hint. -1 = no hint; 0 = unlimited; >0 = that cap.
+	if hp, ok := replyCtx.(ProgressMaxEntriesHintProvider); ok {
+		if h := hp.ProgressMaxEntriesHint(); h >= 0 {
+			w.maxEntries = h
+		}
 	}
 	if w.style != ProgressStyleCompact && w.style != ProgressStyleCard {
 		slog.Debug("progress writer disabled: unsupported style", "platform", p.Name(), "style", w.style)
@@ -425,10 +463,12 @@ func (w *compactProgressWriter) AppendStructured(item ProgressCardEntry, fallbac
 		if w.maxEntries > 0 && len(w.items) > w.maxEntries {
 			w.items = w.items[len(w.items)-w.maxEntries:]
 			if len(w.entries) > w.maxEntries {
+				w.entriesDropped += len(w.entries) - w.maxEntries
 				w.entries = w.entries[len(w.entries)-w.maxEntries:]
 			}
 			truncated = true
 		} else if w.maxEntries > 0 && len(w.entries) > w.maxEntries {
+			w.entriesDropped += len(w.entries) - w.maxEntries
 			w.entries = w.entries[len(w.entries)-w.maxEntries:]
 			truncated = true
 		}
@@ -441,8 +481,8 @@ func (w *compactProgressWriter) AppendStructured(item ProgressCardEntry, fallbac
 				return false
 			}
 		} else {
-			w.content = renderCardProgressMarkdownFallback(w.entries, truncated)
-			w.content = trimCompactProgressText(w.content, compactProgressMaxChars)
+			w.content = renderCardProgressMarkdownFallback(w.entries, w.entriesDropped, truncated)
+			w.content = trimCompactProgressText(w.content, w.maxChars)
 		}
 	default:
 		if w.content == "" {
@@ -450,7 +490,7 @@ func (w *compactProgressWriter) AppendStructured(item ProgressCardEntry, fallbac
 		} else {
 			w.content += "\n\n" + fallback
 		}
-		w.content = trimCompactProgressText(w.content, compactProgressMaxChars)
+		w.content = trimCompactProgressText(w.content, w.maxChars)
 	}
 
 	if w.content == w.lastSent {
@@ -539,7 +579,13 @@ func (w *compactProgressWriter) withAPITimeout() (context.Context, context.Cance
 	return context.WithTimeout(w.ctx, compactProgressAPITimeout)
 }
 
-func renderCardProgressMarkdownFallback(entries []string, truncated bool) string {
+// renderCardProgressMarkdownFallback renders card-style progress as markdown
+// for platforms that cannot receive the structured payload. dropped is the
+// number of entries evicted by the maxEntries cap; visible entries are
+// numbered dropped+i+1 so the list index reflects the true event sequence
+// (matching the "Tool #N" counter embedded in each entry) instead of
+// restarting at 1 after a trim.
+func renderCardProgressMarkdownFallback(entries []string, dropped int, truncated bool) string {
 	var b strings.Builder
 	b.WriteString("⏳ **Progress**\n")
 	if truncated {
@@ -547,7 +593,7 @@ func renderCardProgressMarkdownFallback(entries []string, truncated bool) string
 	}
 	for i, entry := range entries {
 		b.WriteString("\n")
-		b.WriteString(strconv.Itoa(i + 1))
+		b.WriteString(strconv.Itoa(dropped + i + 1))
 		b.WriteString(". ")
 		b.WriteString(strings.ReplaceAll(entry, "\n", "\n   "))
 	}

@@ -523,7 +523,7 @@ func (p *WSPlatform) handleMsgCallback(frame wsFrame) {
 		chatName = body.ChatID
 	}
 
-	texts, imgRefs, fileRefs := wsCollectInboundParts(&body)
+	texts, imgRefs, fileRefs, quotedText := wsCollectInboundParts(&body)
 
 	switch body.MsgType {
 	case "voice":
@@ -539,7 +539,7 @@ func (p *WSPlatform) handleMsgCallback(frame wsFrame) {
 			}
 			out = append(out, texts...)
 			slog.Info("wecom-ws: voice + media", "user", body.From.UserID, "images", len(imgRefs), "files", len(fileRefs))
-			go p.deliverWSMediaInbound(&body, sessionKey, chatName, rctx, out, imgRefs, fileRefs)
+			go p.deliverWSMediaInbound(&body, sessionKey, chatName, rctx, out, imgRefs, fileRefs, quotedText)
 			return
 		}
 		slog.Debug("wecom-ws: voice received (transcribed)", "user", body.From.UserID, "len", len(vt))
@@ -548,7 +548,7 @@ func (p *WSPlatform) handleMsgCallback(frame wsFrame) {
 			MessageID: body.MsgID,
 			UserID:    body.From.UserID, UserName: body.From.UserID,
 			ChatName: chatName,
-			Content:  vt, ReplyCtx: rctx, FromVoice: true,
+			Content:   vt, QuotedText: quotedText, ReplyCtx: rctx, FromVoice: true,
 		})
 		return
 	}
@@ -565,14 +565,14 @@ func (p *WSPlatform) handleMsgCallback(frame wsFrame) {
 			MessageID: body.MsgID,
 			UserID:    body.From.UserID, UserName: body.From.UserID,
 			ChatName: chatName,
-			Content:  content, ReplyCtx: rctx,
+			Content:   content, QuotedText: quotedText, ReplyCtx: rctx,
 		})
 		return
 	}
 
 	slog.Info("wecom-ws: media message", "msg_type", body.MsgType, "user", body.From.UserID,
 		"images", len(imgRefs), "files", len(fileRefs), "text_parts", len(texts))
-	go p.deliverWSMediaInbound(&body, sessionKey, chatName, rctx, texts, imgRefs, fileRefs)
+	go p.deliverWSMediaInbound(&body, sessionKey, chatName, rctx, texts, imgRefs, fileRefs, quotedText)
 }
 
 func (p *WSPlatform) logAccess(rec wecomAccessRecord) {

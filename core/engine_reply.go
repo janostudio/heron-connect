@@ -341,6 +341,13 @@ func (e *Engine) renderOutgoingContentForWorkspace(p Platform, content, workspac
 	if strings.TrimSpace(content) == "" {
 		return content
 	}
+	// The web dashboard connects through the bridge platform. For it, rewrite
+	// local file references in the reply into clickable markdown links so the
+	// frontend can preview/download files the agent generated on disk. This is a
+	// web-only capability; other platforms keep the existing reference rendering.
+	if p.Name() == "bridge" {
+		return TransformLocalRefsToLinks(content, e.Name(), workspaceDir)
+	}
 	return TransformLocalReferences(content, e.references, e.agent.Name(), p.Name(), workspaceDir)
 }
 

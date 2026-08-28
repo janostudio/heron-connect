@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,10 +15,31 @@ import (
 // to use --continue (resume most recent session) instead of a specific session ID.
 const ContinueSession = "__continue__"
 
+// MintWebSessionKey returns a fresh, unique session_key for a Web admin
+// conversation under the given project. Unlike the legacy per-tab key
+// (bridge:web-admin:<project>:<WC_CONN_ID>), which all conversations in one
+// tab shared, this mints a distinct key per conversation so each Web
+// conversation maps to its own agent session. The project segment is kept so
+// bridge.resolveEngine / platformFromSessionKey still route by the `bridge:`
+// prefix regardless of the suffix.
+func MintWebSessionKey(project string) string {
+	if project == "" {
+		project = "default"
+	}
+	return fmt.Sprintf("bridge:web-admin:%s:conv-%s", project, GenerateToken(12))
+}
+
 // Session tracks one conversation between a user and the agent.
 type Session struct {
 	ID                  string         `json:"id"`
 	Name                string         `json:"name"`
+	// NameAuto marks that Name was generated automatically (first-turn
+	// auto-title) rather than chosen by the user. The pending-name promotion
+	// in the turn-result handler skips auto names so they never leak into the
+	// SessionManager custom-name index. Older snapshots default to false,
+	// which correctly reads as "user-chosen name".
+	NameAuto            bool           `json:"name_auto,omitempty"`
+	Pinned              bool           `json:"pinned,omitempty"` // user-pinned session (shown first)
 	AgentSessionID      string         `json:"agent_session_id"`
 	AgentType           string         `json:"agent_type,omitempty"`
 	PastAgentSessionIDs []string       `json:"past_agent_session_ids,omitempty"`
@@ -164,6 +186,20 @@ func (s *Session) CompareAndSetAgentSessionID(id, agentType string) bool {
 	s.AgentSessionID = id
 	s.AgentType = agentType
 	return true
+}
+
+// DetachAgentSession clears only the live agent session ID so the session can
+// no longer be resumed, while PRESERVING all display/reference data: the agent
+// type, conversation history, name, and past agent session IDs. This is used
+// when starting a new session (/new) so the previous conversation remains
+// browsable in the Web list instead of becoming an empty shell (#history-loss).
+func (s *Session) DetachAgentSession() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.AgentSessionID != "" {
+		s.recordPastAgentSessionID()
+	}
+	s.AgentSessionID = ""
 }
 
 func (s *Session) stripContinueSessionSentinel() {
@@ -502,6 +538,37 @@ func (sm *SessionManager) FindByID(id string) *Session {
 	return sm.sessions[id]
 }
 
+// SetSessionMeta updates a session's display name and/or pin flag by its
+// internal ID. A non-empty name marks the session as user-named (clears the
+// auto-title flag so it is not overwritten). Returns false when the session
+// does not exist. Changes are persisted.
+func (sm *SessionManager) SetSessionMeta(id string, name *string, pinned *bool) (bool, error) {
+	s := sm.FindByID(id)
+	if s == nil {
+		return false, nil
+	}
+	changed := false
+	if name != nil {
+		trimmed := strings.TrimSpace(*name)
+		if trimmed != "" {
+			s.SetName(trimmed)
+			s.SetNameAuto(false)
+			changed = true
+		}
+	}
+	if pinned != nil {
+		s.SetPinned(*pinned)
+		changed = true
+	}
+	if !changed {
+		return true, nil
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.saveLocked()
+	return true, nil
+}
+
 // DeleteByID removes a session by its internal ID from all tracking structures.
 func (sm *SessionManager) DeleteByID(id string) bool {
 	sm.mu.Lock()
@@ -580,6 +647,8 @@ func (sm *SessionManager) saveLocked() {
 		snapSessions[id] = &Session{
 			ID:                  s.ID,
 			Name:                s.Name,
+			NameAuto:            s.NameAuto,
+			Pinned:              s.Pinned,
 			AgentSessionID:      agentSID,
 			AgentType:           s.AgentType,
 			PastAgentSessionIDs: append([]string(nil), s.PastAgentSessionIDs...),
@@ -727,6 +796,7 @@ func (sm *SessionManager) InvalidateForAgent(agentType string) {
 type SessionSnapshot struct {
 	ID             string
 	Name           string
+	Pinned         bool
 	AgentSessionID string
 	AgentType      string
 	History        []HistoryEntry
@@ -743,6 +813,7 @@ func (s *Session) Snapshot() SessionSnapshot {
 	return SessionSnapshot{
 		ID:             s.ID,
 		Name:           s.Name,
+		Pinned:         s.Pinned,
 		AgentSessionID: s.AgentSessionID,
 		AgentType:      s.AgentType,
 		History:        hist,
@@ -756,4 +827,32 @@ func (s *Session) SetName(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Name = name
+}
+
+// SetNameAuto marks (or unmarks) the current name as auto-generated.
+func (s *Session) SetNameAuto(auto bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.NameAuto = auto
+}
+
+// SetPinned sets whether the session is user-pinned (shown first in lists).
+func (s *Session) SetPinned(pinned bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Pinned = pinned
+}
+
+// IsPinned reports whether the session is user-pinned.
+func (s *Session) IsPinned() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Pinned
+}
+
+// GetNameAuto reports whether the current name was auto-generated.
+func (s *Session) GetNameAuto() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.NameAuto
 }

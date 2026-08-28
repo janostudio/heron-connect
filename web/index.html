@@ -2,8 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <!-- viewport-fit=cover lets the app draw under the iOS safe area when needed.
+         interactive-widget=resizes-content makes Android Chrome shrink the
+         layout viewport when the soft keyboard opens (instead of overlaying
+         it), so the input area is pushed above the keyboard. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>Heron Connect Admin</title>
   </head>
   <body class="bg-gray-50 dark:bg-gray-950">

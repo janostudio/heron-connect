@@ -173,7 +173,7 @@ export default function CommandResultPanel({ result, onClose, onCardAction }: Pr
       />
 
       <div className={cn(
-        'fixed top-0 right-0 h-full w-[400px] max-w-[90vw] z-50 flex flex-col',
+        'fixed top-0 right-0 h-dvh w-[400px] max-w-[90vw] z-50 flex flex-col',
         'translate-x-0 transition-transform duration-300 ease-out',
         'bg-white dark:bg-[#111] border-l border-gray-200/80 dark:border-white/[0.06]',
         'shadow-xl shadow-black/8 dark:shadow-black/40',

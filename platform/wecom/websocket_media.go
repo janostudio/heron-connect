@@ -70,7 +70,10 @@ type wsQuoteBlock struct {
 // wsCollectInboundParts extracts text lines and media refs (main message + quote + mixed),
 // matching @wecom/aibot-node-sdk message parsing. Does not include the top-level voice
 // transcription (handled separately via wsVoiceText).
-func wsCollectInboundParts(body *wsMsgCallbackBody) (texts []string, imgs, files []wsMediaRef) {
+// It also returns quotedText: the clean text of a quoted (引用) message, without the
+// "[引用消息] " prefix. Empty when there is no quote or the quote carries no text (image/file).
+// quotedText is used by the engine to resolve a quoted reply back to the original session.
+func wsCollectInboundParts(body *wsMsgCallbackBody) (texts []string, imgs, files []wsMediaRef, quotedText string) {
 	appendText := func(s string) {
 		s = strings.TrimSpace(s)
 		if s != "" {
@@ -121,11 +124,19 @@ func wsCollectInboundParts(body *wsMsgCallbackBody) (texts []string, imgs, files
 		switch q.MsgType {
 		case "text":
 			if q.Text != nil {
-				appendQuotedText(q.Text.Content)
+				clean := strings.TrimSpace(q.Text.Content)
+				if clean != "" {
+					quotedText = clean
+					appendQuotedText(clean)
+				}
 			}
 		case "voice":
 			if q.Voice != nil {
-				appendQuotedText(q.Voice.Content)
+				clean := strings.TrimSpace(q.Voice.Content)
+				if clean != "" {
+					quotedText = clean
+					appendQuotedText(clean)
+				}
 			}
 		case "image":
 			if q.Image != nil {
@@ -162,7 +173,7 @@ func wsCollectInboundParts(body *wsMsgCallbackBody) (texts []string, imgs, files
 		}
 	}
 	walkQuote(body.Quote)
-	return texts, imgs, files
+	return texts, imgs, files, quotedText
 }
 
 // decodeWeComAESKey normalizes and decodes the aeskey from WeCom WS callbacks.
@@ -336,7 +347,9 @@ func downloadWeComWSMedia(ctx context.Context, urlStr, aesKey string) (data []by
 }
 
 // deliverWSMediaInbound downloads image/file refs and forwards one core.Message.
-func (p *WSPlatform) deliverWSMediaInbound(body *wsMsgCallbackBody, sessionKey, chatName string, rctx wsReplyContext, texts []string, imgs, files []wsMediaRef) {
+// quotedText is the clean text of a quoted (引用) message, used by the engine to
+// resolve a quoted reply back to the original session.
+func (p *WSPlatform) deliverWSMediaInbound(body *wsMsgCallbackBody, sessionKey, chatName string, rctx wsReplyContext, texts []string, imgs, files []wsMediaRef, quotedText string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
@@ -392,9 +405,10 @@ func (p *WSPlatform) deliverWSMediaInbound(body *wsMsgCallbackBody, sessionKey, 
 		MessageID: body.MsgID,
 		UserID:    body.From.UserID, UserName: body.From.UserID,
 		ChatName: chatName,
-		Content:  content,
-		Images:   images,
-		Files:    fileAtts,
-		ReplyCtx: rctx,
+		Content:   content,
+		QuotedText: quotedText,
+		Images:    images,
+		Files:     fileAtts,
+		ReplyCtx:  rctx,
 	})
 }

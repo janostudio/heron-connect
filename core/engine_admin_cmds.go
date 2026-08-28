@@ -440,13 +440,14 @@ func (e *Engine) cmdCommandsList(p Platform, msg *Message) {
 		// Tag
 		tag := ""
 		if c.Source == "agent" {
-			tag = " [agent]"
+			tag = " [代理]"
 		} else if c.Exec != "" {
 			tag = " [shell]"
 		}
-		sb.WriteString(fmt.Sprintf("/%s%s\n", c.Name, tag))
+		sb.WriteString(fmt.Sprintf("- `/%s`%s", c.Name, tag))
 
-		// Description or fallback
+		// Description or fallback (only append when present to avoid
+		// empty lines that some Markdown renderers turn into <hr>/gaps)
 		desc := c.Description
 		if desc == "" {
 			if c.Exec != "" {
@@ -455,9 +456,13 @@ func (e *Engine) cmdCommandsList(p Platform, msg *Message) {
 				desc = truncateStr(c.Prompt, 60)
 			}
 		}
-		sb.WriteString(fmt.Sprintf("  %s\n\n", desc))
+		if desc != "" {
+			sb.WriteString(fmt.Sprintf(" — %s", desc))
+		}
+		sb.WriteString("\n")
 	}
 
+	sb.WriteString("\n")
 	sb.WriteString(e.i18n.T(MsgCommandsHint))
 	e.reply(p, msg.ReplyCtx, sb.String())
 }

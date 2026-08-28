@@ -15,6 +15,7 @@ export default {
         'fade-in': 'fadeIn 0.4s ease',
         'slide-up': 'slideUp 0.4s ease',
         'float-in': 'floatIn 0.4s ease',
+        'slide-in-right': 'slideInRight 0.25s ease-out',
       },
       keyframes: {
         fadeIn: {
@@ -28,6 +29,10 @@ export default {
         floatIn: {
           from: { opacity: '0', transform: 'translateY(10px)' },
           to: { opacity: '1', transform: 'translateY(0)' },
+        },
+        slideInRight: {
+          from: { transform: 'translateX(100%)' },
+          to: { transform: 'translateX(0)' },
         },
       },
     },

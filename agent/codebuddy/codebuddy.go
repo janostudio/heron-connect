@@ -99,7 +99,21 @@ func (a *Agent) GetModel() string {
 	return a.model
 }
 
+// AvailableModels returns the models CodeBuddy Code will accept via
+// `--model`. It prefers the user's own models.json configuration (merged
+// user-level + project-level, matching CodeBuddy Code's own precedence —
+// see core.CodeBuddyConfiguredModels) so that custom/self-hosted models the
+// user has added show up in the web admin UI and /model menu. Falls back
+// to a static built-in list when neither models.json file defines any
+// models, so the picker is never empty on a fresh install.
 func (a *Agent) AvailableModels(_ context.Context) []core.ModelOption {
+	a.mu.Lock()
+	workDir := a.workDir
+	a.mu.Unlock()
+
+	if models := core.CodeBuddyConfiguredModels(workDir); len(models) > 0 {
+		return models
+	}
 	return []core.ModelOption{
 		{Name: "claude-sonnet-5", Desc: "Claude Sonnet 5"},
 		{Name: "claude-sonnet-4-6", Desc: "Claude Sonnet 4.6"},
@@ -164,6 +178,25 @@ func (a *Agent) SkillDirs() []string {
 	dirs := []string{filepath.Join(absDir, ".codebuddy", "skills")}
 	if home, err := os.UserHomeDir(); err == nil {
 		dirs = append(dirs, filepath.Join(home, ".codebuddy", "skills"))
+	}
+	return dirs
+}
+
+// ── CommandProvider ──────────────────────────────────────────
+
+// CommandDirs implements core.CommandProvider by pointing at CodeBuddy
+// Code's own custom-command directories (<workDir>/.codebuddy/commands
+// and ~/.codebuddy/commands), mirroring the SkillDirs convention above so
+// commands defined there (e.g. via CodeBuddy Code's own /commands
+// workflow) also surface as heron-connect slash commands.
+func (a *Agent) CommandDirs() []string {
+	absDir, err := filepath.Abs(a.workDir)
+	if err != nil {
+		absDir = a.workDir
+	}
+	dirs := []string{filepath.Join(absDir, ".codebuddy", "commands")}
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, filepath.Join(home, ".codebuddy", "commands"))
 	}
 	return dirs
 }

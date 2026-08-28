@@ -127,7 +127,7 @@ export default function CommandPalette({ open, onClose, onSelect, anchorRef }: P
     <div
       ref={panelRef}
       className={cn(
-        'absolute bottom-full left-0 mb-2 w-80 max-h-[420px] flex flex-col rounded-xl overflow-hidden z-50',
+        'absolute bottom-full left-0 mb-2 w-80 max-w-[calc(100vw-1rem)] max-h-[420px] flex flex-col rounded-xl overflow-hidden z-50',
         'bg-white/95 backdrop-blur-xl border border-gray-200/80 shadow-2xl shadow-black/15',
         'dark:bg-[rgba(20,20,20,0.96)] dark:border-white/[0.1] dark:shadow-black/50',
         'animate-in slide-in-from-bottom-2 fade-in duration-200',

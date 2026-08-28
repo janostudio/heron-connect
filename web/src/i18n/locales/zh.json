@@ -4,7 +4,7 @@
     "projects": "项目",
     "providers": "服务商",
     "sessions": "会话",
-    "chat": "对话",
+    "chat": "项目对话",
     "cron": "定时任务",
     "bridge": "桥接",
     "skills": "技能",
@@ -82,7 +82,13 @@
     "bridgeConnected": "已连接",
     "bridgeConnecting": "连接中...",
     "bridgeDisconnected": "未连接",
-    "bridgeNotAvailable": "Bridge 未启用。请在 config.toml 中启用 [bridge] 以支持网页聊天。"
+    "running": "执行中",
+    "waitingPermission": "等待授权",
+    "bridgeNotAvailable": "Bridge 未启用。请在 config.toml 中启用 [bridge] 以支持网页聊天。",
+    "searchPlaceholder": "搜索会话名称、用户或消息内容...",
+    "createNew": "新建会话",
+    "selectProject": "选择项目",
+    "sessionNameOptional": "会话名称（可选）"
   },
   "providers": {
     "title": "模型提供方",
@@ -182,6 +188,11 @@
     "save": "保存",
     "delete": "删除",
     "back": "返回",
+    "menu": "菜单",
+    "more": "更多",
+    "theme": "主题",
+    "collapse": "收起",
+    "expand": "展开",
     "refresh": "刷新",
     "search": "搜索",
     "noData": "无数据",
@@ -265,6 +276,10 @@
     "slashHint": "按 / 查看可用命令",
     "inputPlaceholder": "输入消息或按 / 使用命令...",
     "commands": "命令",
+    "stop": "停止",
+    "attach": "上传图片/文件",
+    "removeAttachment": "移除",
+    "fileTooBig": "文件过大（>10MB）",
     "defaultSession": "Web 会话"
   },
   "cmd": {

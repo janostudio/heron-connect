@@ -130,8 +130,8 @@ func (e *Engine) startUnsolicitedReader(state *interactiveState, session *Sessio
 	go e.runUnsolicitedReader(ctx, cancel, done, state, agentSession, session, sessions, sessionKey, workspaceDir)
 }
 
-func (e *Engine) hidesSubagentEvent(event Event) bool {
-	if !event.IsSubagent || e.display.ToolMessages {
+func (e *Engine) hidesSubagentEvent(event Event, display DisplayCfg) bool {
+	if !event.IsSubagent || display.ToolMessages {
 		return false
 	}
 	switch event.Type {
@@ -208,7 +208,14 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 			default:
 			}
 
-			if e.hidesSubagentEvent(event) {
+			state.mu.Lock()
+			p := state.platform
+			replyCtx := state.replyCtx
+			platformName := state.platformName
+			state.mu.Unlock()
+			display := e.resolveDisplayForPlatform(platformName)
+
+			if e.hidesSubagentEvent(event, display) {
 				continue
 			}
 
@@ -223,11 +230,6 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 				slog.Info("unsolicited events detected, relaying to platform",
 					"session", sessionKey)
 			}
-
-			state.mu.Lock()
-			p := state.platform
-			replyCtx := state.replyCtx
-			state.mu.Unlock()
 
 			switch event.Type {
 			case EventText:
@@ -447,6 +449,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	state.mu.Lock()
 	workspaceDir := state.workspaceDir
 	replyAgent := state.agent
+	platformName := state.platformName
 	if replyAgent == nil {
 		replyAgent = e.agent
 	}
@@ -476,7 +479,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	sp := newStreamPreview(e.streamPreview, state.platform, state.replyCtx, e.ctx, workspaceRenderer)
 	cp := newCompactProgressWriter(e.ctx, state.platform, state.replyCtx, e.agent.Name(), e.i18n.CurrentLang(), workspaceRenderer)
 	state.mu.Unlock()
-	streamPreviewToolHold := sp.previewMode() == "tool_hold" && e.display.Mode == displayModeStream
+	display := e.resolveDisplayForPlatform(platformName)
+	streamPreviewToolHold := sp.previewMode() == "tool_hold" && display.Mode == displayModeStream
 
 	// Send instant confirmation reply if enabled and no streaming card is active.
 	// Streaming cards provide their own "processing" indicator, so instant reply
@@ -665,7 +669,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			}
 		}
 
-		if e.hidesSubagentEvent(event) {
+		if e.hidesSubagentEvent(event, display) {
 			continue
 		}
 
@@ -674,12 +678,12 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 		state.mu.Unlock()
 
 		// main codebase has no per-session quiet flag; pr309 referenced
-		// sessionQuiet which we drop. e.display.ThinkingMessages /
+		// sessionQuiet which we drop. display.ThinkingMessages /
 		// ToolMessages handle user-level quiet in the fallback branches.
 		richCardSupporter, hasRichCard := p.(RichCardSupporter)
 		// Card 2.0 rich-card path is opt-in via [display] mode = "rich".
 		// Default "legacy" keeps upstream behavior for all platforms.
-		if e.display.CardMode != "rich" {
+		if display.CardMode != "rich" {
 			hasRichCard = false
 		}
 
@@ -690,10 +694,10 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			}
 			if hasRichCard {
 				// When thinking messages are suppressed, skip card creation.
-				if !e.display.ThinkingMessages {
+				if !display.ThinkingMessages {
 					break
 				}
-				if thinking := strings.TrimSpace(truncateIf(event.Content, e.display.ThinkingMaxLen)); thinking != "" {
+				if thinking := strings.TrimSpace(truncateIf(event.Content, display.ThinkingMaxLen)); thinking != "" {
 					toolSteps = append(toolSteps, ToolStep{
 						Kind:    ToolStepKindThinking,
 						Name:    "Thinking",
@@ -722,8 +726,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			// When thinking messages are hidden, behavior depends on display mode:
 			//   quiet/stream: append separator to keep all text in one preview
 			//   compact:      freeze+detach to split text into separate cards
-			if !e.display.ThinkingMessages && len(textParts) > segmentStart {
-				if e.display.Mode == displayModeQuiet || e.display.Mode == displayModeStream {
+			if !display.ThinkingMessages && len(textParts) > segmentStart {
+				if display.Mode == displayModeQuiet || display.Mode == displayModeStream {
 					if sp.canPreview() && sp.appendSeparator("\n\n") {
 						textParts = append(textParts, "\n\n")
 					}
@@ -743,10 +747,10 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				}
 				silentHold = false
 			}
-			if e.display.ThinkingMessages && event.Content != "" {
+			if display.ThinkingMessages && event.Content != "" {
 				// --- StreamingCard path ---
 				if streamCard != nil && !streamCard.Failed() {
-					cardThinkingText = truncateIf(event.Content, e.display.ThinkingMaxLen)
+					cardThinkingText = truncateIf(event.Content, display.ThinkingMaxLen)
 					_ = streamCard.Update(e.ctx, buildCardContent(cardThinkingText, cardToolCalls, cardAnswerText.String()))
 					continue // skip original independent message sending
 				}
@@ -769,7 +773,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				if previewActive {
 					sp.detachPreview() // keep frozen preview visible as permanent message
 				}
-				preview := truncateIf(event.Content, e.display.ThinkingMaxLen)
+				preview := truncateIf(event.Content, display.ThinkingMaxLen)
 				thinkingMsg := fmt.Sprintf(e.i18n.T(MsgThinking), preview)
 				if !cp.AppendEvent(ProgressEntryThinking, preview, "", thinkingMsg) {
 					sendWorkspace(p, replyCtx, thinkingMsg)
@@ -779,6 +783,15 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 		case EventToolUse:
 			toolCount++
 			toolInput := event.ToolInput
+			// Sub-agent tool calls get a "↳ " prefix on the display name so
+			// users can tell child-agent activity from the main agent's. The
+			// marker goes on the name inside the message template (after the
+			// "🔧 **" prefix) so platform parsers that match on that prefix
+			// (WeCom stream assembler, Feishu) keep working.
+			displayToolName := event.ToolName
+			if event.IsSubagent {
+				displayToolName = "↳ " + event.ToolName
+			}
 			var formattedInput string
 			if toolInput == "" {
 				formattedInput = ""
@@ -797,13 +810,13 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			}
 			if hasRichCard {
 				// When tool messages are suppressed, skip card updates on tool events.
-				if !e.display.ToolMessages {
+				if !display.ToolMessages {
 					break
 				}
 				toolSteps = append(toolSteps, ToolStep{
 					Kind:    ToolStepKindTool,
 					Name:    event.ToolName,
-					Summary: truncateIf(event.ToolInput, e.display.ToolMaxLen),
+					Summary: truncateIf(event.ToolInput, display.ToolMaxLen),
 				})
 				if cardMessageID == nil {
 					card := richCardSupporter.BuildRichCard(CardStatusWorking, "", toolSteps, partialText, true, time.Since(turnStart))
@@ -824,7 +837,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				break
 			}
 			if streamPreviewToolHold {
-				if e.display.ToolMessages {
+				if display.ToolMessages {
 					// Route tool progress to ProgressAssembler side-channel instead of
 					// polluting visibleText. Tool progress is a UI side-channel, never
 					// enters the model-produced answer text.
@@ -836,8 +849,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				}
 				continue
 			}
-			if e.display.Mode == displayModeStream && e.display.ToolMessages {
-				toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, event.ToolName, formattedInput)
+		if display.Mode == displayModeStream && display.ToolMessages {
+			toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, displayToolName, formattedInput)
 				prefix := ""
 				if len(textParts) > 0 {
 					textParts = append(textParts, "\n\n")
@@ -852,8 +865,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			// When tool messages are hidden, behavior depends on display mode:
 			//   quiet/stream: append separator to keep all text in one preview
 			//   compact:      freeze+detach to split text into separate cards
-			if !e.display.ToolMessages && len(textParts) > segmentStart {
-				if e.display.Mode == displayModeQuiet || e.display.Mode == displayModeStream {
+			if !display.ToolMessages && len(textParts) > segmentStart {
+				if display.Mode == displayModeQuiet || display.Mode == displayModeStream {
 					if sp.canPreview() && sp.appendSeparator("\n\n") {
 						textParts = append(textParts, "\n\n")
 					}
@@ -873,7 +886,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				}
 				silentHold = false
 			}
-			if e.display.ToolMessages {
+			if display.ToolMessages {
 				// --- StreamingCard path ---
 				if streamCard != nil && !streamCard.Failed() {
 					cardToolCalls = append(cardToolCalls, cardToolEntry{
@@ -903,8 +916,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				if previewActive {
 					sp.detachPreview() // keep frozen preview visible as permanent message
 				}
-				toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, event.ToolName, formattedInput)
-				if !cp.AppendEvent(ProgressEntryToolUse, toolInput, event.ToolName, toolMsg) {
+			toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, displayToolName, formattedInput)
+			if !cp.AppendEvent(ProgressEntryToolUse, toolInput, event.ToolName, toolMsg) {
 					for _, chunk := range SplitMessageCodeFenceAware(toolMsg, maxPlatformMessageLen) {
 						sendWorkspace(p, replyCtx, chunk)
 					}
@@ -912,17 +925,17 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			}
 
 		case EventToolResult:
-			if e.display.ToolMessages {
+			if display.ToolMessages {
 				result := strings.TrimSpace(event.ToolResult)
 				if result == "" {
 					result = strings.TrimSpace(event.Content)
 				}
 				if result != "" {
-					result = truncateIf(result, e.display.ToolMaxLen)
+					result = truncateIf(result, display.ToolMaxLen)
 				}
 				if result != "" || event.ToolStatus != "" || event.ToolExitCode != nil || event.ToolSuccess != nil {
 					if hasRichCard {
-						toolSteps = mergeRichToolResult(toolSteps, event, result, e.display.ToolMaxLen)
+						toolSteps = mergeRichToolResult(toolSteps, event, result, display.ToolMaxLen)
 						if cardMessageID == nil {
 							card := richCardSupporter.BuildRichCard(CardStatusWorking, "", toolSteps, partialText, true, time.Since(turnStart))
 							if starter, ok := p.(PreviewStarter); ok {
@@ -941,9 +954,13 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						}
 						break
 					}
-					resultMsg := e.formatToolResultEventFallback(event.ToolName, result, event.ToolStatus, event.ToolExitCode, event.ToolSuccess)
+					resultToolName := event.ToolName
+				if event.IsSubagent {
+					resultToolName = "↳ " + event.ToolName
+				}
+				resultMsg := e.formatToolResultEventFallback(resultToolName, result, event.ToolStatus, event.ToolExitCode, event.ToolSuccess)
 					if streamPreviewToolHold {
-						if e.display.ToolMessages {
+						if display.ToolMessages {
 							// Route tool result to ProgressAssembler side-channel.
 							if assembler, ok := p.(ProgressAssembler); ok {
 								if handle := sp.progressHandle(e.i18n.T(MsgStarting)); handle != nil {
@@ -953,7 +970,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						}
 						continue
 					}
-					if e.display.Mode == displayModeStream {
+					if display.Mode == displayModeStream {
 						prefix := ""
 						if len(textParts) > 0 {
 							textParts = append(textParts, "\n\n")
@@ -1106,7 +1123,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			if isAskQuestion {
 				e.sendAskQuestionPrompt(p, replyCtx, event.Questions, 0)
 			} else {
-				permLimit := e.display.ToolMaxLen
+				permLimit := display.ToolMaxLen
 				if permLimit > 0 {
 					permLimit = permLimit * 8 / 5
 				}
@@ -1135,17 +1152,23 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			// Use state.agentSession.CurrentSessionID() instead of event.SessionID.
 			// event.SessionID may be empty in some cases, causing the agent_session_id
 			// to not be persisted to disk, breaking session resume on next startup.
-			if state != nil && state.agentSession != nil {
-				if currentID := state.agentSession.CurrentSessionID(); currentID != "" {
-					if session.CompareAndSetAgentSessionID(currentID, e.agent.Name()) {
-						pendingName := session.GetName()
-						if pendingName != "" && pendingName != "session" && pendingName != "default" {
-							sessions.SetSessionName(currentID, pendingName)
-						}
+		if state != nil && state.agentSession != nil {
+			if currentID := state.agentSession.CurrentSessionID(); currentID != "" {
+				if session.CompareAndSetAgentSessionID(currentID, e.agent.Name()) {
+					pendingName := session.GetName()
+					if !isPlaceholderSessionName(pendingName) && !session.GetNameAuto() {
+						sessions.SetSessionName(currentID, pendingName)
 					}
-					sessions.Save()
 				}
+				sessions.Save()
 			}
+		}
+
+		// Auto-title the session after its first completed turn: prefer the
+		// agent's own session summary, fall back to the first user message.
+		// Async because ListSessions may do real I/O (e.g. claudecode scans
+		// its projects dir) and must not delay reply delivery below.
+		go e.maybeAutoTitleSession(e.agent, sessions, session)
 
 			// Mark clean exit so unsolicited reader preserves buffered events.
 			state.mu.Lock()
@@ -1237,7 +1260,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			}
 			fullResponse = cleanResponse
 			deliverResponse := fullResponse
-			if e.display.Mode == displayModeStream && !isSilent {
+			if display.Mode == displayModeStream && !isSilent {
 				deliverResponse = mergeStreamDisplayContent(strings.Join(textParts, ""), event.Content, fullResponse)
 			}
 
@@ -1336,7 +1359,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						return
 					}
 				}
-			} else if toolCount > 0 && segmentStart > 0 && e.display.Mode != displayModeStream {
+			} else if toolCount > 0 && segmentStart > 0 && display.Mode != displayModeStream {
 				// When tool calls happened and prior text was already surfaced in segments,
 				// only send the unsent remainder. When tool progress is hidden, tool events don't surface
 				// side-channel messages and segmentStart stays 0, so keep normal finalize flow.
@@ -1413,17 +1436,19 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			}
 
 			// Check for queued messages — if present, continue the event loop
-			// for the next turn instead of returning.
+			// for the next turn instead of returning. In merge mode the whole
+			// queue becomes one turn (single merged prompt and reply); in
+			// serial mode one message per turn (historical behavior).
 			state.mu.Lock()
-			if len(state.pendingMessages) > 0 {
-				queued := state.pendingMessages[0]
-				state.pendingMessages = state.pendingMessages[1:]
+			if batch := takeQueuedBatchLocked(state, e.queuedMessagesMerge); len(batch) > 0 {
+				merged, queuedPrompt := e.mergeQueuedBatch(batch)
 				remainingQueue := len(state.pendingMessages)
-				state.platform = queued.platform
-				state.replyCtx = queued.replyCtx
-				state.currentMessageID = queued.messageID
-				state.lastTurnMessageID = queued.messageID
-				state.fromVoice = queued.fromVoice
+				state.platform = merged.platform
+				state.platformName = merged.msgPlatform
+				state.replyCtx = merged.replyCtx
+				state.currentMessageID = merged.messageID
+				state.lastTurnMessageID = merged.messageID
+				state.fromVoice = merged.fromVoice
 				state.mu.Unlock()
 
 				// Stop the previous turn's typing indicator
@@ -1432,8 +1457,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					stopTyping = nil
 				}
 				// Start a new typing indicator for the queued message's context
-				if ti, ok := queued.platform.(TypingIndicator); ok {
-					stopTyping = ti.StartTyping(e.ctx, queued.replyCtx)
+				if ti, ok := merged.platform.(TypingIndicator); ok {
+					stopTyping = ti.StartTyping(e.ctx, merged.replyCtx)
 				}
 				// Agent continues working — don't add done reaction for this turn.
 				doneReaction = nil
@@ -1449,38 +1474,37 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					}
 				}
 
-				queuedPrompt := e.buildSenderPrompt(queued.content, queued.userID, queued.userName, queued.msgPlatform, queued.msgSessionKey, queued.channelKey)
-
 				nextSend := make(chan error, 1)
 				go func() {
-					nextSend <- state.agentSession.Send(queuedPrompt, queued.images, queued.files)
+					nextSend <- state.agentSession.Send(queuedPrompt, merged.images, merged.files)
 				}()
 				pendingSend = nextSend
 
 				// Detect language now (deferred from queue time to avoid
 				// flipping locale while the previous turn is still running).
-				e.i18n.DetectAndSet(queued.content)
+				e.i18n.DetectAndSet(merged.content)
 
 				// Reset per-turn state for the next turn
-				msgID = queued.messageID
+				msgID = merged.messageID
 				textParts = nil
 				segmentStart = 0
 				toolCount = 0
 				turnStart = time.Now()
 				firstEventLogged = false
 				waitStart = time.Now()
-				// Reassign the local replyCtx parameter to the queued message's
-				// trigger context. state.replyCtx was updated above, but the
-				// function-scope replyCtx is what gets passed to p.Send / p.Reply
-				// further down — and platforms derive the parent message_id from
-				// it for the reply quote. Without this reassignment, msg2's
-				// reply would quote msg1's bubble.
-				replyCtx = queued.replyCtx
+				// Reassign the local replyCtx parameter to the queued messages'
+				// trigger context (the last message's). state.replyCtx was
+				// updated above, but the function-scope replyCtx is what gets
+				// passed to p.Send / p.Reply further down — and platforms
+				// derive the parent message_id from it for the reply quote.
+				// Without this reassignment, the merged turn's reply would
+				// quote an older bubble.
+				replyCtx = merged.replyCtx
 				queuedRenderer := func(content string) string {
-					return e.renderOutgoingContentForWorkspace(queued.platform, content, workspaceDir)
+					return e.renderOutgoingContentForWorkspace(merged.platform, content, workspaceDir)
 				}
-				sp = newStreamPreview(e.streamPreview, queued.platform, queued.replyCtx, e.ctx, queuedRenderer)
-				cp = newCompactProgressWriter(e.ctx, queued.platform, queued.replyCtx, e.agent.Name(), e.i18n.CurrentLang(), queuedRenderer)
+				sp = newStreamPreview(e.streamPreview, merged.platform, merged.replyCtx, e.ctx, queuedRenderer)
+				cp = newCompactProgressWriter(e.ctx, merged.platform, merged.replyCtx, e.agent.Name(), e.i18n.CurrentLang(), queuedRenderer)
 
 				// Reset streaming card state for the next turn
 				streamCard = nil
@@ -1489,8 +1513,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				cardAnswerText.Reset()
 
 				// Try to create a new streaming card for the queued turn
-				if scp, ok := queued.platform.(StreamingCardPlatform); ok {
-					if sc, err := scp.CreateStreamingCard(e.ctx, queued.replyCtx); err != nil {
+				if scp, ok := merged.platform.(StreamingCardPlatform); ok {
+					if sc, err := scp.CreateStreamingCard(e.ctx, merged.replyCtx); err != nil {
 						slog.Warn("streaming card creation failed for queued turn", "error", err)
 					} else {
 						streamCard = sc
@@ -1503,10 +1527,15 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					if replyContent == "" {
 						replyContent = e.i18n.T(MsgStarting)
 					}
-					e.send(queued.platform, queued.replyCtx, replyContent)
+					e.send(merged.platform, merged.replyCtx, replyContent)
 				}
 
-				session.AddHistory("user", queued.content)
+				// Each queued message keeps its own history entry so the Web
+				// admin shows the conversation exactly as the user sent it,
+				// even though the agent received them as one merged prompt.
+				for _, q := range batch {
+					session.AddHistory("user", q.content)
+				}
 
 				if idleTimer != nil {
 					if !idleTimer.Stop() {
@@ -1518,8 +1547,9 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					idleTimer.Reset(e.eventIdleTimeout)
 				}
 
-				slog.Info("processing queued message",
+				slog.Info("processing queued messages",
 					"session", sessionKey,
+					"batch_size", len(batch),
 					"remaining_queue", remainingQueue,
 				)
 				continue
@@ -1572,6 +1602,20 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					Error:      event.Error.Error(),
 				})
 				e.send(p, replyCtx, e.sanitizeAgentError(errMsg))
+			}
+			// An unrecoverable agent session (e.g. a process-per-turn CLI that
+			// exited silently because --resume targeted a session with no
+			// backing store, such as a mistakenly-persisted subagent child id)
+			// can never succeed by retrying the same binding. Detach it — the
+			// old id is preserved in past_agent_session_ids for traceability —
+			// so the next message starts a fresh agent session instead of
+			// being stuck in a permanent zero-output failure loop.
+			if v, _ := event.Metadata[EventMetadataSessionUnrecoverable].(bool); v {
+				slog.Warn("agent session unrecoverable, detaching for fresh restart",
+					"session_key", sessionKey,
+					"agent_session", session.GetAgentSessionID())
+				session.DetachAgentSession()
+				sessions.Save()
 			}
 			// Only drop queued messages if the agent session is dead.
 			// Some agents (e.g. Codex) emit EventError for per-turn failures
@@ -1656,6 +1700,63 @@ channelClosed:
 	}
 }
 
+// autoTitleListTimeout bounds the ListSessions call used to fetch the agent's
+// own session summary when auto-titling a session.
+const autoTitleListTimeout = 5 * time.Second
+
+// maybeAutoTitleSession gives a placeholder-named session a descriptive title
+// after its first completed turn. It prefers the agent backend's own summary
+// for the current agent session (ACP session Title, claudecode/codex summary)
+// and falls back to a snippet of the first user message. User-chosen names
+// (non-placeholder) are never overwritten. Runs in its own goroutine from the
+// turn-result handler because ListSessions may perform slow I/O.
+func (e *Engine) maybeAutoTitleSession(agent Agent, sessions *SessionManager, session *Session) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("panic in maybeAutoTitleSession", "panic", r)
+		}
+	}()
+	if agent == nil || sessions == nil || session == nil {
+		return
+	}
+	if !e.autoSessionTitle {
+		return
+	}
+	if !isPlaceholderSessionName(session.GetName()) {
+		return
+	}
+
+	title := ""
+	if agentID := session.GetAgentSessionID(); agentID != "" {
+		ctx, cancel := context.WithTimeout(e.ctx, autoTitleListTimeout)
+		if infos, err := agent.ListSessions(ctx); err == nil {
+			for _, info := range infos {
+				if info.ID == agentID {
+					if s := strings.TrimSpace(info.Summary); s != "" {
+						title = s
+					}
+					break
+				}
+			}
+		}
+		cancel()
+	}
+	if title == "" {
+		title = firstUserMessageSnippet(session.GetHistory(0), 30)
+	}
+	if title == "" {
+		return
+	}
+	// Re-check: the user may have named the session while we were listing.
+	if !isPlaceholderSessionName(session.GetName()) {
+		return
+	}
+	session.SetName(title)
+	session.SetNameAuto(true)
+	sessions.Save()
+	slog.Info("session auto-titled", "session_id", session.ID, "agent_session_id", session.GetAgentSessionID(), "title", title)
+}
+
 func mergeRichToolResult(steps []ToolStep, event Event, result string, maxLen int) []ToolStep {
 	toolName := strings.TrimSpace(event.ToolName)
 	if toolName == "" {
@@ -1719,6 +1820,8 @@ func (e *Engine) notifyDroppedQueuedMessages(state *interactiveState, reason err
 // drainPendingMessages processes all queued messages in the state's pendingMessages
 // queue. It atomically unlocks the session when the queue is empty (while holding
 // state.mu) to close the race window between "queue empty" and "session unlocked".
+// In merge mode each drain iteration submits the whole queue as one merged turn;
+// in serial mode one message per turn (historical behavior).
 // Returns true if the session was unlocked by this call.
 func (e *Engine) drainPendingMessages(state *interactiveState, session *Session, sessions *SessionManager, sessionKey string) bool {
 	for {
@@ -1728,43 +1831,49 @@ func (e *Engine) drainPendingMessages(state *interactiveState, session *Session,
 			state.mu.Unlock()
 			return true
 		}
-		queued := state.pendingMessages[0]
-		state.pendingMessages = state.pendingMessages[1:]
-		state.platform = queued.platform
-		state.replyCtx = queued.replyCtx
-		state.currentMessageID = queued.messageID
-		state.lastTurnMessageID = queued.messageID
-		state.fromVoice = queued.fromVoice
+		batch := takeQueuedBatchLocked(state, e.queuedMessagesMerge)
+		merged, prompt := e.mergeQueuedBatch(batch)
+		state.platform = merged.platform
+		state.platformName = merged.msgPlatform
+		state.replyCtx = merged.replyCtx
+		state.currentMessageID = merged.messageID
+		state.lastTurnMessageID = merged.messageID
+		state.fromVoice = merged.fromVoice
 		state.mu.Unlock()
 
-		e.i18n.DetectAndSet(queued.content)
-		prompt := e.buildSenderPrompt(queued.content, queued.userID, queued.userName, queued.msgPlatform, queued.msgSessionKey, queued.channelKey)
+		e.i18n.DetectAndSet(merged.content)
 
 		if state.agentSession == nil || !state.agentSession.Alive() {
-			e.send(queued.platform, queued.replyCtx, fmt.Sprintf(e.i18n.T(MsgError), "agent session ended"))
+			for _, q := range batch {
+				e.send(q.platform, q.replyCtx, fmt.Sprintf(e.i18n.T(MsgError), "agent session ended"))
+			}
 			e.notifyDroppedQueuedMessages(state, fmt.Errorf("agent session ended"))
 			return false
 		}
 
 		drained := drainEvents(state.agentSession.Events())
 		if drained > 0 {
-			slog.Warn("dropped buffered events before queued turn", "previous_message_id", state.lastTurnMessageID, "count", drained, "new_message_id", queued.messageID)
+			slog.Warn("dropped buffered events before queued turn", "previous_message_id", state.lastTurnMessageID, "count", drained, "new_message_id", merged.messageID)
 		}
 
-		session.AddHistory("user", queued.content)
+		// Each queued message keeps its own history entry (Web admin shows
+		// the conversation as sent); the agent receives one merged prompt.
+		for _, q := range batch {
+			session.AddHistory("user", q.content)
+		}
 
 		sendDone := make(chan error, 1)
 		go func() {
-			sendDone <- state.agentSession.Send(prompt, queued.images, queued.files)
+			sendDone <- state.agentSession.Send(prompt, merged.images, merged.files)
 		}()
 
 		var stopTyping func()
-		if ti, ok := queued.platform.(TypingIndicator); ok {
-			stopTyping = ti.StartTyping(e.ctx, queued.replyCtx)
+		if ti, ok := merged.platform.(TypingIndicator); ok {
+			stopTyping = ti.StartTyping(e.ctx, merged.replyCtx)
 		}
 
-		slog.Info("processing queued message", "session", sessionKey)
-		e.processInteractiveEvents(state, session, sessions, sessionKey, queued.messageID, time.Now(), stopTyping, sendDone, queued.replyCtx)
+		slog.Info("processing queued messages", "session", sessionKey, "batch_size", len(batch))
+		e.processInteractiveEvents(state, session, sessions, sessionKey, merged.messageID, time.Now(), stopTyping, sendDone, merged.replyCtx)
 	}
 }
 

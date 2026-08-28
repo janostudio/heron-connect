@@ -115,6 +115,46 @@ level = "info" # debug, info, warn, error
 # thinking_messages = false  # Override only this field; others inherit from global
 # tool_messages = false
 
+# Per-platform override: within a project, each [[projects.platforms]] entry
+# may also carry its own [projects.platforms.display] block. This is the
+# highest-precedence tier (platform > project > global > default), letting
+# a single project show different thinking/tool verbosity per platform —
+# e.g. full detail in the Web admin UI while a Feishu bot for the same
+# project stays quiet. Use a virtual `type = "web"` entry (starts no real
+# connection) to target the Web admin UI specifically.
+# 平台级覆盖：项目内每个 [[projects.platforms]] 条目也可以携带自己的
+# [projects.platforms.display] 块，优先级最高（平台 > 项目 > 全局 > 默认值）。
+# 可以让同一个项目按平台展示不同的详细程度——例如 Web 管理后台显示完整思考/
+# 工具过程，而同项目的飞书机器人保持安静。用虚拟的 `type = "web"` 条目
+# （不会建立真实连接）专门定位 Web 管理后台。
+#
+# [[projects]]
+# name = "auto-bugfix"
+# [projects.display]
+# mode = "quiet"              # default for platforms without their own override
+#
+# [[projects.platforms]]
+# type = "wecom"
+# ...
+#
+# [[projects.platforms]]
+# type = "web"                # virtual entry, no real connection started
+# [projects.platforms.display]
+# mode = "full"                # Web admin UI sees full thinking/tool detail
+#
+# Per-platform idle-session rotation override: set reset_on_idle_mins on a
+# [[projects.platforms]] entry to override the project-level value for that
+# platform only. A 0 disables rotation for that platform (e.g. keep the Web
+# admin UI session alive indefinitely) while real IM platforms keep the
+# project value. Works on both virtual `type = "web"` and real platforms.
+# 平台级空闲会话切换覆盖：在某个 [[projects.platforms]] 条目上设置
+# reset_on_idle_mins 可仅覆盖该平台的开关，0 表示该平台禁用切换（例如 Web
+# 管理后台会话永久保留），而真实 IM 平台仍沿用项目级配置。
+#
+# [[projects.platforms]]
+# type = "web"
+# reset_on_idle_mins = 0       # keep Web admin UI session alive; 0 = disable rotation
+
 # Agent idle timeout: max minutes between consecutive agent events before
 # considering the session stuck. Set to 0 to disable the timeout entirely.
 # Agent 空闲超时：两次 agent 事件之间的最大等待分钟数，超时则认为会话卡住。设为 0 禁用。
@@ -663,6 +703,25 @@ name = "my-backend"
 # filter_external_sessions = false
 # filter_external_sessions：为 true 时，/list /switch /delete 仅显示由 heron-connect 创建的会话，
 # 隐藏在相同 work_dir 下通过直接 CLI 创建的会话。默认 false = 显示 agent 的全部会话。
+#
+# auto_session_title: when true, sessions that still carry a placeholder name get an
+# auto-generated title after their first completed turn — preferring the agent backend's
+# own session summary (ACP session Title, claudecode/codex summary), falling back to a
+# snippet of the first user message. User-chosen names (/new <name>) are never overwritten.
+# Default true.
+# auto_session_title = true
+# auto_session_title：为 true 时，仍为占位名的会话在首轮对话完成后自动生成标题——
+# 优先使用 agent 后端自己的会话摘要（ACP 会话 Title、claudecode/codex 的 summary），
+# 兜底使用首条用户消息截断。用户手动命名的会话（/new <名称>）永远不会被覆盖。默认 true。
+#
+# queued_messages: how messages sent while the agent is busy are submitted after the
+# current turn completes. "merge" (default) combines the whole queue into one prompt and
+# one agent turn — IM-friendly when users split a request across several messages.
+# "serial" submits one message per turn with a reply each (historical behavior).
+# queued_messages = "merge"
+# queued_messages：agent 执行期间用户发来的排队消息在当前轮完成后如何提交。
+# "merge"（默认）把整个队列合并成一条 prompt、一轮对话、一次回复——适合 IM 用户
+# 把一个请求拆成多条消息发送的场景；"serial" 逐条提交、逐条回复（历史行为）。
 #
 # admin_from controls who can run privileged commands (/dir, /shell, /restart, /upgrade, /commands addexec).
 # admin_from 控制谁可以执行特权命令（/dir, /shell, /restart, /upgrade, /commands addexec）。
@@ -1665,6 +1724,30 @@ app_secret = "your-feishu-app-secret"
 # args = ["--acp", "--stdio"]
 # display_name = "Copilot ACP"
 # # command = "/absolute/path/to/copilot"   # if not on PATH (see COPILOT_CLI_PATH in GitHub docs)
+
+# =============================================================================
+# Project: Heron AI CLI JSON-RPC
+# =============================================================================
+# Runs a Heron AI Flow as a CLI child process. This is NOT ACP:
+# Heron speaks the small Heron-specific JSON-RPC 2.0 `turn` method over
+# newline-delimited JSON on stdin/stdout.
+#
+# Heron must be started with --json-rpc. The adapter adds --json-rpc when it
+# is absent, but keeping it explicit in args makes the configuration clear.
+#
+# [[projects]]
+# name = "my-heron-project"
+#
+# [projects.agent]
+# type = "heron"
+#
+# [projects.agent.options]
+# work_dir = "/path/to/heron-project"
+# command = "/absolute/path/to/heron"
+# args = ["--json-rpc", "--flow", ".agents/flows/default.yml"]
+# # Optional environment overrides:
+# # [projects.agent.options.env]
+# # OPENAI_API_KEY = "..."
 
 # [[projects.platforms]]
 # type = "telegram"

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
@@ -33,7 +34,7 @@ type BridgeServer struct {
 	server      *http.Server
 
 	mu       sync.RWMutex
-	adapters map[string]*bridgeAdapter // platform name → adapter
+	adapters map[string][]*bridgeAdapter // platform name → all connected web clients (multicast)
 
 	enginesMu sync.RWMutex
 	engines   map[string]*bridgeEngineRef // project name → engine ref
@@ -46,6 +47,7 @@ type bridgeEngineRef struct {
 
 type bridgeAdapter struct {
 	platform     string
+	clientID     string // unique per web client (tab); same ID on reconnect replaces this adapter
 	capabilities map[string]bool
 	metadata     map[string]any
 	conn         *websocket.Conn
@@ -59,11 +61,15 @@ type bridgeAdapter struct {
 // bridgeReplyCtx carries the information needed to route replies back to the adapter.
 type bridgeReplyCtx struct {
 	Platform   string `json:"platform"`
+	ClientID   string `json:"client_id"` // originating web client; used to route replies/previews back unicast
 	SessionKey string `json:"session_key"`
+	SessionID  string `json:"session_id,omitempty"` // explicit heron session id the reply belongs to
 	ReplyCtx   string `json:"reply_ctx"`
 
-	progressStyle               string `json:"-"`
-	supportsProgressCardPayload bool   `json:"-"`
+	progressStyle               string         `json:"-"`
+	supportsProgressCardPayload bool           `json:"-"`
+	progressMaxEntries          int            `json:"-"` // -1 = no hint; 0 = unlimited; >0 = cap
+	src                        *bridgeAdapter `json:"-"` // non-serialized pointer to originating adapter
 }
 
 func (rc *bridgeReplyCtx) ProgressStyleHint() string {
@@ -78,6 +84,16 @@ func (rc *bridgeReplyCtx) SupportsProgressCardPayloadHint() bool {
 		return false
 	}
 	return rc.supportsProgressCardPayload
+}
+
+// ProgressMaxEntriesHint lets a bridge adapter override the coalesced progress
+// entry cap (e.g. the Web admin UI declares progress_max_entries in its
+// register metadata). -1 = no override.
+func (rc *bridgeReplyCtx) ProgressMaxEntriesHint() int {
+	if rc == nil {
+		return -1
+	}
+	return rc.progressMaxEntries
 }
 
 const bridgeReconstructReplyCtxKind = "bridge_reconstruct"
@@ -101,6 +117,7 @@ type bridgeMsg struct {
 type bridgeRegister struct {
 	Type         string         `json:"type"`
 	Platform     string         `json:"platform"`
+	ClientID     string         `json:"client_id,omitempty"`
 	Capabilities []string       `json:"capabilities"`
 	Project      string         `json:"project,omitempty"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
@@ -110,6 +127,7 @@ type bridgeMessage struct {
 	Type       string            `json:"type"`
 	MsgID      string            `json:"msg_id"`
 	SessionKey string            `json:"session_key"`
+	SessionID  string            `json:"session_id,omitempty"` // explicit heron session id ("s89") to route to
 	UserID     string            `json:"user_id"`
 	UserName   string            `json:"user_name,omitempty"`
 	Content    string            `json:"content"`
@@ -190,7 +208,7 @@ func newBridgeServer(port int, token, path string, corsOrigins []string, insecur
 		path:        path,
 		corsOrigins: corsOrigins,
 		insecure:    insecure,
-		adapters:    make(map[string]*bridgeAdapter),
+		adapters:    make(map[string][]*bridgeAdapter),
 		engines:     make(map[string]*bridgeEngineRef),
 	}
 }
@@ -221,27 +239,30 @@ func (bs *BridgeServer) ListAdapterInfo() []map[string]any {
 	defer bs.mu.RUnlock()
 
 	adapters := make([]map[string]any, 0, len(bs.adapters))
-	for name, a := range bs.adapters {
-		caps := make([]string, 0, len(a.capabilities))
-		for c := range a.capabilities {
-			caps = append(caps, c)
-		}
-
-		project := ""
-		bs.enginesMu.RLock()
-		for pName, ref := range bs.engines {
-			if ref.platform != nil && ref.platform.Name() == name {
-				project = pName
-				break
+	for name, clients := range bs.adapters {
+		for _, a := range clients {
+			caps := make([]string, 0, len(a.capabilities))
+			for c := range a.capabilities {
+				caps = append(caps, c)
 			}
-		}
-		bs.enginesMu.RUnlock()
 
-		adapters = append(adapters, map[string]any{
-			"platform":     name,
-			"project":      project,
-			"capabilities": caps,
-		})
+			project := ""
+			bs.enginesMu.RLock()
+			for pName, ref := range bs.engines {
+				if ref.platform != nil && ref.platform.Name() == name {
+					project = pName
+					break
+				}
+			}
+			bs.enginesMu.RUnlock()
+
+			adapters = append(adapters, map[string]any{
+				"platform":     name,
+				"client_id":    a.clientID,
+				"project":      project,
+				"capabilities": caps,
+			})
+		}
 	}
 	return adapters
 }
@@ -309,10 +330,12 @@ func (bs *BridgeServer) setCORS(w http.ResponseWriter, r *http.Request) {
 // Stop shuts down the server and closes all adapter connections.
 func (bs *BridgeServer) Stop() {
 	bs.mu.Lock()
-	for _, a := range bs.adapters {
-		a.conn.Close()
+	for _, clients := range bs.adapters {
+		for _, a := range clients {
+			a.conn.Close()
+		}
 	}
-	bs.adapters = make(map[string]*bridgeAdapter)
+	bs.adapters = make(map[string][]*bridgeAdapter)
 	bs.mu.Unlock()
 
 	if bs.server != nil {
@@ -381,6 +404,7 @@ func (bp *BridgePlatform) Reply(ctx context.Context, replyCtx any, content strin
 	return bp.server.sendToAdapter(rc.Platform, map[string]any{
 		"type":        "reply",
 		"session_key": rc.SessionKey,
+		"session_id":  rc.SessionID,
 		"reply_ctx":   rc.ReplyCtx,
 		"content":     content,
 		"format":      "text",
@@ -396,7 +420,7 @@ func (bp *BridgePlatform) ReconstructReplyCtx(sessionKey string) (any, error) {
 	if platform == "" {
 		return nil, fmt.Errorf("bridge: cannot determine adapter from session key %q", sessionKey)
 	}
-	a := bp.server.getAdapter(platform)
+	a := bp.server.getFirstAdapter(platform)
 	if a == nil {
 		return nil, fmt.Errorf("bridge: adapter %q not connected", platform)
 	}
@@ -407,20 +431,24 @@ func (bp *BridgePlatform) ReconstructReplyCtx(sessionKey string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newBridgeReplyCtx(a, sessionKey, replyCtx), nil
+	return newBridgeReplyCtx(a, sessionKey, "", replyCtx), nil
 }
 
-func newBridgeReplyCtx(a *bridgeAdapter, sessionKey, replyCtx string) *bridgeReplyCtx {
+func newBridgeReplyCtx(a *bridgeAdapter, sessionKey, sessionID, replyCtx string) *bridgeReplyCtx {
 	rc := &bridgeReplyCtx{
 		SessionKey: sessionKey,
+		SessionID:  sessionID,
 		ReplyCtx:   replyCtx,
 	}
 	if a == nil {
 		return rc
 	}
 	rc.Platform = a.platform
+	rc.ClientID = a.clientID
+	rc.src = a
 	rc.progressStyle = bridgeProgressStyleForAdapter(a)
 	rc.supportsProgressCardPayload = bridgeSupportsProgressCardPayloadForAdapter(a)
+	rc.progressMaxEntries = bridgeProgressMaxEntriesForAdapter(a)
 	return rc
 }
 
@@ -449,6 +477,44 @@ func bridgeSupportsProgressCardPayloadForAdapter(a *bridgeAdapter) bool {
 	}
 	adapterName, _ := bridgeMetadataString(a.metadata, "adapter")
 	return adapterName == "bot-gateway" && a.capabilities["preview"] && a.capabilities["update_message"]
+}
+
+// bridgeProgressMaxEntriesForAdapter reads the optional "progress_max_entries"
+// register metadata (JSON number). Missing/invalid → -1 (no override);
+// 0 → unlimited entries; >0 → cap at that many entries. The Web admin UI uses
+// this to lift the default 10-entry progress cap, which only exists to bound
+// message size on IM platforms — bridge/Web streams over WebSocket and has no
+// such limit.
+func bridgeProgressMaxEntriesForAdapter(a *bridgeAdapter) int {
+	if a == nil {
+		return -1
+	}
+	return bridgeMetadataInt(a.metadata, "progress_max_entries")
+}
+
+func bridgeMetadataInt(metadata map[string]any, key string) int {
+	if metadata == nil {
+		return -1
+	}
+	raw, ok := metadata[key]
+	if !ok {
+		return -1
+	}
+	// JSON decodes numbers into float64; also accept int for Go-side callers.
+	switch v := raw.(type) {
+	case float64:
+		if v < 0 || v != float64(int(v)) {
+			return -1
+		}
+		return int(v)
+	case int:
+		if v < 0 {
+			return -1
+		}
+		return v
+	default:
+		return -1
+	}
 }
 
 func bridgeMetadataString(metadata map[string]any, key string) (string, bool) {
@@ -517,13 +583,14 @@ func (bp *BridgePlatform) SendCard(ctx context.Context, replyCtx any, card *core
 	if !ok {
 		return fmt.Errorf("bridge: invalid reply context")
 	}
-	a := bp.server.getAdapter(rc.Platform)
+	a := bp.server.getAdapterForClient(rc.Platform, rc.ClientID)
 	if a == nil || !a.capabilities["card"] {
 		return bp.Reply(ctx, replyCtx, card.RenderText())
 	}
 	return bp.server.sendToAdapter(rc.Platform, map[string]any{
 		"type":        "card",
 		"session_key": rc.SessionKey,
+		"session_id":  rc.SessionID,
 		"reply_ctx":   rc.ReplyCtx,
 		"card":        serializeCard(card),
 	})
@@ -538,13 +605,14 @@ func (bp *BridgePlatform) SendWithButtons(ctx context.Context, replyCtx any, con
 	if !ok {
 		return fmt.Errorf("bridge: invalid reply context")
 	}
-	a := bp.server.getAdapter(rc.Platform)
+	a := bp.server.getAdapterForClient(rc.Platform, rc.ClientID)
 	if a == nil || !a.capabilities["buttons"] {
 		return bp.Reply(ctx, replyCtx, content)
 	}
 	return bp.server.sendToAdapter(rc.Platform, map[string]any{
 		"type":        "buttons",
 		"session_key": rc.SessionKey,
+		"session_id":  rc.SessionID,
 		"reply_ctx":   rc.ReplyCtx,
 		"content":     content,
 		"buttons":     buttons,
@@ -556,7 +624,7 @@ func (bp *BridgePlatform) UpdateMessage(ctx context.Context, replyCtx any, conte
 	if !ok {
 		return fmt.Errorf("bridge: invalid reply context")
 	}
-	a := bp.server.getAdapter(rc.Platform)
+	a := bp.server.getAdapterForClient(rc.Platform, rc.ClientID)
 	if a == nil || !a.capabilities["update_message"] {
 		return core.ErrNotSupported
 	}
@@ -573,7 +641,7 @@ func (bp *BridgePlatform) SendPreviewStart(ctx context.Context, replyCtx any, co
 	if !ok {
 		return nil, fmt.Errorf("bridge: invalid reply context")
 	}
-	a := bp.server.getAdapter(rc.Platform)
+	a := bp.server.getAdapterForClient(rc.Platform, rc.ClientID)
 	if a == nil || !a.capabilities["preview"] {
 		return nil, core.ErrNotSupported
 	}
@@ -585,10 +653,11 @@ func (bp *BridgePlatform) SendPreviewStart(ctx context.Context, replyCtx any, co
 	a.previewRequests[refID] = ch
 	a.previewMu.Unlock()
 
-	if err := bp.server.sendToAdapter(rc.Platform, map[string]any{
+	if err := bp.server.sendToClient(rc.Platform, a.clientID, map[string]any{
 		"type":        "preview_start",
 		"ref_id":      refID,
 		"session_key": rc.SessionKey,
+		"session_id":  rc.SessionID,
 		"reply_ctx":   rc.ReplyCtx,
 		"content":     content,
 	}); err != nil {
@@ -600,7 +669,7 @@ func (bp *BridgePlatform) SendPreviewStart(ctx context.Context, replyCtx any, co
 
 	select {
 	case handle := <-ch:
-		return newBridgeReplyCtx(a, rc.SessionKey, handle), nil
+		return newBridgeReplyCtx(a, rc.SessionKey, rc.SessionID, handle), nil
 	case <-time.After(10 * time.Second):
 		a.previewMu.Lock()
 		delete(a.previewRequests, refID)
@@ -619,7 +688,7 @@ func (bp *BridgePlatform) DeletePreviewMessage(ctx context.Context, previewHandl
 	if !ok {
 		return fmt.Errorf("bridge: invalid preview handle")
 	}
-	a := bp.server.getAdapter(rc.Platform)
+	a := bp.server.getAdapterForClient(rc.Platform, rc.ClientID)
 	if a == nil || !a.capabilities["delete_message"] {
 		return core.ErrNotSupported
 	}
@@ -635,7 +704,7 @@ func (bp *BridgePlatform) StartTyping(ctx context.Context, replyCtx any) (stop f
 	if !ok {
 		return func() {}
 	}
-	a := bp.server.getAdapter(rc.Platform)
+	a := bp.server.getAdapterForClient(rc.Platform, rc.ClientID)
 	if a == nil || !a.capabilities["typing"] {
 		return func() {}
 	}
@@ -658,7 +727,7 @@ func (bp *BridgePlatform) SendAudio(ctx context.Context, replyCtx any, audio []b
 	if !ok {
 		return fmt.Errorf("bridge: invalid reply context")
 	}
-	a := bp.server.getAdapter(rc.Platform)
+	a := bp.server.getAdapterForClient(rc.Platform, rc.ClientID)
 	if a == nil || !a.capabilities["audio"] {
 		return core.ErrNotSupported
 	}
@@ -676,7 +745,7 @@ func (bp *BridgePlatform) SendImage(ctx context.Context, replyCtx any, img core.
 	if !ok {
 		return fmt.Errorf("bridge: invalid reply context")
 	}
-	a := bp.server.getAdapter(rc.Platform)
+	a := bp.server.getAdapterForClient(rc.Platform, rc.ClientID)
 	if a == nil || !a.capabilities["image"] {
 		return core.ErrNotSupported
 	}
@@ -695,7 +764,7 @@ func (bp *BridgePlatform) SendFile(ctx context.Context, replyCtx any, file core.
 	if !ok {
 		return fmt.Errorf("bridge: invalid reply context")
 	}
-	a := bp.server.getAdapter(rc.Platform)
+	a := bp.server.getAdapterForClient(rc.Platform, rc.ClientID)
 	if a == nil || !a.capabilities["file"] {
 		return core.ErrNotSupported
 	}
@@ -819,8 +888,14 @@ func (bs *BridgeServer) handleConnection(conn *websocket.Conn) {
 	}
 	caps["text"] = true
 
+	clientID := reg.ClientID
+	if clientID == "" {
+		clientID = fmt.Sprintf("web-%d-%d", time.Now().UnixNano(), rand.Int63())
+	}
+
 	adapter := &bridgeAdapter{
 		platform:        reg.Platform,
+		clientID:        clientID,
 		capabilities:    caps,
 		metadata:        reg.Metadata,
 		conn:            conn,
@@ -829,11 +904,23 @@ func (bs *BridgeServer) handleConnection(conn *websocket.Conn) {
 	}
 
 	bs.mu.Lock()
-	if old, exists := bs.adapters[reg.Platform]; exists {
-		old.conn.Close()
-		slog.Info("bridge: replaced existing adapter", "platform", reg.Platform)
+	clients := bs.adapters[reg.Platform]
+	replaced := false
+	for i, old := range clients {
+		if old.clientID == clientID {
+			// Same client reconnected: drop the stale connection, keep one entry.
+			old.conn.Close()
+			clients[i] = adapter
+			replaced = true
+			slog.Info("bridge: replaced existing adapter (reconnect)", "platform", reg.Platform, "client_id", clientID)
+			break
+		}
 	}
-	bs.adapters[reg.Platform] = adapter
+	if !replaced {
+		clients = append(clients, adapter)
+		bs.adapters[reg.Platform] = clients
+		slog.Info("bridge: adapter registered", "platform", reg.Platform, "client_id", clientID, "total", len(clients))
+	}
 	bs.mu.Unlock()
 
 	if err := writeJSON(conn, &adapter.writeMu, map[string]any{"type": "register_ack", "ok": true}); err != nil {
@@ -848,15 +935,20 @@ func (bs *BridgeServer) handleConnection(conn *websocket.Conn) {
 		}
 	}
 
-	slog.Info("bridge: adapter registered", "platform", reg.Platform, "capabilities", reg.Capabilities)
-
 	defer func() {
 		bs.mu.Lock()
-		if bs.adapters[reg.Platform] == adapter {
+		clients := bs.adapters[reg.Platform]
+		for i, a := range clients {
+			if a == adapter {
+				bs.adapters[reg.Platform] = append(clients[:i], clients[i+1:]...)
+				break
+			}
+		}
+		if len(bs.adapters[reg.Platform]) == 0 {
 			delete(bs.adapters, reg.Platform)
 		}
 		bs.mu.Unlock()
-		slog.Info("bridge: adapter disconnected", "platform", reg.Platform)
+		slog.Info("bridge: adapter disconnected", "platform", reg.Platform, "client_id", clientID)
 	}()
 
 	for {
@@ -920,12 +1012,13 @@ func (a *bridgeAdapter) handleMessage(raw json.RawMessage) {
 
 	msg := &core.Message{
 		SessionKey: m.SessionKey,
+		SessionID:  m.SessionID,
 		Platform:   a.platform,
 		MessageID:  m.MsgID,
 		UserID:     m.UserID,
 		UserName:   m.UserName,
 		Content:    m.Content,
-		ReplyCtx:   newBridgeReplyCtx(a, m.SessionKey, m.ReplyCtx),
+		ReplyCtx:   newBridgeReplyCtx(a, m.SessionKey, m.SessionID, m.ReplyCtx),
 	}
 
 	for _, img := range m.Images {
@@ -1031,7 +1124,7 @@ func (a *bridgeAdapter) handleCardAction(raw json.RawMessage) {
 			"card":        serializeCard(card),
 		})
 	} else {
-		rc := newBridgeReplyCtx(a, ca.SessionKey, ca.ReplyCtx)
+		rc := newBridgeReplyCtx(a, ca.SessionKey, "", ca.ReplyCtx)
 		_ = ref.platform.Reply(context.Background(), rc, card.RenderText())
 	}
 }
@@ -1048,7 +1141,7 @@ func (a *bridgeAdapter) dispatchAsMessage(ref *bridgeEngineRef, sessionKey, repl
 		UserID:     "web-admin",
 		UserName:   "Web Admin",
 		Content:    content,
-		ReplyCtx:   newBridgeReplyCtx(a, sessionKey, replyCtx),
+		ReplyCtx:   newBridgeReplyCtx(a, sessionKey, "", replyCtx),
 	}
 	go ref.platform.handler(ref.platform, msg)
 }
@@ -1299,18 +1392,58 @@ func (bs *BridgeServer) authenticate(r *http.Request) bool {
 	return false
 }
 
-func (bs *BridgeServer) getAdapter(platform string) *bridgeAdapter {
+// getAdapterForClient returns the adapter for a specific platform+clientID,
+// used for unicast replies (the originating web client). Returns nil if absent.
+func (bs *BridgeServer) getAdapterForClient(platform, clientID string) *bridgeAdapter {
 	bs.mu.RLock()
 	defer bs.mu.RUnlock()
-	return bs.adapters[platform]
+	for _, a := range bs.adapters[platform] {
+		if a.clientID == clientID {
+			return a
+		}
+	}
+	return nil
 }
 
+// getFirstAdapter returns an arbitrary connected client for a platform. Used
+// when a clientID is not available (e.g. reconstructing a reply ctx from a
+// session key) — any client works since the ctx only encodes routing info.
+func (bs *BridgeServer) getFirstAdapter(platform string) *bridgeAdapter {
+	bs.mu.RLock()
+	defer bs.mu.RUnlock()
+	clients := bs.adapters[platform]
+	if len(clients) == 0 {
+		return nil
+	}
+	return clients[0]
+}
+
+// sendToAdapter broadcasts a message to ALL connected web clients of a platform
+// (multicast). Individual client send failures are logged but do not abort the
+// others. Returns an error only if there are no connected clients at all.
 func (bs *BridgeServer) sendToAdapter(platform string, msg map[string]any) error {
 	bs.mu.RLock()
-	a, ok := bs.adapters[platform]
+	clients := append([]*bridgeAdapter(nil), bs.adapters[platform]...)
 	bs.mu.RUnlock()
-	if !ok {
+	if len(clients) == 0 {
 		return fmt.Errorf("bridge: adapter %q not connected", platform)
+	}
+	var lastErr error
+	for _, a := range clients {
+		if err := writeJSON(a.conn, &a.writeMu, msg); err != nil {
+			slog.Debug("bridge: send to client failed", "platform", platform, "client_id", a.clientID, "error", err)
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
+// sendToClient sends a message to a single web client (unicast), used for
+// preview/typing replies that must reach only the originating client.
+func (bs *BridgeServer) sendToClient(platform, clientID string, msg map[string]any) error {
+	a := bs.getAdapterForClient(platform, clientID)
+	if a == nil {
+		return fmt.Errorf("bridge: client %q/%q not connected", platform, clientID)
 	}
 	return writeJSON(a.conn, &a.writeMu, msg)
 }
@@ -1346,7 +1479,7 @@ func (bs *BridgeServer) platformFromSessionKey(sessionKey string) string {
 	if idx := strings.Index(sessionKey, ":"); idx > 0 {
 		candidate := sessionKey[:idx]
 		bs.mu.RLock()
-		_, ok := bs.adapters[candidate]
+		ok := len(bs.adapters[candidate]) > 0
 		bs.mu.RUnlock()
 		if ok {
 			return candidate

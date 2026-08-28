@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +58,7 @@ type previewCapturePlatform struct {
 }
 
 func (p *previewCapturePlatform) Name() string                             { return "bridge" }
+func (p *previewCapturePlatform) ProgressStyle() string                    { return "compact" }
 func (p *previewCapturePlatform) Start(MessageHandler) error               { return nil }
 func (p *previewCapturePlatform) Reply(context.Context, any, string) error { return nil }
 func (p *previewCapturePlatform) Send(context.Context, any, string) error  { return nil }
@@ -70,6 +72,10 @@ func (p *previewCapturePlatform) SendPreviewStart(_ context.Context, _ any, cont
 func (p *previewCapturePlatform) UpdateMessage(_ context.Context, _ any, content string) error {
 	p.updated = append(p.updated, content)
 	return nil
+}
+
+func (p *previewCapturePlatform) getPreviewEdits() []string {
+	return p.updated
 }
 
 func TestBuildAndParseProgressCardPayload(t *testing.T) {
@@ -101,6 +107,87 @@ func TestBuildAndParseProgressCardPayload(t *testing.T) {
 		t.Fatalf("items[0] = %#v, want info/step1", parsed.Items[0])
 	}
 }
+
+// TestCompactProgressWriter_UnlimitedPlatformKeepsFullHistory verifies that a
+// platform which does NOT implement MessageSizeLimitProvider (e.g. bridge/Web,
+// which streams over WebSocket with no single-message size bound) never has its
+// coalesced progress preview trimmed — all tool/thinking content is retained.
+func TestCompactProgressWriter_UnlimitedPlatformKeepsFullHistory(t *testing.T) {
+	p := &previewCapturePlatform{} // Name "bridge", no MessageSizeLimitProvider
+
+	w := newCompactProgressWriter(context.Background(), p, "ctx", "cc", LangEnglish, nil)
+	if !w.enabled {
+		t.Fatal("progress writer should be enabled for compact-capable platform")
+	}
+	// maxChars must be 0 (unlimited) for a platform without the interface.
+	if w.maxChars != 0 {
+		t.Fatalf("maxChars = %d, want 0 (unlimited) for bridge/web", w.maxChars)
+	}
+
+	// Feed 60 long tool steps — far beyond the old 3800-char cap.
+	const stepLen = 200
+	for i := 0; i < 60; i++ {
+		content := strings.Repeat("x", stepLen)
+		if !w.AppendEvent(ProgressEntryToolUse, content, "", content) {
+			t.Fatalf("AppendEvent failed at step %d", i)
+		}
+	}
+
+	edits := p.getPreviewEdits()
+	if len(edits) == 0 {
+		t.Fatal("expected at least one preview edit")
+	}
+	last := edits[len(edits)-1]
+	// No leading "…" truncation marker: the full history was kept.
+	if strings.HasPrefix(last, "…") {
+		t.Fatalf("unlimited platform preview was trimmed (starts with …): %q", last[:min(40, len(last))])
+	}
+	// All 60 steps should be present (60 * 200 = 12000 chars, well past old cap).
+	if !strings.Contains(last, strings.Repeat("x", stepLen)) {
+		t.Fatal("expected tool content to be present in unlimited preview")
+	}
+	if got := strings.Count(last, strings.Repeat("x", stepLen)); got != 60 {
+		t.Fatalf("expected 60 tool steps retained, got %d", got)
+	}
+}
+
+// TestCompactProgressWriter_LimitedPlatformTrims verifies that a platform which
+// implements MessageSizeLimitProvider (returning 4000, like IM platforms) still
+// gets its coalesced progress preview trimmed to stay within the limit.
+func TestCompactProgressWriter_LimitedPlatformTrims(t *testing.T) {
+	p := &stubCompactProgressPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		style:              "compact",
+	}
+	w := newCompactProgressWriter(context.Background(), p, "ctx", "cc", LangEnglish, nil)
+	if w.maxChars != 3800 {
+		t.Fatalf("maxChars = %d, want 3800 for a 4000-limit platform", w.maxChars)
+	}
+
+	// Feed enough content to exceed the 3800-char cap.
+	var big strings.Builder
+	for i := 0; i < 40; i++ {
+		chunk := strings.Repeat("y", 200)
+		if !w.AppendEvent(ProgressEntryToolUse, chunk, "", chunk) {
+			t.Fatalf("AppendEvent failed at step %d", i)
+		}
+		big.WriteString(chunk)
+	}
+
+	edits := p.getPreviewEdits()
+	if len(edits) == 0 {
+		t.Fatal("expected at least one preview edit")
+	}
+	last := edits[len(edits)-1]
+	// Trimming keeps a 3800-rune tail plus a "…\n" prefix marker.
+	if !strings.HasPrefix(last, "…") {
+		t.Fatalf("limited platform preview should be truncated (start with …), got %q", last[:min(20, len(last))])
+	}
+	if runes := len([]rune(last)); runes > 3803 {
+		t.Fatalf("limited platform preview exceeded cap: %d runes", runes)
+	}
+}
+
 
 func TestCompactProgressWriter_UsesReplyContextHints(t *testing.T) {
 	p := &previewCapturePlatform{}
@@ -309,5 +396,108 @@ func TestCompactProgressWriter_DoesNotTransformToolResults(t *testing.T) {
 	}
 	if got := payload.Items[0].Text; got != raw {
 		t.Fatalf("tool result text = %q, want raw %q", got, raw)
+	}
+}
+
+// maxEntriesHintReplyCtx only advertises a progress entry cap override.
+type maxEntriesHintReplyCtx struct{ maxEntries int }
+
+func (r maxEntriesHintReplyCtx) ProgressMaxEntriesHint() int { return r.maxEntries }
+
+// TestCompactProgressWriter_MaxEntriesHintUnlimited verifies that a reply
+// target declaring progress_max_entries=0 (e.g. the Web admin bridge adapter)
+// keeps every progress entry — the default 10-entry cap exists only to bound
+// IM message size, which does not apply to WebSocket streaming.
+func TestCompactProgressWriter_MaxEntriesHintUnlimited(t *testing.T) {
+	p := &stubCompactProgressPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "bridge"},
+		style:              "card",
+	}
+	w := newCompactProgressWriter(context.Background(), p, maxEntriesHintReplyCtx{maxEntries: 0}, "cc", LangEnglish, nil)
+	if !w.enabled {
+		t.Fatal("progress writer should be enabled for card style")
+	}
+	if w.maxEntries != 0 {
+		t.Fatalf("maxEntries = %d, want 0 (unlimited) per reply hint", w.maxEntries)
+	}
+
+	for i := 0; i < 15; i++ {
+		entry := fmt.Sprintf("entry-%02d", i)
+		if !w.AppendEvent(ProgressEntryInfo, entry, "", entry) {
+			t.Fatalf("AppendEvent failed at step %d", i)
+		}
+	}
+	edits := p.getPreviewEdits()
+	if len(edits) == 0 {
+		t.Fatal("expected at least one preview edit")
+	}
+	last := edits[len(edits)-1]
+	if strings.Contains(last, "Showing latest updates only.") {
+		t.Fatal("unlimited hint should not mark progress as truncated")
+	}
+	for i := 0; i < 15; i++ {
+		if !strings.Contains(last, fmt.Sprintf("entry-%02d", i)) {
+			t.Fatalf("expected entry-%02d to be retained in preview", i)
+		}
+	}
+}
+
+// TestCompactProgressWriter_MaxEntriesHintCapNumbersWithOffset verifies that a
+// capped window keeps only the latest entries and numbers the visible entries
+// with their true sequence position (dropped offset included) instead of
+// restarting at 1 — so "9. Tool #18" style mismatches cannot recur.
+func TestCompactProgressWriter_MaxEntriesHintCapNumbersWithOffset(t *testing.T) {
+	p := &stubCompactProgressPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "bridge"},
+		style:              "card",
+	}
+	w := newCompactProgressWriter(context.Background(), p, maxEntriesHintReplyCtx{maxEntries: 3}, "cc", LangEnglish, nil)
+	if w.maxEntries != 3 {
+		t.Fatalf("maxEntries = %d, want 3 per reply hint", w.maxEntries)
+	}
+
+	for i := 1; i <= 5; i++ {
+		entry := fmt.Sprintf("entry-%d", i)
+		if !w.AppendEvent(ProgressEntryInfo, entry, "", entry) {
+			t.Fatalf("AppendEvent failed at step %d", i)
+		}
+	}
+	edits := p.getPreviewEdits()
+	if len(edits) == 0 {
+		t.Fatal("expected at least one preview edit")
+	}
+	last := edits[len(edits)-1]
+
+	if !strings.Contains(last, "Showing latest updates only.") {
+		t.Fatal("capped window should be marked truncated")
+	}
+	// Only the latest 3 entries survive.
+	for _, keep := range []string{"entry-3", "entry-4", "entry-5"} {
+		if !strings.Contains(last, keep) {
+			t.Fatalf("expected %q retained, got:\n%s", keep, last)
+		}
+	}
+	if strings.Contains(last, "entry-1") || strings.Contains(last, "entry-2") {
+		t.Fatalf("expected oldest entries evicted, got:\n%s", last)
+	}
+	// Visible entries are numbered with the true sequence: 3. 4. 5.
+	if !strings.Contains(last, "\n3. entry-3") || !strings.Contains(last, "\n4. entry-4") || !strings.Contains(last, "\n5. entry-5") {
+		t.Fatalf("expected offset numbering (3./4./5.), got:\n%s", last)
+	}
+	if strings.Contains(last, "\n1. ") {
+		t.Fatalf("numbering restarted at 1 after trim, got:\n%s", last)
+	}
+}
+
+// TestCompactProgressWriter_NoHintKeepsDefaultCap verifies the default
+// 10-entry cap still applies when the reply target provides no hint.
+func TestCompactProgressWriter_NoHintKeepsDefaultCap(t *testing.T) {
+	p := &stubCompactProgressPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		style:              "card",
+	}
+	w := newCompactProgressWriter(context.Background(), p, "ctx", "cc", LangEnglish, nil)
+	if w.maxEntries != 10 {
+		t.Fatalf("maxEntries = %d, want default 10 without hint", w.maxEntries)
 	}
 }

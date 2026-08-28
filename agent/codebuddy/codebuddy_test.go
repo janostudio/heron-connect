@@ -3,6 +3,10 @@ package codebuddy
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/janostudio/heron-connect/core"
@@ -93,6 +97,27 @@ func TestAgent_AvailableModels(t *testing.T) {
 	}
 }
 
+func TestAgent_AvailableModels_UsesModelsJSONWhenPresent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workDir := t.TempDir()
+
+	modelsPath := filepath.Join(workDir, ".codebuddy", "models.json")
+	if err := os.MkdirAll(filepath.Dir(modelsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"models": [{"id": "my-custom-model", "name": "My Custom Model"}]}`
+	if err := os.WriteFile(modelsPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &Agent{workDir: workDir}
+	models := a.AvailableModels(context.Background())
+	if len(models) != 1 || models[0].Name != "my-custom-model" {
+		t.Errorf("expected only the configured custom model, got %v", models)
+	}
+}
+
 func TestAgent_PermissionModes(t *testing.T) {
 	a := &Agent{}
 	modes := a.PermissionModes()
@@ -109,8 +134,91 @@ func TestAgent_SkillDirs(t *testing.T) {
 	}
 }
 
+func TestAgent_CommandDirs(t *testing.T) {
+	a := &Agent{workDir: "/tmp/test"}
+	dirs := a.CommandDirs()
+	if len(dirs) != 2 {
+		t.Errorf("CommandDirs() = %d items, want 2", len(dirs))
+	}
+	if dirs[0] != filepath.Join("/tmp/test", ".codebuddy", "commands") {
+		t.Errorf("CommandDirs()[0] = %q, want project-level .codebuddy/commands", dirs[0])
+	}
+}
+
+// verify Agent implements core.CommandProvider
+var _ core.CommandProvider = (*Agent)(nil)
+
 // verify Agent implements core.Agent
 var _ core.Agent = (*Agent)(nil)
+
+// ── launchArgs tests ────────────────────────────────────────
+
+func TestLaunchArgs_PlainPrompt(t *testing.T) {
+	args := launchArgs("hello world", "", "default", "")
+	want := []string{"-p", "--output-format", "stream-json", "--", "hello world"}
+	if len(args) != len(want) {
+		t.Fatalf("launchArgs = %v, want %v", args, want)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Errorf("launchArgs[%d] = %q, want %q", i, args[i], want[i])
+		}
+	}
+}
+
+func TestLaunchArgs_DashPrefixedPromptAfterEndOfOptions(t *testing.T) {
+	// Custom command files carry YAML frontmatter and therefore start with
+	// "---". The CLI parser rejects such tokens as unknown options unless
+	// they appear after the "--" end-of-options marker.
+	prompt := "---\ndescription: \"audit\"\n---\n\n# audit body"
+	args := launchArgs(prompt, "sid-123", "yolo", "glm-5.3-ioa")
+
+	sep := -1
+	for i, a := range args {
+		if a == "--" {
+			sep = i
+			break
+		}
+	}
+	if sep == -1 {
+		t.Fatalf("launchArgs missing \"--\" end-of-options marker: %v", args)
+	}
+	if sep != len(args)-2 {
+		t.Errorf("\"--\" at index %d, want %d (directly before prompt)", sep, len(args)-2)
+	}
+	if args[len(args)-1] != prompt {
+		t.Errorf("last arg = %q, want the prompt itself", args[len(args)-1])
+	}
+	// The prompt itself must never appear as a token before the marker.
+	for i := 0; i < sep; i++ {
+		if args[i] == prompt {
+			t.Errorf("prompt leaked before \"--\" at index %d: %v", i, args)
+		}
+	}
+}
+
+func TestLaunchArgs_OptionalFlagsBeforeEndOfOptions(t *testing.T) {
+	args := launchArgs("hi", "sid-1", "yolo", "m1")
+	want := []string{
+		"-p", "--output-format", "stream-json",
+		"--resume", "sid-1",
+		"--dangerously-skip-permissions",
+		"--model", "m1",
+		"--", "hi",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("launchArgs = %v, want %v", args, want)
+	}
+}
+
+func TestLaunchArgs_DefaultModeOmitsYoloFlag(t *testing.T) {
+	args := launchArgs("hi", "", "default", "")
+	for _, a := range args {
+		if a == "--dangerously-skip-permissions" {
+			t.Errorf("launchArgs should omit yolo flag in default mode, got %v", args)
+		}
+	}
+}
 
 // ── handleEvent unit tests ──────────────────────────────────
 
@@ -281,5 +389,265 @@ func TestHandleResult_Error(t *testing.T) {
 		}
 	default:
 		t.Error("expected a result event but channel was empty")
+	}
+}
+
+// ── exitFallbackEvent tests ─────────────────────────────────
+
+// The silent clean-exit case (exit 0, zero stdout) previously produced an
+// EMPTY EventResult — the user saw "(空响应)" and the turn looked successful
+// while the CLI had actually failed. It must now surface as an explicit
+// EventError, carrying stderr when the CLI wrote anything there.
+func TestExitFallbackEvent_SilentCleanExitNoStderr(t *testing.T) {
+	evt := exitFallbackEvent(nil, nil, nil, "", "s1")
+	if evt.Type != core.EventError {
+		t.Fatalf("type = %v, want EventError for silent zero-output exit", evt.Type)
+	}
+	if evt.Error == nil || evt.Error.Error() == "" {
+		t.Fatalf("error = %v, want non-empty diagnostic", evt.Error)
+	}
+}
+
+func TestExitFallbackEvent_SilentCleanExitWithStderr(t *testing.T) {
+	evt := exitFallbackEvent(nil, nil, nil, "auth token expired, please login", "s1")
+	if evt.Type != core.EventError {
+		t.Fatalf("type = %v, want EventError", evt.Type)
+	}
+	if evt.Error == nil || evt.Error.Error() != "auth token expired, please login" {
+		t.Fatalf("error = %v, want stderr content relayed", evt.Error)
+	}
+}
+
+func TestExitFallbackEvent_PlainTextFallbackWins(t *testing.T) {
+	evt := exitFallbackEvent([]string{"plain", "text"}, nil, nil, "ignored", "s1")
+	if evt.Type != core.EventResult {
+		t.Fatalf("type = %v, want EventResult for plain-text output", evt.Type)
+	}
+	if evt.Content != "plain\ntext" {
+		t.Fatalf("content = %q, want joined plain lines", evt.Content)
+	}
+	if !evt.Done {
+		t.Fatal("Done = false, want true")
+	}
+}
+
+func TestExitFallbackEvent_ProcessErrorPrefersStderr(t *testing.T) {
+	evt := exitFallbackEvent(nil, fmt.Errorf("exit status 1"), nil, "boom", "s1")
+	if evt.Type != core.EventError {
+		t.Fatalf("type = %v, want EventError", evt.Type)
+	}
+	if evt.Error == nil || evt.Error.Error() != "boom" {
+		t.Fatalf("error = %v, want stderr preferred over exitErr", evt.Error)
+	}
+}
+
+func TestExitFallbackEvent_ScanError(t *testing.T) {
+	evt := exitFallbackEvent(nil, nil, fmt.Errorf("read: broken pipe"), "", "s1")
+	if evt.Type != core.EventError {
+		t.Fatalf("type = %v, want EventError", evt.Type)
+	}
+	if evt.Error == nil || evt.Error.Error() != "read stdout: read: broken pipe" {
+		t.Fatalf("error = %v, want wrapped scan error", evt.Error)
+	}
+}
+
+// ── shouldTrackInitSessionID tests ──────────────────────────
+
+// Regression guard for the "subagent id replaces parent id" bug: subagent
+// child sessions emit their own system/init events mid-conversation; only the
+// FIRST init of a process run may establish the tracked top-level session id.
+func TestShouldTrackInitSessionID(t *testing.T) {
+	cases := []struct {
+		name                 string
+		sawInit              bool
+		subtype, sessionID   string
+		want                 bool
+	}{
+		{"first init accepted", false, "init", "dc918b77", true},
+		{"second init rejected (subagent)", true, "init", "d492df45", false},
+		{"empty session id rejected", false, "init", "", false},
+		{"non-init subtype rejected", false, "other", "dc918b77", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldTrackInitSessionID(tc.sawInit, tc.subtype, tc.sessionID); got != tc.want {
+				t.Fatalf("shouldTrackInitSessionID(%v, %q, %q) = %v, want %v",
+					tc.sawInit, tc.subtype, tc.sessionID, got, tc.want)
+			}
+		})
+	}
+}
+
+// Silent-exit fallbacks must carry the session_unrecoverable marker so the
+// engine detaches the poisoned agent_session_id binding (self-heal).
+func TestExitFallbackEvent_SilentExitMarksUnrecoverable(t *testing.T) {
+	for name, stderr := range map[string]string{"": "", "with stderr": "No conversation found with session ID"} {
+		evt := exitFallbackEvent(nil, nil, nil, stderr, "s1")
+		if evt.Type != core.EventError {
+			t.Fatalf("%s: type = %v, want EventError", name, evt.Type)
+		}
+		if v, _ := evt.Metadata[core.EventMetadataSessionUnrecoverable].(bool); !v {
+			t.Fatalf("%s: metadata marker %v missing, want session_unrecoverable=true", name, evt.Metadata)
+		}
+	}
+}
+
+// Non-silent fallbacks (plain text / process error / scan error) must NOT
+// carry the unrecoverable marker — those failures may be transient and the
+// persisted binding stays for retry.
+func TestExitFallbackEvent_OtherBranchesNotMarked(t *testing.T) {
+	notMarked := []core.Event{
+		exitFallbackEvent([]string{"plain"}, nil, nil, "", "s1"),
+		exitFallbackEvent(nil, fmt.Errorf("exit status 1"), nil, "", "s1"),
+		exitFallbackEvent(nil, nil, fmt.Errorf("read: broken pipe"), "", "s1"),
+	}
+	for i, evt := range notMarked {
+		if v, _ := evt.Metadata[core.EventMetadataSessionUnrecoverable].(bool); v {
+			t.Fatalf("branch %d: unexpected unrecoverable marker on non-silent fallback", i)
+		}
+	}
+}
+
+// ── toolUseID ↔ name resolution & thinking parsing ───────────
+//
+// Regression: previously handleUser's tool_result branch set ToolName to
+// the CLI-emitted tool_use_id (e.g. "tooluse_3MNyh1...") instead of the
+// readable tool name, and handleAssistant silently dropped "thinking"
+// content blocks. The fix adds a sync.Map cache populated in handleAssistant
+// and consulted in handleUser, plus a new "thinking" switch case that
+// accepts either "thinking" or "text" payloads.
+
+func TestHandleUser_ToolResult_ResolvesToolNameFromCache(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	// Assistant first emits a tool_use with the readable name → cache the id.
+	toolInput, _ := json.Marshal(map[string]string{"command": "ls"})
+	asstContent, _ := json.Marshal([]contentItem{
+		{Type: "tool_use", ID: "call_abc", Name: "Bash", Input: toolInput},
+	})
+	cs.handleAssistant(&streamEvent{
+		Type:      "assistant",
+		SessionID: "s",
+		Message:   &streamMessage{StopReason: "tool_use", Content: asstContent},
+	}, "")
+	// Drain the tool_use event so the channel is empty for the next assertion.
+	select {
+	case <-cs.events:
+	default:
+	}
+
+	// Then the CLI's user turn emits a tool_result that only carries
+	// tool_use_id. handleUser must resolve the readable name from cache.
+	resultText, _ := json.Marshal([]contentItem{{Type: "text", Text: "file.txt"}})
+	userContent, _ := json.Marshal([]contentItem{
+		{Type: "tool_result", ToolUseID: "call_abc", Content: resultText},
+	})
+	cs.handleUser(&streamEvent{
+		Type:      "user",
+		SessionID: "s",
+		Message:   &streamMessage{Content: userContent},
+	})
+
+	select {
+	case got := <-cs.events:
+		if got.Type != core.EventToolResult {
+			t.Fatalf("got type=%s, want EventToolResult", got.Type)
+		}
+		if got.ToolName != "Bash" {
+			t.Fatalf("got ToolName=%q, want %q (resolved from cache, not raw id)", got.ToolName, "Bash")
+		}
+	default:
+		t.Fatal("expected a tool_result event but channel was empty")
+	}
+}
+
+func TestHandleUser_ToolResult_ColdCacheFallsBackToID(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	// No prior tool_use emitted → cache is cold. The event must still be
+	// emitted (with the raw id) so the engine can render something rather
+	// than silently dropping the result.
+	resultText, _ := json.Marshal([]contentItem{{Type: "text", Text: "x"}})
+	userContent, _ := json.Marshal([]contentItem{
+		{Type: "tool_result", ToolUseID: "call_orphan", Content: resultText},
+	})
+	cs.handleUser(&streamEvent{
+		Type:      "user",
+		SessionID: "s",
+		Message:   &streamMessage{Content: userContent},
+	})
+
+	select {
+	case got := <-cs.events:
+		if got.Type != core.EventToolResult {
+			t.Fatalf("got type=%s, want EventToolResult", got.Type)
+		}
+		if got.ToolName != "call_orphan" {
+			t.Fatalf("got ToolName=%q, want %q (raw id fallback when cache cold)", got.ToolName, "call_orphan")
+		}
+	default:
+		t.Fatal("expected a tool_result event but channel was empty")
+	}
+}
+
+func TestHandleAssistant_Thinking(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	cases := []struct {
+		name    string
+		item    contentItem
+		wantOut bool
+		wantTxt string
+	}{
+		{
+			name:    "thinking field populated",
+			item:    contentItem{Type: "thinking", Thinking: "reasoning via thinking field"},
+			wantOut: true,
+			wantTxt: "reasoning via thinking field",
+		},
+		{
+			name:    "text field fallback when thinking is empty",
+			item:    contentItem{Type: "thinking", Text: "reasoning via text field"},
+			wantOut: true,
+			wantTxt: "reasoning via text field",
+		},
+		{
+			name:    "both empty → no event",
+			item:    contentItem{Type: "thinking"},
+			wantOut: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			content, _ := json.Marshal([]contentItem{tc.item})
+			cs.handleAssistant(&streamEvent{
+				Type:      "assistant",
+				SessionID: "s",
+				Message:   &streamMessage{StopReason: "end_turn", Content: content},
+			}, "")
+
+			if !tc.wantOut {
+				select {
+				case got := <-cs.events:
+					t.Fatalf("expected no event for empty thinking, got %+v", got)
+				default:
+					return
+				}
+			}
+			select {
+			case got := <-cs.events:
+				if got.Type != core.EventThinking {
+					t.Fatalf("got type=%s, want EventThinking", got.Type)
+				}
+				if got.Content != tc.wantTxt {
+					t.Fatalf("got content=%q, want %q", got.Content, tc.wantTxt)
+				}
+			default:
+				t.Fatal("expected a thinking event but channel was empty")
+			}
+		})
 	}
 }

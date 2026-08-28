@@ -1,5 +1,308 @@
 # Changelog
 
+## v1.1.25 (2026-08-28)
+
+### Changed
+
+- **文件浏览器目录下拉默认收起**：打开浏览器只显示面包屑 + 当前文件预览，不再自动弹出整个目录列表；点击面包屑才展开（openDir/goParent 导航时保持展开）。回退 v1.1.21 误读反馈引入的"默认展开"。
+- **PC 端输入行对齐 + 底部不留空**：textarea `py-3`→`py-2`，单行高度精确等于按钮 `p-3` 的 42px，图标与输入框底对齐；删除消息区 `max-h-[calc(100dvh-…)]`（其 192px 桌面估值比实际 header+input 高 ~50px，导致 PC 输入区下方永久留空）——v1.1.24 已补全 `min-h-0` 收缩链，flex-1 自动贴底。
+
+## v1.1.24 (2026-08-28)
+
+### Fixed
+
+- **【紧急】修复 PC 端聊天页高度回归（v1.1.22 引入）**：消息列表无法滚动、header/输入框被顶出视口。根因是 v1.1.22 删除消息区 `max-h` 后暴露了 Layout 包裹层（`main > div.flex-1.flex.flex-col`）缺失 `min-h-0`——其 automatic minimum size 等于全部消息内容高度，撑爆 main 的固定高度后被 `overflow-hidden` 裁剪。修复：恢复消息区 `max-h-[calc(100dvh-136px)] md:max-h-[calc(100dvh-192px)]`（dvh 基准对齐新高度体系）+ Layout 包裹层补 `min-h-0`（根因，保证 flex 收缩链完整，max-h 更宽时不再出现悬浮空隙）。
+- **修复 markdown 文件预览点击即崩溃（v1.1.17 起的存量炸弹）**：预览含链接的 md 文件时整页白屏（React error #130，React 根卸载）。根因是 `RenderMarkdown` 的 `components.a` 在无 `onOpenFile` 时显式为 `undefined`——hast-util-to-jsx-runtime 会把 undefined 直接传给 `React.createElement`，markdown 一含 `<a>` 即抛 "Element type is invalid"。聊天消息不受影响（始终传 onOpenFile）；仅 md 文件预览（FileContentView）踩中。修复：fallback 从 `undefined` 改为字符串 `'a'`（渲染原生链接）。
+
+## v1.1.23 (2026-08-28)
+
+### Changed
+
+- **聊天气泡 markdown 内联代码与超链接可辨识度优化**（纯前端）：
+  - 内联代码（`` `code` ``）：深色模式下原 `bg-gray-800` 与气泡背景 `dark:bg-gray-800/80` 几乎同色，"框"完全看不出来。现改为 `dark:bg-black/35` + `dark:border-white/10`（比气泡明显更深）+ 更亮的 pink-300 文字；浅色模式同步微调为 slate 色系。
+  - 超链接：hover 下划线加粗（`decoration-2`）并加大偏移（`underline-offset-2`）更易识别；新增 `prose-a:break-all` 让长 URL 自动换行不再溢出气泡。
+
+## v1.1.22 (2026-08-28)
+
+### Fixed
+
+- **移动端输入框被 URL 栏/软键盘遮挡**。根因是全站布局高度基于 `100vh`（iOS 含 URL 栏高度），且无任何 dvh/visualViewport 适配：
+  - 布局根改为 `h-screen supports-[height:100dvh]:h-[var(--app-height,100dvh)]`，并新增 `visualViewport` resize 监听（iOS 软键盘场景唯一可靠方案）把实际可视高度写入 `--app-height` CSS 变量。
+  - viewport meta 补 `viewport-fit=cover, interactive-widget=resizes-content`（Android Chrome 键盘弹出时收缩布局视口，输入区自动抬到键盘上方）。
+  - 所有 fixed 全屏抽屉（移动端侧边栏 / 会话抽屉 / 命令结果面板 / 文件预览 / 项目文件浏览器）`h-full` → `h-dvh`，底栏不再被 URL 栏裁掉。
+  - 删除消息区魔法数 `max-h-[calc(100vh-136px)]`（flex-1 + overflow 已正确约束；魔法数反而让输入区悬浮高出真实底部 ~17px，键盘/URL 栏变化时全部失真）。
+- **移动端输入行横溢与错位**（截图症状：输入框底部不对齐、右下角出现横向滚动指示器）。输入行包裹层缺 `min-w-0`，textarea 默认 20 列 intrinsic 宽 + 3 按钮在 320–360px 窄屏直接横溢；且 textarea 字号 <16px 触发 iOS 聚焦自动缩放。修复：包裹层与 textarea 加 `min-w-0`；字号 `text-base md:text-sm`（≥16px 阻止 iOS 缩放）。
+
+## v1.1.21 (2026-08-28)
+
+### Changed
+
+- **移动端顶部交互简化**（纯前端）：
+  - 收起态悬浮组去掉「⋯」工具按钮，只保留汉堡（三个横线）——聊天页移动端顶部状态恒定，不再有展开/收起循环；刷新/语言/主题/登出在非聊天页的展开态顶栏仍可用。
+  - 聊天头部移动端隐藏「重命名」按钮（置顶/项目文件保留），右侧留白相应从 `pr-20` 调小为 `pr-12`（只需清开单个汉堡按钮）。
+  - 聊天窗口移动端隐藏「已连接」bridge 状态徽章（连接异常仍通过输入区警告提示）；桌面端不变。
+- **文件浏览器目录下拉默认展开**：`dropdownOpen` 初始值改为 `true`，每次打开必展开，不再依赖加载 effect 的 setState 时序。
+
+### Fixed
+
+- **移动端窄屏头部溢出**：会话选择按钮（自动标题取首条用户消息，可能很长）无截断导致头部被撑爆/换行。现在标题 span `truncate`、按钮 `min-w-0 max-w-full` 约束，长标题显示省略号。其余区域（消息气泡/输入区/ProgressCard/附件 chips）静态排查确认窄屏布局正常。
+
+## v1.1.20 (2026-08-28)
+
+### Fixed
+
+- **修复 PC 预览右栏拖拽调宽不可用**。v1.1.19 把拖拽分隔条放在 `<Fragment>` 内、面板 div 外——`Fragment` 不产生 DOM，`absolute left-0` 分隔条失去定位父级而跑到页面最左侧，导致拖不到。现已把分隔条移入面板 div 内部，并把 `md:static` 改为 `md:relative`（保证绝对定位锚定到预览列）。鼠标移到预览面板左边缘（`cursor-col-resize`）即可拖宽。
+
+### Changed
+
+- **Web 左侧边栏收起时隐藏文字**。收起态（窄栏）下导航项只显示居中图标，隐藏文字（不再竖排文字与图标重叠），悬停显示 `title` tooltip 展示完整名称。
+
+## v1.1.19 (2026-08-28)
+
+### Changed
+
+- **Web 文件预览三处交互优化**（纯前端）：
+  - **文件浏览器记住浏览位置**：`ProjectFileBrowser` 按项目记住上次浏览的目录 + 选中文件（localStorage `cc_file_browser:<project>`），重开从上次位置继续而非项目根目录；文件名匹配恢复，文件不存在则回退到第一个。
+  - **markdown 预览可滚动**：预览里的 `RenderMarkdown` 之前无 `max-h`/`overflow` 包裹导致长文档撑破容器不能滚动，现外包 `max-h-[70vh] overflow-auto`，并为预览面板 + 内部滚动容器补 `min-h-0`，修复 flex 子项被内容撑开、局部滚动失效的问题。
+  - **PC 预览右栏可拖拽调宽**：FilePreview 与 ProjectFileBrowser 面板左侧新增拖拽分隔条，md(≥768px) 下可拖动改变预览列宽度（clamp 320px~70vw），宽度全局持久化（localStorage `cc_preview_width`），两个面板共享同一宽度；移动端保持全屏抽屉、不参与拖拽。新增 `lib/utils.ts` 的 `loadLS`/`saveLS`（沿用 `cc_` 前缀惯例）。
+
+## v1.1.18 (2026-08-28)
+
+### Fixed
+
+- **codebuddy 适配器补齐 thinking 解析 + 修工具名回查**。此前 `handleAssistant` 只处理 `text`/`tool_use` 两类 content 块，thinking 块被静默丢弃导致 Web 端看不到思考过程；`handleUser` 处理 `tool_result` 时把 `ToolName` 错设为 `tool_use_id`（如 `tooluse_3MNyh1...`），导致工具结果显示成不可读的内部 ID。修复：assistant 阶段遇到 `tool_use` 时缓存 `id → name`，并加 `case "thinking"`（双字段防御 `Text`/`Thinking` 兼容 codebuddy 协议变体）；user 阶段 `tool_result` 从缓存反查可读名，cache miss 时 fallback 到原始 ID。新增 3 个回归用例。
+
+### Added
+
+- **Web 工具/思考/错误结构化展示**。Web 端 register metadata 增加 `supports_progress_card_payload: true`，bridge 透传 `__heron_connect_progress_card_v1__:` 结构化 payload（`core/progress_compact.go` 已具备），前端 `parseProgressCard` 检测前缀并用新的 `ProgressCard` 组件渲染：每个事件（thinking / tool_use / tool_result / error / info）成为独立可折叠 block，默认折叠、点击 header 展开，整体支持一键全部展开/折叠、状态徽章（success/error/pending）、末尾思考/spinner 动画。稳定 key 基于内容指纹（`kind|tool|text前32字符|idx`），后端 `maxEntries` 截断条目（丢弃最旧）时已展开的 block 不会因下标前移而错位。未升级的服务端仍 fallback 到现有 `RenderMarkdown` 渲染。
+
+## v1.1.17 (2026-08-28)
+
+### Fixed
+
+- **Web 后台被项目级 `reset_on_idle_mins` 误切会话（平台级覆盖未生效）**。此前 `maybeAutoResetSessionOnIdle` 用 `p.Name()` 判定平台，而 Web 消息经 `BridgePlatform` 进入引擎时其 `Name()` 固定返回 `"bridge"`，永远匹配不上 config 里 `type = "web"` 条目配的 `reset_on_idle_mins = 0`，于是回落到项目级值（如 720 分钟）把 Web 会话误切成"新会话"。现改为按 `msg.Platform`（Web 前端注册上报 `"web"`）解析平台级覆盖；真实 IM（如 wecom）的 `p.Name()` 与 `msg.Platform` 均为 `"wecom"`，行为不变。新增回归测试 `TestHandleMessage_AutoResetOnIdle_PlatformOverrideZeroUsesMsgPlatform`（`p.Name()="bridge"` + `msg.Platform="web"` + 覆盖 `{"web":0}` 必须不旋转）。
+
+### Changed
+
+- **Web 文件预览：`.md`/`.markdown` 渲染为 markdown**。预览抽屉中 md 文件从纯文本 `<pre>` 改为复用 `RenderMarkdown` 排版渲染（标题/代码高亮/GFM 表格等），按扩展名与运行时 Content-Type 双重判断。
+- **Web PC 端（≥768px）预览改为分栏推挤**。打开文件预览或项目文件浏览时，预览面板作为右侧内联列把聊天界面往左推，可一边看文档一边输入；移动端（<768px）保持原有全屏抽屉。
+
+## v1.1.16 (2026-08-28)
+
+### Fixed
+
+- **Web 会话串号修复：每个会话独立 session_key + 显式按会话 id 路由**。此前 Web 把每次页面加载的 UUID 烘焙进 `session_key`（`bridge:web-admin:<project>:<WC_CONN_ID>`），同一标签页里所有会话共用同一个 key，叠加 12h idle auto-reset 后，点开历史会话（如 s89）发消息会跑到该 key 当前 active 的会话（如 s91）。现改为：
+  - 前端：`webSessionKey.ts` 新增 `newConvKey(project)` 为每个会话铸造独立 key `bridge:web-admin:<project>:conv-<uuid>`；`ChatView` 不再回退共享 per-tab key，路由 key 永远取当前会话的 key；发送帧携带当前会话 `session_id`；回复过滤按 `session_key` 或 `session_id` 匹配（多标签页实时同步不受影响）。
+  - 后端：`core.Message` 与 bridge 帧/replyCtx 透传 `SessionID`；引擎消息入口改为 `FindByID(msg.SessionID)` 优先路由，缺失才 `GetOrCreateActive(session_key)`——点开指定历史会话即落在该会话；`/new` 为 web 平台铸造全新 key（`core.MintWebSessionKey`），新会话从 key 层面独立；管理 API 对遗留共享 `wc-...` key 在返回时读时改写为 `conv-legacy-<id>`（存储不变），旧会话也立即隔离。
+  - 测试：新增 `TestMintWebSessionKey_ShapeAndUniqueness`、`TestDistinctWebConversationKeysYieldDistinctSessions`。
+
+## v1.1.15 (2026-08-28)
+
+### Added
+
+- **Web 聊天支持上传图片 / 文件**：聊天输入框新增「附件」按钮，可选择一张或多张图片/普通文件。图片通过 bridge `images` 帧发送（多模态 agent 如 claudecode / codex / pi / gemini 可直接视觉理解）；普通文件通过 bridge `files` 帧发送，落到 `<work_dir>/.heron-connect/attachments/` 并把绝对路径追加到 prompt（所有 agent 均可用工具读取）。支持纯附件发送（无文本仅附件）、已选附件缩略图/文件 chips 预览与移除，单个文件前端限制 10MB（超限提示并跳过）。纯前端改动，复用既有 bridge `message` 帧与后端落盘管线，无需新增配置项。补充 5 种语言（en/zh/zh-TW/es/ja）的上传相关文案。
+
+## v1.1.14 (2026-08-27)
+
+### Added
+
+- **会话重命名 + 置顶/取消（聊天页 + 会话列表）**：
+  - 后端：`core.Session` 新增 `Pinned` 字段并持久化到快照（同时修复 `saveLocked` deep-copy 漏拷 `NameAuto` 的潜在 bug）；新增 `SessionManager.SetSessionMeta(id, name, pinned)`（重命名会清除 `NameAuto` 标记，防止自动标题覆盖用户自定义名）；管理 API 新增 `PATCH /projects/{proj}/sessions/{id}`（body 支持 `name` / `pinned`），会话列表与详情响应均新增 `pinned` 字段。
+  - 前端：`sessions.ts` 新增 `pinned` 字段与 `updateSession()` 封装，新增公共 `sortSessions()`（置顶会话排前，再按最近更新）；新增 `RenameSessionModal` 重命名弹窗；聊天页头部新增重命名 + 置顶/取消按钮；聊天页会话抽屉（`SessionDrawer`）与独立会话列表页（`SessionList`）的每行/每卡新增重命名与置顶操作；所有会话列表改用 `sortSessions` 排序，置顶会话置顶显示。
+
+## v1.1.13 (2026-08-27)
+
+### Added
+
+- **文件浏览器支持把文件地址插入到输入框**：底部操作栏新增「插入地址」按钮（与 Download 并排），点击把当前预览文件的相对路径（相对项目 `work_dir`）插入到聊天输入框，方便在消息中引用 agent 生成的文件。相对路径与 agent 的工作目录一致，回复时 heron-connect 会自动链接化。
+
+## v1.1.12 (2026-08-27)
+
+### Fixed
+
+- **切换预览文件时旧的文本/数据残留导致重复渲染**：`FileContentView` 的 `useEffect` 仅在开头重置 `state/error`，`text` / `dataUrl` / `contentType` 仍保留上一次的值。从 md 文件切到图片时，图片走 `dataUrl` 分支但旧 md 的 `text` 仍非空，触发 `<pre>` 与 `<img>` 同时渲染——在 `FilePreview` 抽屉中出现「图片预览 + 文件预览」两个区域。修复：在 effect 开头显式 `setText('')` / `setDataUrl('')` / `setContentType('')` 清空所有展示状态后再加载。同时修复项目文件浏览器详情视图的同源问题。
+
+## v1.1.11 (2026-08-27)
+
+### Fixed
+
+- **文件浏览器 / 预览抽屉暗色亮色模式对比度优化**：暗色主题下抽屉背景由接近纯黑的半透明改为明确深灰（`#1f2228`），增强边框（`border-white/0.12`）与阴影，避免抽屉与页面背景撞色导致边界消失；下拉菜单暗色背景改为 `#2a2d34` 形成层级；代码区显式设置文字色（`text-gray-800 dark:text-gray-100`）提升可读性；图标/箭头/计数器/次要文字统一 `gray-500 dark:gray-400` 并加强 hover 反馈；空目录/不可预览/加载等提示补齐暗色文字色。
+
+## v1.1.10 (2026-08-27)
+
+### Added
+
+- **项目文件浏览器**：聊天页头部新增「项目文件」入口，点开后从右侧滑出抽屉浏览整个项目 `work_dir`。主视图始终预览文件（复用文件阅读能力），顶部面包屑展示目录地址，点击弹出下拉菜单选择当前目录的文件/子目录/上一级；左右 `◀▶` 按钮仅在同目录的文件间切换（跳过目录），底部提供下载。后端 `GET /api/v1/files/<project>/<dir>` 扩展为：路径为目录时返回 JSON 目录列表（`path` + `entries`，目录在前文件在后按名排序，非递归），根目录（空路径）也可列出；复用既有 token 鉴权与路径穿越防护，仅暴露项目 workDir 内文件。
+
+## v1.1.9 (2026-08-27)
+
+### Added
+
+- **Web 可点击阅读/下载 agent 生成的本地文件**：这是 Web 特有的能力——回复消息里的本地文件引用会被改写为可点击链接，点击后从右侧滑出预览抽屉：能阅读的类型就地渲染（文本/代码/markdown/json、图片、pdf、音频/视频），不能阅读的类型给出下载按钮。文件通过新增的带鉴权 + 路径穿越防护的管理路由 `GET /api/v1/files/<project>/<相对路径>` 提供（按 project 的 `work_dir` 解析根目录，`?download=1` 强制附件下载）。缺目录前缀的文件引用（如只写 `app.ts` 实际在 `src/app.ts`）会按「唯一同名文件」递归补全，歧义或不存在则不生成链接，避免死链。仅在 web/bridge 平台生效，wecom/feishu 等其它平台行为不变；无需新增配置项。
+
+## v1.1.8 (2026-08-27)
+
+### Added
+
+- **平台级空闲会话切换覆盖**：`[[projects.platforms]]` 条目新增 `reset_on_idle_mins`，可仅对单个平台覆盖项目级空闲切换开关（`0` = 该平台禁用切换，其余平台沿用项目级值）。典型场景：虚拟 `type = "web"` 管理后台会话永久保留（`reset_on_idle_mins = 0`），而同一项目的企微 IM 仍保留项目级 `720` 分钟切换。keyed by 小写平台类型，与既有 `platformDisplayOverrides` 约定一致；启动与热重载均生效。新增 `config.PlatformConfig.ResetOnIdleMins`（含 `>= 0` 校验）、`Engine.SetPlatformResetOnIdleOverrides` / `resolveResetOnIdleForPlatform`，及 core/config 单测与配置示例文档。
+
+## v1.1.7 (2026-08-26)
+
+### Fixed
+
+- **子 agent 会话 id 顶替父会话 id 致 resume 空转（根因修复）**：codebuddy stream-json 模式下，子 agent 派生时 CLI 会再发一条 `system/init` 事件（携带子会话 id），适配器无条件接受所有 init → 顶层会话 id 被子 id 覆盖 → turn 结束时引擎把子 id 持久化为 `agent_session_id` → 下一条消息 `--resume` 子 id，而子会话没有独立 `.jsonl`（ENOENT）→ CLI 静默退出，turn 空转结束（tools=0、tokens=0、仅 "(空响应)"）。现在 codebuddy 只接受**进程内第一条 init** 作为顶层会话 id（`shouldTrackInitSessionID`），子 agent 的 init 仅记 debug 日志；qoder 同样修复（原先任意事件的 session_id 均无条件覆盖）。ACP 路径不受影响（子事件按 parentToolCallId 标记，不改写跟踪 id）。
+- **污染绑定自愈（兜底）**：适配器静默退出错误携带 `EventMetadataSessionUnrecoverable` 标记并标记会话 dead；引擎识别后 `DetachAgentSession()`（旧 id 记入 `past_agent_session_ids` 可追溯）→ 下一条消息自动从全新会话开始，不再永久卡死。存量被污染的会话升级后会失败一次随即自愈；普通瞬时错误不触发解除。回归测试以事故真实 id（顶层 `dc918b77` / 子 `d492df45`）为断言。
+
+## v1.1.6 (2026-08-26)
+
+### Fixed
+
+- **codebuddy/qoder 零输出退出不再静默（诊断盲区修复）**：CLI 子进程干净退出（exit 0）且 stdout 零输出时，旧路径把 stderr 直接丢弃并发出空 EventResult——用户只看到 "(空响应)" 而 turn 看似成功，真实原因（`--resume` 失效、认证/网络静默失败等）无从排查。现在：stderr 内容记入日志；零输出退出上抛显式 `EventError`（有 stderr 时透传内容，经引擎 sanitize 后用户可见明确报错）。codebuddy 与 qoder 同构修复，新增 `exitFallbackEvent` 分支矩阵单测。
+
+## v1.1.5 (2026-08-26)
+
+### Fixed
+
+- **Web 切换会话后工具进度失联**：turn 进行中切到其他会话再切回时，进度预览消息已随前端 state 被 history 覆盖，后续 `update_message` 因 `preview_handle` 失配被静默丢弃——新工具调用完全不可见，只能等 turn 结束收最终回复。现在失配时改用 `update_message` 携带的全量进度内容新建消息挂回该 handle：切回后下一个工具事件即重现完整进度（旧+新工具），并继续实时更新；turn 结束照常 finalize，已结束的进度不会被误复活。
+
+## v1.1.4 (2026-08-26)
+
+### Added
+
+- **会话执行状态展示（多会话并行可见）**：管理 API 会话列表/详情新增 `running`（前台 turn 或后台 reader 活跃）与 `waiting_permission`（权限确认等待中）字段；Web 会话抽屉、聊天页头部、Sessions 页、项目对话卡片均显示「执行中 / 等待授权」状态徽标，5 秒轮询刷新。
+- **Web 工具进度完整展示**：Web 注册时声明 `progress_max_entries: 0`（不限），解除后端 coalesced 进度默认 10 条截断——该上限本为 IM 平台消息尺寸所设，Web 走 WebSocket 无此限制。截断场景下可见条目按真实序号编号（带丢弃偏移），消除 "9. 🔧 工具 #18" 这类窗口序号与真实序号错位。
+- **子代理工具标记**：`tool_messages` 开启时，子 agent（Agent 工具派生）的工具调用/结果显示 `↳` 前缀，与主 agent 动作一眼区分；标记嵌于工具名位置，不影响 WeCom/Feishu 的 `🔧 **` 前缀解析。
+
+### Fixed
+
+- **Web 消息复制在非安全上下文失效**：通过 `http://IP:端口` 访问时 `navigator.clipboard` 不可用，旧实现静默抛错、点击无任何效果。现降级为隐藏 textarea + `execCommand('copy')` 同步复制（保留用户手势），按钮改为诚实三态反馈（✓ 成功 / ✗ 失败），并常显低透明度替代 hover-only。
+
+## v1.1.3 (2026-08-26)
+
+### Fixed
+
+- **codebuddy 适配器：`-` 开头的 prompt 不再被 CLI 拒绝（自定义命令修复）**：codebuddy CLI 的 `-p` 是布尔开关、prompt 为位置参数，此前 heron 把 prompt 直接拼在 `-p` 后，凡以 `-` 开头的内容（如执行 `/audit` 等自定义命令时整个 `.md` 文件的 YAML frontmatter 以 `---` 开头）都会被 CLI 解析成选项名，报 `error: unknown option '---\n...'` 后进程 exit 1，无任何 result。现在参数构造改为所有选项在前、`--`（end-of-options 分隔符）之后紧跟 prompt，任意内容（含 frontmatter、用户 `-` 开头消息）均可原样传递。附带 `launchArgs` 单元测试。
+
+## v1.1.0 (2026-08-26)
+
+### Added
+
+- **会话自动标题（IM 会话在 Web 端可区分）**：企微等 IM 创建的会话此前在 Web 管理后台标题全部显示群名/用户名（chat 级共享的 UserMeta），同一群/用户的多个会话无法区分。现在首轮对话完成后自动生成会话级标题——**优先使用 agent 后端自带的会话摘要**（ACP session Title、claudecode/codex 的 summary，按 AgentSessionID 匹配），**兜底使用首条用户消息截断（30 字）**（codebuddy 等无 ListSessions 的 agent）。自动标题异步写入，不阻塞回复投递；写入前重查占位名，与用户此刻的手动命名不冲突。
+- **配置项 `auto_session_title`**：按项目关闭自动标题，默认 true。用户手动命名（`/new <名称>`）永远不会被覆盖。
+- **Web 会话来源标识**：会话卡片主标题显示会话名，次要 Badge 显示来源（user_name/chat_name）；标题 fallback 链统一为 name → user_name → chat_name → ID 截断（会话列表、抽屉、聊天页三处一致）。
+
+### Fixed
+
+- **Web 端不再显示占位会话名**：管理后台会话列表/详情接口把占位名（"default"/"session"）归一化为空，前端回退到有意义的标题；详情接口补发 `user_name`/`chat_name` 字段。
+- **自动标题与自定义名索引隔离**：新增 `Session.NameAuto` 持久标记，防止 agent 切换（`InvalidateForAgent` 后 `CompareAndSet` 再次成功）时自动标题被误提升进 IM `/list` 的自定义名索引（sessionNames），该索引语义保持"仅用户手动命名"。
+
+## v1.0.21 (2026-08-25)
+
+### Fixed
+
+- **`/new` 不再清空旧会话的历史与 agent_type（Web 会话列表可见性修复）**：`/new`（IM）与 Web 的强制新会话原来会同时清空旧活跃会话的 `history` 和 `agent_type`，导致旧会话在 Web 列表里变成空壳、不可见/不可追溯。改为只 `DetachAgentSession`（仅清掉可恢复的 `agent_session_id`，旧 id 记入 `past_agent_session_ids`），保留历史、类型、名称。旧会话作为"过往对话"继续可被浏览与检索。
+- **Web 多浏览器/多机器同时登录会话串号修复**：多个 Web 客户端共用同一 `session_key=bridge:web-admin:<project>`，会在 `agent_session_id` 绑定上互相覆盖，触发 `interactive session mismatch → recycling → kill` 空响应。改为按连接隔离：`bridge:web-admin:<project>:<connID>`，每个浏览器/标签页/机器各自独立会话（与 IM 按用户隔离一致）。
+
+## v1.0.20 (2026-08-25)
+
+### Added
+
+- **Web 聊天回复复制自动剥离运行时页脚**：最终回复气泡的复制按钮在复制时剥离末尾 `*model · usage · path*` 运行时页脚，只复制正文。
+
+### Changed
+
+- **Web 执行中显示红色暂停按钮**：Agent 处理中（typing 或消息 streaming）输入框保持可点击，发送按钮变为红色方块暂停按钮，点击自动发送 `/stop` 终止执行；执行中按回车不再误发新消息。
+- **Web/bridge 的 tool/thinking 进度不再裁剪**：新增可选能力接口 `MessageSizeLimitProvider`。IM 平台（feishu/discord 等）声明自身单条消息长度上限（默认 4000）后保持原裁剪行为；Web（bridge，经 WebSocket 传输无单条长度限制）不实现该接口，tool/thinking 合并气泡保留全部内容，不再被 3800 字符截断。属平台能力对齐，无需为 Web 单独配置。
+
+## v1.0.19 (2026-08-25)
+
+### Fixed
+
+- **Web 聊天输入法（IME）回车误发**：中文拼音等输入法组合期间按回车（选词/确认字母）会误触发发送半成品。发送分支增加 `e.nativeEvent.isComposing` 判断，组合未结束时忽略回车，组合结束后回车才真正发送；移动端/英文输入不受影响。
+
+## v1.0.18 (2026-08-25)
+
+### Changed
+
+- **Web favicon 替换为 heron icon**：源 `icon.png`（1024×1024，340KB）缩放为 64×64 PNG（6.2KB），删除旧 `favicon.svg`，`index.html` 改为引用 `/favicon.png`。全仓无其他位置引用该图标（无 PWA manifest / Go embed 依赖）。
+
+## v1.0.17 (2026-08-25)
+
+### Fixed
+
+- **Web 聊天窗口 PC/移动端高度分开 + 顶栏按路由自动收起**：
+  - 消息历史区 `max-h` 改为响应式：移动端 `calc(100vh - 136px)`、PC 端（`md:` 及以上）`calc(100vh - 192px)`，修复 PC 端消息区被压窄的问题。
+  - 顶部栏收起状态按路由默认：移动端进入 `/chat` 自动收起（聊天区占满高度），离开聊天回到其他页面自动展开，无需手动点收起/展开。桌面端收起 UI 本就 `md:hidden`，不受影响。
+
+## v1.0.16 (2026-08-25)
+
+### Fixed
+
+- **Web 聊天窗口交互细节修正（用户实测反馈）**：
+  - 聊天根容器去掉 `px-4 md:px-6` 水平内边距，聊天区铺满宽度不再显窄。
+  - 消息历史区加 `px-2`（仅历史记录左右留白，顶部栏与输入框不加）及 `max-h-[calc(100vh-124px)]`，确保只在可视范围内滚动。
+  - **横向溢出封死**：消息历史容器加 `overflow-x-hidden`，气泡加 `min-w-0 break-words`，长 URL/无空格长串自动换行；代码块与 Markdown 表格仍各自在气泡内 `overflow-x-auto` 单独横滚，不波及窗口。
+  - **顶部栏收起浮层（两层）对齐**：收起后浮层簇由 `left-2` 改 `right-2`（右上角），其 `⋯` 下拉由 `left-0` 改 `right-0` 向右展开，文字不再被屏幕左缘裁掉。展开态移动端 `⋯` 下拉本就 `right-0`，保持一致。
+
+## v1.0.15 (2026-08-25)
+
+### Fixed
+
+- **Web 聊天页滚动区域修正**：此前聊天页 `<main>` 自身带 `overflow-y-auto`，导致长会话时顶部栏与输入框随消息一起整体滚动，难以稳定停在顶部/底部。现在聊天路由下 `<main>` 改为 `overflow-hidden` 的固定高度列，消息列表成为**唯一滚动区**（顶部栏、输入框 `shrink-0` 固定）；ChatView 根容器补 `px-4 md:px-6` 保持原有左右边距。其他页面滚动行为不变。
+
+## v1.0.14 (2026-08-25)
+
+### Added
+
+- **Web 移动端顶部栏整体收起（两层结构）**：针对移动端「顶部栏占太多垂直空间」的反馈，桌面端布局与交互完全不变。
+  - 顶部栏在移动端（`<md`）新增「收起」按钮（chevron-up），点击后整栏从布局中移除，聊天窗口占据满高；聊天记录仍是唯一的滚动区域（头部 + 输入框 `shrink-0`），滚动行为符合预期。
+  - 收起后在左上角保留一个**浮层按钮簇**（`fixed top-2 left-2 z-30`），保持两层入口都可达：汉堡（导航，第 1 层）+ ⋯ kebab（刷新/语言/主题/退出登录，第 2 层）；kebab 下拉底部含「展开」按钮可还原整栏。
+  - 桌面端（`md:` 及以上）保持原有的内联 4 个工具按钮 + 无收起按钮，行为不变。
+  - 5 个语言包补充 `common.more` / `common.theme` / `common.collapse` / `common.expand`。
+
+## v1.0.13 (2026-08-25)
+
+### Added
+
+- **Web 移动端自适应（一套代码）**：针对移动端体验差的痛点做纯响应式优化，桌面端布局与折叠行为完全不变。
+  - 侧边栏在桌面端（`md:` 及以上）保持原有固定栏 + 折叠逻辑；移动端改为**左滑 off-canvas 抽屉**，由 Header 汉堡按钮（`md:hidden`）打开、背景遮罩关闭，路由切换自动收起。
+  - `Layout` 主区内边距 `p-6` → `p-4 md:p-6`（窄屏省空间）。
+  - `ChatView` 根容器 `h-[calc(100vh-8rem)]` → `flex-1 min-h-0`（消除裁剪/双重滚动）；消息列表 `py-6` → `py-4 md:py-6`；气泡内边距与用户气泡宽度在移动端加宽（`max-w-[85%] sm:max-w-[70%]`）；头部标题 `min-w-0` + `truncate` 防止长项目名挤压状态徽标。
+  - 命令面板 `w-80` 加 `max-w-[calc(100vw-1rem)]`、会话抽屉 `w-80` 加 `max-w-[90vw]`，与 `CommandResultPanel` 一致，避免 375px 屏溢出。
+  - Markdown 表格加 `overflow-x-auto` 横向滚动包裹，避免窄气泡内表格溢出。
+  - **对话界面（`/chat`）不再展示底部 copyright footer**，其他页面照常显示。
+  - 5 个语言包补充 `common.menu`（汉堡按钮 aria-label）。
+
+## v1.0.12 (2026-08-25)
+
+### Fixed
+
+- **Web 思考/工具过程执行后保留展示**：此前 Web 端在工具执行完毕（或整轮结束）后，思考过程与工具调用会「消失」。根因是后端对 `web` 平台（未声明 `delete_message` 能力）把思考/工具作为 `preview_start` + `update_message` 发送、且从不删除；而前端旧的 `reply`/`reply_stream`(done) 处理逻辑用 `findIndex(m => m.streaming && m.role === 'assistant')` 找到的第一个流式消息恰好是思考/工具进度预览，于是被最终答案「就地替换」掉。现在最终答案只会更新/追加**没有 `previewHandle` 的**答案占位消息，绝不覆盖思考/工具进度预览；并在答案到达时把仍在流式的进度预览置为完成态（停止脉冲），使其稳定保留在聊天历史中。
+- **新增回归测试** `TestBridge_WebThinkingToolPersist`：用 Web 前端的真实能力集驱动整轮交互，断言思考/工具内容以 `preview_start`+`update_message` 下发、无 `delete_message`、最终答案以独立 `reply` 下发，从后端侧坐实上述修复。
+
+## v1.0.7 (2026-08-24)
+
+### Fixed
+
+- **ACP agent 支持 Skills 目录识别**：`type = "acp"` 且 `command = "codebuddy"`（如 `codebuddy --acp`）的项目此前在 Web「技能」页面永远看不到任何 skill，因为通用 ACP adapter 没有实现 `SkillProvider` 接口。现在会根据 `command` 识别出底层 CLI 并扫描对应的 `.codebuddy/skills` 目录（项目级 + 用户级），与专用 `type = "codebuddy"` agent 行为一致。
+- **CodeBuddy 模型列表反映 `.codebuddy/models.json`**：`type = "codebuddy"` 与 `type = "acp"`（`command = "codebuddy"`）两种接入方式的 `AvailableModels()` 此前是硬编码的静态模型列表，不反映用户在 `models.json` 里自定义的模型。现在会按 CodeBuddy Code 官方文档的优先级（项目级覆盖用户级，`availableModels` 白名单过滤）合并解析 `~/.codebuddy/models.json` 与 `<workDir>/.codebuddy/models.json`，读取失败时回退到内置列表。ACP 场景下仅当 ACP 协议握手未上报任何模型时才触发该回退，协议上报的模型列表始终优先。
+
+## v1.0.6 (2026-08-24)
+
+### Added
+
+- **Web 会话列表新增搜索与创建**：`/sessions` 会话列表页新增按会话名称/用户/消息内容搜索,并支持直接创建新会话(选择项目 + 可选命名),创建后跳转到聊天窗口即可对话。
+- **新增 `Engine.ForceNewSession`**：管理 API `POST /projects/{name}/sessions` 现在会真正创建一个全新会话(此前该接口只会返回已存在的活跃会话,不会新建)。
+
+### Fixed
+
+- **统一聊天窗口实现**：删除功能阉割的重复组件 `SessionChat.tsx`,`/chat` 与 `/sessions` 列表现在都指向同一个 `ChatView` 聊天窗口(支持斜杠命令面板、命令结果卡片),`ChatView` 新增可选会话 ID 路由参数(`/chat/:project/:id`)以支持直达指定会话。
+- **品牌残留清理**：Codex RPC 的 `clientInfo.title` 与 Web 侧边栏品牌文字中残留的 "CC-Connect"/"CC" 改为 "Heron Connect"/"HC"。
+
+### Changed
+
+- **导航文案调整**：侧边栏"对话"改为"项目对话",以区分按项目分组的对话列表与跨项目的会话列表("会话")。
+
 ## v1.0.5 (2026-08-21)
 
 ### Added

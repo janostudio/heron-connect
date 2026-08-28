@@ -524,6 +524,11 @@ func TestAgent_implementsModelSwitcher(t *testing.T) {
 	var _ core.ModelSwitcher = (*Agent)(nil)
 }
 
+func TestAgent_implementsSkillAndCommandProviders(t *testing.T) {
+	var _ core.SkillProvider = (*Agent)(nil)
+	var _ core.CommandProvider = (*Agent)(nil)
+}
+
 func TestACPSession_implementsContextUsageReporter(t *testing.T) {
 	var _ core.ContextUsageReporter = (*acpSession)(nil)
 }

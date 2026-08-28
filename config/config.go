@@ -389,6 +389,20 @@ type ProjectConfig struct {
 	// heron-connect, hiding sessions created by direct CLI usage in the same work_dir.
 	// Default is false (show all sessions).
 	FilterExternalSessions *bool `toml:"filter_external_sessions,omitempty"`
+	// AutoSessionTitle: when true, sessions that still carry a placeholder
+	// name get an auto-generated title after their first completed turn —
+	// preferring the agent backend's own session summary, falling back to a
+	// snippet of the first user message. User-chosen names are never
+	// overwritten. Default is true.
+	AutoSessionTitle *bool `toml:"auto_session_title,omitempty"`
+	// QueuedMessages controls how messages that arrive while the agent is
+	// busy are submitted after the current turn completes:
+	//   "merge" (default) — the whole queue is combined into one prompt and
+	//                       one agent turn (IM-friendly: consecutive messages
+	//                       form a single request and get a single reply)
+	//   "serial"          — one message per turn, replies per message
+	//                       (historical behavior)
+	QueuedMessages string `toml:"queued_messages,omitempty"`
 }
 
 type AgentConfig struct {
@@ -431,6 +445,26 @@ type CodexProviderConfig struct {
 type PlatformConfig struct {
 	Type    string         `toml:"type"`
 	Options map[string]any `toml:"options"`
+	// ResetOnIdleMins, when set, overrides the project-level reset_on_idle_mins
+	// for messages arriving via this specific platform entry. Lets a single
+	// project keep the idle-session rotation for real IM platforms (e.g. WeCom)
+	// while disabling it for a virtual `type = "web"` entry. 0 or nil disables
+	// the override (falls back to the project value); 0 explicitly disables
+	// rotation for this platform.
+	ResetOnIdleMins *int `toml:"reset_on_idle_mins,omitempty"`
+	// Display, when non-nil, overrides individual [display]/[projects.display]
+	// fields for messages arriving via this specific platform entry. Highest
+	// precedence in the resolution chain (platform > project > global > mode
+	// default). Lets a single project show a different thinking/tool-call
+	// verbosity per platform, e.g. full detail on a virtual `type = "web"`
+	// entry (which starts no real connection — see platform/webnoop) while a
+	// real Feishu/WeCom platform in the same project stays quiet:
+	//
+	//   [[projects.platforms]]
+	//   type = "web"
+	//   [projects.platforms.display]
+	//   mode = "full"
+	Display *DisplayConfig `toml:"display,omitempty"`
 }
 
 // AliasConfig maps a trigger string to a command (e.g. "帮助" → "/help").
@@ -718,6 +752,66 @@ func EffectiveDisplay(cfg *Config, proj *ProjectConfig) (mode string, thinkingMe
 	return
 }
 
+// EffectiveDisplayForPlatform resolves display settings the same way as
+// EffectiveDisplay, but with an additional highest-precedence tier: if proj
+// has a [[projects.platforms]] entry whose Type matches platformName
+// (case-insensitive) and that entry sets a non-nil Display block, its
+// explicitly-set fields win over project-level, then global, then
+// mode-derived defaults.
+//
+// This lets a single project show different thinking/tool verbosity per
+// platform, e.g. a virtual `type = "web"` platform entry with
+// `display.mode = "full"` while the project's real IM platforms stay on
+// the project-level quiet/compact default.
+//
+// platformName == "" or no matching platform entry (or a matching entry
+// with a nil Display) falls back to identical behavior to EffectiveDisplay.
+func EffectiveDisplayForPlatform(cfg *Config, proj *ProjectConfig, platformName string) (mode string, thinkingMessages, toolMessages bool, thinkingMaxLen, toolMaxLen int) {
+	var platDisp *DisplayConfig
+	if proj != nil && platformName != "" {
+		pn := strings.ToLower(strings.TrimSpace(platformName))
+		for i := range proj.Platforms {
+			if strings.ToLower(strings.TrimSpace(proj.Platforms[i].Type)) == pn && proj.Platforms[i].Display != nil {
+				platDisp = proj.Platforms[i].Display
+				break
+			}
+		}
+	}
+
+	mode, thinkingMessages, toolMessages, thinkingMaxLen, toolMaxLen = EffectiveDisplay(cfg, proj)
+	if platDisp == nil {
+		return
+	}
+
+	if platDisp.Mode != nil {
+		mode = *platDisp.Mode
+		// Re-derive mode-based thinking/tool defaults, mirroring EffectiveDisplay's
+		// own mode-derived defaults, so setting only `mode` at the platform tier
+		// behaves consistently with setting only `mode` at the project tier.
+		switch mode {
+		case DisplayModeCompact, DisplayModeQuiet:
+			thinkingMessages, toolMessages = false, false
+		case DisplayModeStream:
+			thinkingMessages, toolMessages = false, true
+		case DisplayModeFull:
+			thinkingMessages, toolMessages = true, true
+		}
+	}
+	if platDisp.ThinkingMessages != nil {
+		thinkingMessages = *platDisp.ThinkingMessages
+	}
+	if platDisp.ToolMessages != nil {
+		toolMessages = *platDisp.ToolMessages
+	}
+	if platDisp.ThinkingMaxLen != nil {
+		thinkingMaxLen = *platDisp.ThinkingMaxLen
+	}
+	if platDisp.ToolMaxLen != nil {
+		toolMaxLen = *platDisp.ToolMaxLen
+	}
+	return
+}
+
 // EffectiveCardMode returns the card rendering mode for the project: "rich" (Feishu Card 2.0)
 // or "legacy" (default plain messages). Per-project overrides global.
 func EffectiveCardMode(cfg *Config, proj *ProjectConfig) string {
@@ -768,6 +862,12 @@ func (c *Config) validate() error {
 			if p.Type == "" {
 				return fmt.Errorf("config: %s.platforms[%d].type is required", prefix, j)
 			}
+			if err := validateDisplayConfig(fmt.Sprintf("%s.platforms[%d].display", prefix, j), p.Display); err != nil {
+				return err
+			}
+			if p.ResetOnIdleMins != nil && *p.ResetOnIdleMins < 0 {
+				return fmt.Errorf("config: %s.platforms[%d].reset_on_idle_mins must be >= 0", prefix, j)
+			}
 		}
 		if proj.Mode == "multi-workspace" {
 			if proj.BaseDir == "" {
@@ -779,6 +879,11 @@ func (c *Config) validate() error {
 		}
 		if proj.ResetOnIdleMins != nil && *proj.ResetOnIdleMins < 0 {
 			return fmt.Errorf("config: %s.reset_on_idle_mins must be >= 0", prefix)
+		}
+		switch strings.ToLower(strings.TrimSpace(proj.QueuedMessages)) {
+		case "", "merge", "serial":
+		default:
+			return fmt.Errorf("config: %s.queued_messages must be \"merge\" or \"serial\"", prefix)
 		}
 		if err := validateRunAsUser(prefix, proj.RunAsUser); err != nil {
 			return err

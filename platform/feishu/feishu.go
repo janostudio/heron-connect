@@ -296,6 +296,10 @@ func (p *Platform) ProgressStyle() string { return p.progressStyle }
 
 func (p *Platform) SupportsProgressCardPayload() bool { return true }
 
+// MessageSizeLimit declares Feishu's per-message character cap so coalesced
+// progress previews stay within platform limits.
+func (p *Platform) MessageSizeLimit() int { return 4000 }
+
 func (p *Platform) tag() string { return p.platformName }
 
 func (p *Platform) dispatchPlatform() core.Platform {

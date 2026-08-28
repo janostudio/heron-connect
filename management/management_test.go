@@ -514,6 +514,117 @@ func TestMgmt_SessionDelete(t *testing.T) {
 	}
 }
 
+func TestMgmt_SessionPatch_RenameAndPin(t *testing.T) {
+	_, ts, e := testManagementServer(t, "tok")
+	s := e.GetSessions().GetOrCreateActive("user1")
+	sid := s.ID
+
+	// Rename.
+	r := mgmtPatch(t, ts.URL+"/api/v1/projects/test-project/sessions/"+sid, "tok", map[string]any{"name": "renamed"})
+	if !r.OK {
+		t.Fatalf("patch rename failed: %s", r.Error)
+	}
+	if got := e.GetSessions().FindByID(sid).GetName(); got != "renamed" {
+		t.Fatalf("name = %q, want renamed", got)
+	}
+	if e.GetSessions().FindByID(sid).GetNameAuto() {
+		t.Fatal("expected name_auto cleared after manual rename")
+	}
+
+	// Pin.
+	r = mgmtPatch(t, ts.URL+"/api/v1/projects/test-project/sessions/"+sid, "tok", map[string]any{"pinned": true})
+	if !r.OK {
+		t.Fatalf("patch pin failed: %s", r.Error)
+	}
+	if !e.GetSessions().FindByID(sid).IsPinned() {
+		t.Fatal("expected session pinned")
+	}
+
+	// Detail should reflect pinned.
+	detail := mgmtGet(t, ts.URL+"/api/v1/projects/test-project/sessions/"+sid, "tok")
+	var d struct {
+		Pinned bool   `json:"pinned"`
+		Name   string `json:"name"`
+	}
+	if err := json.Unmarshal(detail.Data, &d); err != nil {
+		t.Fatalf("unmarshal detail: %v", err)
+	}
+	if !d.Pinned {
+		t.Fatal("detail pinned = false, want true")
+	}
+	if d.Name != "renamed" {
+		t.Fatalf("detail name = %q, want renamed", d.Name)
+	}
+}
+
+func TestMgmt_SessionPatch_Unpin(t *testing.T) {
+	_, ts, e := testManagementServer(t, "tok")
+	s := e.GetSessions().GetOrCreateActive("user1")
+	sid := s.ID
+	pinned := true
+	if _, err := e.GetSessions().SetSessionMeta(sid, nil, &pinned); err != nil {
+		t.Fatal(err)
+	}
+
+	unpin := false
+	r := mgmtPatch(t, ts.URL+"/api/v1/projects/test-project/sessions/"+sid, "tok", map[string]any{"pinned": unpin})
+	if !r.OK {
+		t.Fatalf("patch unpin failed: %s", r.Error)
+	}
+	if e.GetSessions().FindByID(sid).IsPinned() {
+		t.Fatal("expected session unpinned")
+	}
+}
+
+func TestMgmt_SessionPatch_NotFound(t *testing.T) {
+	_, ts, _ := testManagementServer(t, "tok")
+	r := mgmtPatch(t, ts.URL+"/api/v1/projects/test-project/sessions/nope", "tok", map[string]any{"pinned": true})
+	if r.OK {
+		t.Fatal("expected error for unknown session")
+	}
+}
+
+func TestMgmt_SessionPatch_EmptyBody(t *testing.T) {
+	_, ts, e := testManagementServer(t, "tok")
+	s := e.GetSessions().GetOrCreateActive("user1")
+	r := mgmtPatch(t, ts.URL+"/api/v1/projects/test-project/sessions/"+s.ID, "tok", map[string]any{})
+	if r.OK {
+		t.Fatal("expected error for empty patch body")
+	}
+}
+
+func TestMgmt_SessionList_IncludesPinned(t *testing.T) {
+	_, ts, e := testManagementServer(t, "tok")
+	s := e.GetSessions().GetOrCreateActive("user1")
+	pinned := true
+	if _, err := e.GetSessions().SetSessionMeta(s.ID, nil, &pinned); err != nil {
+		t.Fatal(err)
+	}
+
+	r := mgmtGet(t, ts.URL+"/api/v1/projects/test-project/sessions", "tok")
+	if !r.OK {
+		t.Fatalf("list failed: %s", r.Error)
+	}
+	var data struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	if err := json.Unmarshal(r.Data, &data); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	found := false
+	for _, sess := range data.Sessions {
+		if sess["id"] == s.ID {
+			if p, _ := sess["pinned"].(bool); !p {
+				t.Fatal("expected pinned=true in list response")
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("session not found in list")
+	}
+}
+
 func TestMgmt_Config(t *testing.T) {
 	srv, ts, _ := testManagementServer(t, "tok")
 

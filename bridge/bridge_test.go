@@ -52,10 +52,15 @@ func dialWS(t *testing.T, url string, headers http.Header) *websocket.Conn {
 }
 
 func register(t *testing.T, conn *websocket.Conn, platform string, caps []string) {
+	registerWithClientID(t, conn, platform, "", caps)
+}
+
+func registerWithClientID(t *testing.T, conn *websocket.Conn, platform, clientID string, caps []string) {
 	t.Helper()
 	msg := map[string]any{
 		"type":         "register",
 		"platform":     platform,
+		"client_id":    clientID,
 		"capabilities": caps,
 	}
 	mustWriteJSON(t, conn, msg)
@@ -90,6 +95,19 @@ func readMsg(t *testing.T, conn *websocket.Conn) map[string]any {
 	var m map[string]any
 	if err := conn.ReadJSON(&m); err != nil {
 		t.Fatalf("read message: %v", err)
+	}
+	return m
+}
+
+// tryReadMsg attempts to read a message within timeout; returns nil if none arrives.
+func tryReadMsg(t *testing.T, conn *websocket.Conn, timeout time.Duration) map[string]any {
+	t.Helper()
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	var m map[string]any
+	if err := conn.ReadJSON(&m); err != nil {
+		return nil
 	}
 	return m
 }
@@ -569,23 +587,76 @@ func TestBridge_Ping(t *testing.T) {
 func TestBridge_AdapterReplace(t *testing.T) {
 	bs, wsURL := startTestBridge(t, "")
 
+	const clientID = "same-client"
 	conn1 := dialWS(t, wsURL, nil)
-	register(t, conn1, "replaceme", []string{"text"})
+	registerWithClientID(t, conn1, "replaceme", clientID, []string{"text"})
 
 	if len(bs.ConnectedAdapters()) != 1 {
 		t.Fatal("expected 1 adapter")
 	}
 
 	conn2 := dialWS(t, wsURL, nil)
-	register(t, conn2, "replaceme", []string{"text", "card"})
+	registerWithClientID(t, conn2, "replaceme", clientID, []string{"text", "card"})
 
 	if len(bs.ConnectedAdapters()) != 1 {
-		t.Fatal("expected still 1 adapter after replace")
+		t.Fatal("expected still 1 adapter after reconnect with same client_id")
 	}
 
-	a := bs.getAdapter("replaceme")
+	a := bs.getFirstAdapter("replaceme")
+	if a == nil {
+		t.Fatal("expected adapter present")
+	}
 	if !a.capabilities["card"] {
 		t.Fatal("replaced adapter should have card capability")
+	}
+}
+
+func TestBridge_MultipleWebClientsCoexist(t *testing.T) {
+	bs, wsURL := startTestBridge(t, "")
+
+	conn1 := dialWS(t, wsURL, nil)
+	registerWithClientID(t, conn1, "web", "client-a", []string{"text"})
+	conn2 := dialWS(t, wsURL, nil)
+	registerWithClientID(t, conn2, "web", "client-b", []string{"text"})
+
+	if len(bs.ConnectedAdapters()) != 1 {
+		t.Fatal("expected 1 platform (web)")
+	}
+	if got := len(bs.getFirstAdapter("web").server.adapters["web"]); got != 2 {
+		t.Fatalf("expected 2 coexisting clients, got %d", got)
+	}
+
+	// Both clients receive a broadcast message.
+	msg := map[string]any{"type": "broadcast_test", "content": "hello"}
+	if err := bs.sendToAdapter("web", msg); err != nil {
+		t.Fatalf("sendToAdapter failed: %v", err)
+	}
+	m1 := readMsg(t, conn1)
+	m2 := readMsg(t, conn2)
+	if m1["content"] != "hello" || m2["content"] != "hello" {
+		t.Fatal("both clients should receive the broadcast")
+	}
+}
+
+func TestBridge_SendToClientUnicast(t *testing.T) {
+	bs, wsURL := startTestBridge(t, "")
+
+	connA := dialWS(t, wsURL, nil)
+	registerWithClientID(t, connA, "web", "client-a", []string{"text"})
+	connB := dialWS(t, wsURL, nil)
+	registerWithClientID(t, connB, "web", "client-b", []string{"text"})
+
+	msg := map[string]any{"type": "unicast_test", "content": "only-a"}
+	if err := bs.sendToClient("web", "client-a", msg); err != nil {
+		t.Fatalf("sendToClient failed: %v", err)
+	}
+	ma := readMsg(t, connA)
+	if ma["content"] != "only-a" {
+		t.Fatal("client-a should receive the unicast")
+	}
+	// client-b must NOT receive it (timeout expected).
+	if m := tryReadMsg(t, connB, 300*time.Millisecond); m != nil {
+		t.Fatalf("client-b should not receive unicast, got %v", m)
 	}
 }
 
@@ -917,5 +988,73 @@ func TestBridge_SessionMissingParams(t *testing.T) {
 	})
 	if r.OK {
 		t.Fatal("expected error without target in switch")
+	}
+}
+
+// TestBridgeProgressMaxEntriesMetadata verifies the register-metadata parsing
+// behind the Web admin UI's "show all progress entries" declaration:
+// progress_max_entries 0 = unlimited, >0 = cap, absent/invalid = no override.
+func TestBridgeProgressMaxEntriesMetadata(t *testing.T) {
+	cases := []struct {
+		name     string
+		metadata map[string]any
+		want     int
+	}{
+		{"absent", nil, -1},
+		{"zero unlimited", map[string]any{"progress_max_entries": float64(0)}, 0},
+		{"positive cap", map[string]any{"progress_max_entries": float64(25)}, 25},
+		{"negative ignored", map[string]any{"progress_max_entries": float64(-3)}, -1},
+		{"fractional ignored", map[string]any{"progress_max_entries": 2.5}, -1},
+		{"wrong type ignored", map[string]any{"progress_max_entries": "10"}, -1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &bridgeAdapter{metadata: tc.metadata}
+			if got := bridgeProgressMaxEntriesForAdapter(a); got != tc.want {
+				t.Fatalf("bridgeProgressMaxEntriesForAdapter() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+	if got := bridgeProgressMaxEntriesForAdapter(nil); got != -1 {
+		t.Fatalf("nil adapter hint = %d, want -1", got)
+	}
+}
+
+// TestBridge_MessageReplyCtxCarriesMaxEntriesHint verifies the register
+// metadata flows through to the reply context used by the progress writer.
+func TestBridge_MessageReplyCtxCarriesMaxEntriesHint(t *testing.T) {
+	bs, wsURL := startTestBridge(t, "")
+
+	gotCh := make(chan *bridgeReplyCtx, 1)
+	bp := bs.NewPlatform("test-proj")
+	e := core.NewEngine("test-proj", &stubAgent{}, []core.Platform{bp}, "", core.LangEnglish)
+	bs.RegisterEngine("test-proj", e, bp)
+	bp.handler = func(p core.Platform, msg *core.Message) {
+		if rc, ok := msg.ReplyCtx.(*bridgeReplyCtx); ok {
+			gotCh <- rc
+		}
+	}
+
+	conn := dialWS(t, wsURL, nil)
+	registerWithMetadata(t, conn, "web", []string{"text", "card", "preview", "update_message"}, map[string]any{
+		"progress_max_entries": 0,
+	})
+
+	mustWriteJSON(t, conn, map[string]any{
+		"type":        "message",
+		"msg_id":      "m1",
+		"session_key": "bridge:room-1:user-1",
+		"user_id":     "user-1",
+		"content":     "hello",
+		"reply_ctx":   "ctx-1",
+	})
+
+	select {
+	case got := <-gotCh:
+		if hint := got.ProgressMaxEntriesHint(); hint != 0 {
+			t.Fatalf("ProgressMaxEntriesHint() = %d, want 0 (unlimited)", hint)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("expected reply ctx to be captured")
 	}
 }

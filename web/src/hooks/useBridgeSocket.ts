@@ -1,15 +1,15 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import api from '@/api/client';
 
 export type BridgeIncoming =
   | { type: 'register_ack'; ok: boolean; error?: string }
-  | { type: 'reply'; session_key: string; reply_ctx: string; content: string; format?: string }
-  | { type: 'reply_stream'; session_key: string; reply_ctx: string; delta: string; full_text: string; preview_handle?: string; done: boolean }
-  | { type: 'card'; session_key: string; reply_ctx: string; card: any }
-  | { type: 'buttons'; session_key: string; reply_ctx: string; content: string; buttons: { text: string; data: string }[][] }
+  | { type: 'reply'; session_key: string; session_id?: string; reply_ctx: string; content: string; format?: string }
+  | { type: 'reply_stream'; session_key: string; session_id?: string; reply_ctx: string; delta: string; full_text: string; preview_handle?: string; done: boolean }
+  | { type: 'card'; session_key: string; session_id?: string; reply_ctx: string; card: any }
+  | { type: 'buttons'; session_key: string; session_id?: string; reply_ctx: string; content: string; buttons: { text: string; data: string }[][] }
   | { type: 'typing_start'; session_key: string }
   | { type: 'typing_stop'; session_key: string }
-  | { type: 'preview_start'; ref_id: string; session_key: string; reply_ctx: string; content: string }
+  | { type: 'preview_start'; ref_id: string; session_key: string; session_id?: string; reply_ctx: string; content: string }
   | { type: 'update_message'; session_key: string; preview_handle: string; content: string }
   | { type: 'delete_message'; session_key: string; preview_handle: string }
   | { type: 'error'; code: string; message: string }
@@ -20,6 +20,14 @@ export interface BridgeConfig {
   port: number;
   path: string;
   token: string;
+}
+
+// Media attachments sent alongside a chat message over the bridge `message`
+// frame. `data` is the raw base64 payload (no data: URL prefix). Backend
+// (bridge.handleMessage) already decodes these into core.Message.Images/.Files.
+export interface BridgeMedia {
+  images?: { mime_type: string; data: string; file_name?: string }[];
+  files?: { mime_type: string; data: string; file_name: string }[];
 }
 
 export type BridgeStatus = 'connecting' | 'registering' | 'connected' | 'disconnected' | 'error';
@@ -39,22 +47,43 @@ export function useBridgeSocket({ bridgeCfg, platformName = 'web', sessionKey, p
   const pingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [status, setStatus] = useState<BridgeStatus>('disconnected');
 
+  // Per-tab client id: each browser tab/window is an independent bridge client
+  // so multiple Web dashboards can connect simultaneously without kicking each
+  // other off. sessionStorage scopes the id to the tab; a fallback random uuid
+  // is used if storage is unavailable.
+  const clientID = useMemo(() => {
+    try {
+      const key = 'bridge_client_id';
+      const existing = sessionStorage.getItem(key);
+      if (existing) return existing;
+      const id = (crypto as any).randomUUID
+        ? (crypto as any).randomUUID()
+        : `web-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      sessionStorage.setItem(key, id);
+      return id;
+    } catch {
+      return `web-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+  }, []);
+
   const send = useCallback((data: Record<string, any>) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(data));
     }
   }, []);
 
-  const sendMessage = useCallback((content: string) => {
+  const sendMessage = useCallback((content: string, media?: BridgeMedia, sessionID?: string) => {
     send({
       type: 'message',
       msg_id: `web-${Date.now()}`,
       session_key: sessionKey,
+      session_id: sessionID || '',
       user_id: 'web-admin',
       user_name: 'Web Admin',
       content,
       reply_ctx: sessionKey,
       project: projectName || '',
+      ...(media || {}),
     });
   }, [send, sessionKey, projectName]);
 
@@ -95,8 +124,16 @@ export function useBridgeSocket({ bridgeCfg, platformName = 'web', sessionKey, p
         ws.send(JSON.stringify({
           type: 'register',
           platform: platformName,
-          capabilities: ['text', 'card', 'buttons', 'typing', 'update_message', 'preview', 'reconstruct_reply'],
-          metadata: { version: '1.0.0', description: 'Web Admin Dashboard' },
+          client_id: clientID,
+          capabilities: ['text', 'card', 'buttons', 'typing', 'update_message', 'preview', 'reconstruct_reply', 'image', 'file'],
+          // progress_max_entries: 0 = show all progress entries (the default
+          // 10-entry cap exists for IM message-size limits; Web streams over
+          // WebSocket and has no such limit).
+          // supports_progress_card_payload: true opts the Web client into
+          // receiving structured __heron_connect_progress_card_v1__ payloads
+          // instead of pre-rendered markdown, so the chat UI can render
+          // individual tool/thinking blocks as collapsible cards.
+          metadata: { version: '1.0.0', description: 'Web Admin Dashboard', progress_max_entries: 0, supports_progress_card_payload: true },
         }));
       };
 

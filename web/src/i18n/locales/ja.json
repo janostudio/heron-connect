@@ -4,7 +4,7 @@
     "projects": "プロジェクト",
     "providers": "プロバイダー",
     "sessions": "セッション",
-    "chat": "チャット",
+    "chat": "プロジェクト対話",
     "cron": "Cron",
     "bridge": "ブリッジ",
     "skills": "スキル",
@@ -82,7 +82,13 @@
     "bridgeConnected": "接続済み",
     "bridgeConnecting": "接続中...",
     "bridgeDisconnected": "未接続",
-    "bridgeNotAvailable": "ブリッジが利用できません。config.toml で [bridge] を有効にしてください。"
+    "running": "実行中",
+    "waitingPermission": "承認待ち",
+    "bridgeNotAvailable": "ブリッジが利用できません。config.toml で [bridge] を有効にしてください。",
+    "searchPlaceholder": "セッション名、ユーザー、メッセージ内容で検索...",
+    "createNew": "新規セッション",
+    "selectProject": "プロジェクトを選択",
+    "sessionNameOptional": "セッション名（任意）"
   },
   "providers": {
     "title": "プロバイダー",
@@ -182,6 +188,11 @@
     "save": "保存",
     "delete": "削除",
     "back": "戻る",
+    "menu": "メニュー",
+    "more": "その他",
+    "theme": "テーマ",
+    "collapse": "折りたたむ",
+    "expand": "展開",
     "refresh": "更新",
     "search": "検索",
     "noData": "データなし",
@@ -265,6 +276,10 @@
     "slashHint": "/ を押して利用可能なコマンドを表示",
     "inputPlaceholder": "メッセージを入力、または / でコマンド...",
     "commands": "コマンド",
+    "stop": "停止",
+    "attach": "画像/ファイルを添付",
+    "removeAttachment": "削除",
+    "fileTooBig": "ファイルが大きすぎます（>10MB）",
     "defaultSession": "Web セッション"
   },
   "cmd": {

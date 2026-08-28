@@ -7,8 +7,12 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +48,11 @@ type ManagementServer struct {
 
 	mu      sync.RWMutex
 	engines map[string]*core.Engine // project name → engine
+	// projectWorkDirs maps a project name to the root directory whose files are
+	// exposed through the /api/v1/files/<project>/... endpoint. Populated from
+	// the effective agent work_dir at startup so the web UI can preview/download
+	// files the agent generated on disk.
+	projectWorkDirs map[string]string
 
 	cronScheduler      *core.CronScheduler
 	heartbeatScheduler *core.HeartbeatScheduler
@@ -87,6 +96,20 @@ func (m *ManagementServer) RegisterEngine(name string, e *core.Engine) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.engines[name] = e
+}
+
+// RegisterProjectWorkDir records the root directory whose files are served to
+// the web UI for a given project via /api/v1/files/<project>/...
+func (m *ManagementServer) RegisterProjectWorkDir(name, workDir string) {
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(workDir) == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.projectWorkDirs == nil {
+		m.projectWorkDirs = make(map[string]string)
+	}
+	m.projectWorkDirs[name] = workDir
 }
 
 func (m *ManagementServer) SetCronScheduler(cs *core.CronScheduler)           { m.cronScheduler = cs }
@@ -227,6 +250,11 @@ func (m *ManagementServer) buildHandler(mux *http.ServeMux) http.Handler {
 	mux.HandleFunc(prefix+"/projects", m.wrap(m.handleProjects))
 	mux.HandleFunc(prefix+"/projects/", m.wrap(m.handleProjectRoutes))
 
+	// Local file serving for the web UI (agent-generated files in the project
+	// work dir). Auth-protected + path-traversal guarded. Serves bytes inline
+	// for preview by default; ?download=1 forces attachment download.
+	mux.HandleFunc(prefix+"/files/", m.wrap(m.handleFile))
+
 	// Cron (global)
 	mux.HandleFunc(prefix+"/cron", m.wrap(m.handleCron))
 	mux.HandleFunc(prefix+"/cron/", m.wrap(m.handleCronByID))
@@ -366,6 +394,51 @@ func splitSessionKey(key string) []string {
 	return strings.SplitN(key, ":", 3)
 }
 
+// isolateLegacyWebSessionKey rewrites a legacy shared Web session key into a
+// per-conversation key. Before per-conversation keys existed, every conversation
+// in one browser tab shared `bridge:web-admin:<project>:wc-<ts>-<rand>`, so all
+// of them collapsed onto a single agent session. For such legacy keys we expose
+// a distinct `bridge:web-admin:<project>:conv-legacy-<sessionID>` to the API
+// consumer so the frontend can treat each conversation independently. Keys that
+// are already per-conversation (conv-...) or belong to other platforms are
+// returned unchanged. This is a read-time projection only — storage is untouched.
+func isolateLegacyWebSessionKey(sessionKey, sessionID string) string {
+	if sessionKey == "" || sessionID == "" {
+		return sessionKey
+	}
+	parts := splitSessionKey(sessionKey)
+	// Expect: bridge:web-admin:<project>:<rest>
+	if len(parts) < 3 || parts[0] != "bridge" || parts[1] != "web-admin" {
+		return sessionKey
+	}
+	rest := parts[2]
+	if rest == "" {
+		return sessionKey
+	}
+	// Split project from the connection/conversation suffix.
+	if i := strings.Index(rest, ":"); i >= 0 {
+		project := rest[:i]
+		suffix := rest[i+1:]
+		// Only rewrite the legacy shared per-tab suffix (wc-...); leave
+		// already-isolated conv-... keys and any non-wc suffix untouched.
+		if strings.HasPrefix(suffix, "wc-") {
+			return "bridge:web-admin:" + project + ":conv-legacy-" + sessionID
+		}
+	}
+	return sessionKey
+}
+
+// normalizeSessionName maps placeholder session names to "" so API consumers
+// fall back to user/chat metadata or the session ID instead of showing a
+// meaningless "default" everywhere. Mirrors core.isPlaceholderSessionName.
+func normalizeSessionName(name string) string {
+	switch name {
+	case "", "session", "default":
+		return ""
+	}
+	return name
+}
+
 func mgmtError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -389,6 +462,168 @@ func (m *ManagementServer) handleAgents(w http.ResponseWriter, r *http.Request) 
 		"agents":    core.ListRegisteredAgents(),
 		"platforms": core.ListRegisteredPlatforms(),
 	})
+}
+
+// handleFile serves a file from a project's work dir to the web UI for inline
+// preview or download. URL form: /api/v1/files/<project>/<relative path>.
+// The path segment after the project name is URL-decoded and joined under the
+// project's registered work dir root, with path-traversal protection so only
+// files inside that root are reachable. ?download=1 forces an attachment.
+func (m *ManagementServer) handleFile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		mgmtError(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	// Path is /api/v1/files/<project>/<relpath>. relpath may be empty to list
+	// the project root directory.
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/files/")
+	project, rel, ok := strings.Cut(rest, "/")
+	if !ok || project == "" {
+		mgmtError(w, http.StatusBadRequest, "expected /api/v1/files/<project>/<path>")
+		return
+	}
+	decoded, err := url.PathUnescape(rel)
+	if err != nil {
+		mgmtError(w, http.StatusBadRequest, "invalid path encoding")
+		return
+	}
+
+	m.mu.RLock()
+	root := m.projectWorkDirs[project]
+	m.mu.RUnlock()
+	if root == "" {
+		mgmtError(w, http.StatusNotFound, "unknown project or no work dir")
+		return
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		mgmtError(w, http.StatusInternalServerError, "resolve work dir failed")
+		return
+	}
+	full := filepath.Join(rootAbs, filepath.FromSlash(decoded))
+	// Path-traversal guard: the resolved path must stay under the root.
+	if full != rootAbs && !strings.HasPrefix(full, rootAbs+string(os.PathSeparator)) {
+		mgmtError(w, http.StatusForbidden, "path escapes work dir")
+		return
+	}
+
+	f, err := os.Open(full)
+	if err != nil {
+		if os.IsNotExist(err) {
+			mgmtError(w, http.StatusNotFound, "file not found")
+		} else {
+			mgmtError(w, http.StatusInternalServerError, "open file failed")
+		}
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		mgmtError(w, http.StatusInternalServerError, "stat file failed")
+		return
+	}
+	if st.IsDir() {
+		m.handleDirListing(w, rootAbs, full)
+		return
+	}
+
+	name := filepath.Base(full)
+	contentType := fileContentType(name)
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if r.URL.Query().Get("download") == "1" {
+		w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(name))
+	} else if contentType != "application/octet-stream" {
+		// Allow inline rendering for previewable types; force download for unknown.
+		w.Header().Set("Content-Disposition", "inline")
+	} else {
+		w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(name))
+	}
+	http.ServeContent(w, r, name, st.ModTime(), f)
+}
+
+// handleDirListing writes a JSON directory listing for a project work-dir
+// directory (non-recursive). Entries are sorted dirs-first, then files, each
+// alphabetically. path is the slash-normalized project-relative path of the
+// directory ("" = root, rendered as "/").
+func (m *ManagementServer) handleDirListing(w http.ResponseWriter, rootAbs, dirAbs string) {
+	entries, err := os.ReadDir(dirAbs)
+	if err != nil {
+		mgmtError(w, http.StatusInternalServerError, "read directory failed")
+		return
+	}
+	type entry struct {
+		Name  string `json:"name"`
+		Type  string `json:"type"` // "dir" | "file"
+		Size  int64  `json:"size"`
+		MTime int64  `json:"mtime"`
+	}
+	items := make([]entry, 0, len(entries))
+	for _, de := range entries {
+		e := entry{Name: de.Name()}
+		if de.IsDir() {
+			e.Type = "dir"
+		} else {
+			e.Type = "file"
+			if info, err := de.Info(); err == nil {
+				e.Size = info.Size()
+				e.MTime = info.ModTime().Unix()
+			}
+		}
+		items = append(items, e)
+	}
+	// Sort: dirs first, then files; alphabetical within each group.
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Type != items[j].Type {
+			return items[i].Type == "dir"
+		}
+		return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
+	})
+
+	rel, err := filepath.Rel(rootAbs, dirAbs)
+	if err != nil {
+		rel = ""
+	}
+	relPath := filepath.ToSlash(rel)
+	if relPath == "." {
+		relPath = ""
+	}
+	mgmtJSON(w, http.StatusOK, map[string]any{
+		"path":    relPath,
+		"entries": items,
+	})
+}
+
+// fileContentType resolves a content type for a file name. It consults the
+// stdlib mime registry first, then falls back to a small map for common types
+// (e.g. markdown) that the OS registry often omits.
+func fileContentType(name string) string {
+	ext := strings.ToLower(filepath.Ext(name))
+	if ct := mime.TypeByExtension(ext); ct != "" {
+		return ct
+	}
+	switch ext {
+	case ".md", ".markdown":
+		return "text/markdown; charset=utf-8"
+	case ".txt", ".text", ".log":
+		return "text/plain; charset=utf-8"
+	case ".json", ".map":
+		return "application/json; charset=utf-8"
+	case ".yaml", ".yml":
+		return "text/yaml; charset=utf-8"
+	case ".xml", ".svg":
+		return "application/xml; charset=utf-8"
+	case ".csv":
+		return "text/csv; charset=utf-8"
+	case ".js", ".mjs":
+		return "text/javascript; charset=utf-8"
+	case ".ts", ".tsx", ".jsx":
+		return "text/typescript; charset=utf-8"
+	case ".go", ".py", ".rs", ".c", ".h", ".cpp", ".hpp", ".java", ".rb", ".php", ".sh", ".sql", ".toml":
+		return "text/plain; charset=utf-8"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 func (m *ManagementServer) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -903,6 +1138,7 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 	switch r.Method {
 	case http.MethodGet:
 		activeKeys := e.InteractiveSessionPlatformMap()
+		turnStates := e.InteractiveSessionTurnStates()
 
 		idToKey, activeIDs := e.GetSessions().SessionKeyMap()
 		stored := e.GetSessions().AllSessions()
@@ -923,10 +1159,11 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 					"timestamp": last.Timestamp,
 				}
 			}
-			info := map[string]any{
-				"id":            snap.ID,
-				"name":          snap.Name,
-				"session_key":   idToKey[snap.ID],
+		info := map[string]any{
+			"id":            snap.ID,
+			"name":          normalizeSessionName(snap.Name),
+			"pinned":        snap.Pinned,
+			"session_key":   isolateLegacyWebSessionKey(idToKey[snap.ID], snap.ID),
 				"agent_type":    snap.AgentType,
 				"active":        activeIDs[snap.ID],
 				"history_count": histCount,
@@ -935,9 +1172,16 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 				"last_message":  lastMsg,
 			}
 
-			sessionKey := idToKey[snap.ID]
+			sessionKey := isolateLegacyWebSessionKey(idToKey[snap.ID], snap.ID)
 			_, live := activeKeys[sessionKey]
 			info["live"] = live
+			if ts, ok := turnStates[sessionKey]; ok {
+				info["running"] = ts.Running
+				info["waiting_permission"] = ts.WaitingPermission
+			} else {
+				info["running"] = false
+				info["waiting_permission"] = false
+			}
 			if p, ok := activeKeys[sessionKey]; ok {
 				info["platform"] = p
 			} else if len(sessionKey) > 0 {
@@ -974,14 +1218,11 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 			return
 		}
 
-		s := e.GetSessions().GetOrCreateActive(body.SessionKey)
-		if body.Name != "" {
-			s.SetName(body.Name)
-		}
-		e.GetSessions().Save()
+		s := e.ForceNewSession(body.SessionKey, body.Name)
 
 		snap := s.Snapshot()
 		mgmtJSON(w, http.StatusOK, map[string]any{
+			"id":          snap.ID,
 			"session_key": body.SessionKey,
 			"name":        snap.Name,
 		})
@@ -1018,32 +1259,45 @@ func (m *ManagementServer) handleProjectSessionDetail(w http.ResponseWriter, r *
 
 		idToKey, activeIDs := e.GetSessions().SessionKeyMap()
 		snap := s.Snapshot()
-		sessionKey := idToKey[snap.ID]
+		sessionKey := isolateLegacyWebSessionKey(idToKey[snap.ID], snap.ID)
 
-		live := e.IsSessionLive(sessionKey)
+	live := e.IsSessionLive(sessionKey)
+	turnStates := e.InteractiveSessionTurnStates()
+	running, waitingPerm := false, false
+	if ts, ok := turnStates[sessionKey]; ok {
+		running, waitingPerm = ts.Running, ts.WaitingPermission
+	}
 
-		data := map[string]any{
-			"id":               snap.ID,
-			"name":             snap.Name,
-			"session_key":      sessionKey,
-			"agent_session_id": snap.AgentSessionID,
-			"agent_type":       snap.AgentType,
-			"active":           activeIDs[snap.ID],
-			"live":             live,
-			"history_count":    len(snap.History),
-			"created_at":       snap.CreatedAt,
-			"updated_at":       snap.UpdatedAt,
-			"history":          histJSON,
+	data := map[string]any{
+		"id":                 snap.ID,
+		"name":               normalizeSessionName(snap.Name),
+		"pinned":             snap.Pinned,
+		"session_key":        sessionKey,
+		"agent_session_id":   snap.AgentSessionID,
+		"agent_type":         snap.AgentType,
+		"active":             activeIDs[snap.ID],
+		"live":               live,
+		"running":            running,
+		"waiting_permission": waitingPerm,
+		"history_count":      len(snap.History),
+		"created_at":         snap.CreatedAt,
+		"updated_at":         snap.UpdatedAt,
+		"history":            histJSON,
+	}
+
+	if len(sessionKey) > 0 {
+		parts := splitSessionKey(sessionKey)
+		if len(parts) > 0 {
+			data["platform"] = parts[0]
 		}
+	}
 
-		if len(sessionKey) > 0 {
-			parts := splitSessionKey(sessionKey)
-			if len(parts) > 0 {
-				data["platform"] = parts[0]
-			}
-		}
+	if meta := e.GetSessions().GetUserMeta(sessionKey); meta != nil {
+		data["user_name"] = meta.UserName
+		data["chat_name"] = meta.ChatName
+	}
 
-		mgmtJSON(w, http.StatusOK, data)
+	mgmtJSON(w, http.StatusOK, data)
 
 	case http.MethodDelete:
 		if e.GetSessions().DeleteByID(sessionID) {
@@ -1052,8 +1306,38 @@ func (m *ManagementServer) handleProjectSessionDetail(w http.ResponseWriter, r *
 			mgmtError(w, http.StatusNotFound, "session not found")
 		}
 
+	case http.MethodPatch:
+		var body struct {
+			Name   *string `json:"name"`
+			Pinned *bool   `json:"pinned"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			mgmtError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		if body.Name == nil && body.Pinned == nil {
+			mgmtError(w, http.StatusBadRequest, "provide name or pinned")
+			return
+		}
+		ok, err := e.GetSessions().SetSessionMeta(sessionID, body.Name, body.Pinned)
+		if err != nil {
+			mgmtError(w, http.StatusInternalServerError, "update session failed")
+			return
+		}
+		if !ok {
+			mgmtError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		s := e.GetSessions().FindByID(sessionID)
+		resp := map[string]any{"id": sessionID}
+		if s != nil {
+			resp["name"] = normalizeSessionName(s.GetName())
+			resp["pinned"] = s.IsPinned()
+		}
+		mgmtJSON(w, http.StatusOK, resp)
+
 	default:
-		mgmtError(w, http.StatusMethodNotAllowed, "GET or DELETE only")
+		mgmtError(w, http.StatusMethodNotAllowed, "GET, PATCH, or DELETE only")
 	}
 }
 

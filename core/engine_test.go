@@ -367,6 +367,8 @@ func (p *stubCompactProgressPlatform) SupportsProgressCardPayload() bool {
 	return p.supportPayload
 }
 
+func (p *stubCompactProgressPlatform) MessageSizeLimit() int { return 4000 }
+
 func (p *stubCompactProgressPlatform) SendPreviewStart(_ context.Context, _ any, content string) (any, error) {
 	p.previewMu.Lock()
 	p.previewStarts = append(p.previewStarts, content)
@@ -1463,6 +1465,65 @@ func TestProcessInteractiveEvents_ToolMessagesDisabledSuppressesToolProgressOnly
 	}
 }
 
+func TestProcessInteractiveEvents_PlatformDisplayOverride(t *testing.T) {
+	// Engine default is quiet (thinking/tool hidden); a per-platform override
+	// for "web" flips to full (thinking/tool shown). A platform with no
+	// registered override ("feishu") must keep following the engine default.
+	e := NewEngine("test", &stubAgent{}, nil, "", LangEnglish)
+	e.SetDisplayConfig(DisplayCfg{Mode: displayModeQuiet, ThinkingMessages: false, ThinkingMaxLen: 300, ToolMaxLen: 500, ToolMessages: false})
+	e.SetPlatformDisplayOverrides(map[string]DisplayCfg{
+		"web": {Mode: displayModeFull, ThinkingMessages: true, ThinkingMaxLen: 300, ToolMaxLen: 500, ToolMessages: true},
+	})
+
+	runTurn := func(platformName string, p Platform) []string {
+		sessionKey := "test:" + platformName
+		session := e.sessions.GetOrCreateActive(sessionKey)
+		agentSession := newControllableSession("s-" + platformName)
+		state := &interactiveState{
+			agentSession: agentSession,
+			platform:     p,
+			platformName: platformName,
+			replyCtx:     "ctx-1",
+		}
+		e.interactiveStates[sessionKey] = state
+
+		agentSession.events <- Event{Type: EventThinking, Content: "planning"}
+		agentSession.events <- Event{Type: EventToolUse, ToolName: "Bash", ToolInput: "echo hi"}
+		agentSession.events <- Event{Type: EventToolResult, ToolName: "Bash", ToolResult: "hi"}
+		agentSession.events <- Event{Type: EventText, Content: "done"}
+		agentSession.events <- Event{Type: EventResult, Content: "done", Done: true}
+
+		e.processInteractiveEvents(state, session, e.sessions, sessionKey, "m1", time.Now(), nil, nil, nil)
+		return p.(*stubPlatformEngine).getSent()
+	}
+
+	webPlatform := &stubPlatformEngine{n: "web"}
+	webSent := runTurn("web", webPlatform)
+	foundThinking, foundTool := false, false
+	for _, msg := range webSent {
+		if strings.Contains(msg, "planning") {
+			foundThinking = true
+		}
+		if strings.Contains(msg, "Bash") || strings.Contains(msg, "echo hi") {
+			foundTool = true
+		}
+	}
+	if !foundThinking {
+		t.Errorf("web platform override: expected thinking message to be shown, got %#v", webSent)
+	}
+	if !foundTool {
+		t.Errorf("web platform override: expected tool progress to be shown, got %#v", webSent)
+	}
+
+	feishuPlatform := &stubPlatformEngine{n: "feishu"}
+	feishuSent := runTurn("feishu", feishuPlatform)
+	for _, msg := range feishuSent {
+		if strings.Contains(msg, "planning") || strings.Contains(msg, "Bash") || strings.Contains(msg, "echo hi") {
+			t.Errorf("feishu (no override, falls back to quiet default): expected thinking/tool hidden, got %#v", feishuSent)
+		}
+	}
+}
+
 func TestProcessInteractiveEvents_ToolMessagesDisabledHidesSubagentDetails(t *testing.T) {
 	p := &stubPlatformEngine{n: "telegram"}
 	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
@@ -1508,17 +1569,17 @@ func TestEngine_HidesSubagentEventFollowsToolMessages(t *testing.T) {
 
 	e.SetDisplayConfig(DisplayCfg{ToolMessages: false})
 	for _, event := range contentEvents {
-		if !e.hidesSubagentEvent(event) {
+		if !e.hidesSubagentEvent(event, e.display) {
 			t.Fatalf("event %s should be hidden when tool messages are disabled", event.Type)
 		}
 	}
-	if e.hidesSubagentEvent(Event{Type: EventResult, IsSubagent: true}) {
+	if e.hidesSubagentEvent(Event{Type: EventResult, IsSubagent: true}, e.display) {
 		t.Fatal("result lifecycle event should never be hidden")
 	}
 
 	e.SetDisplayConfig(DisplayCfg{ToolMessages: true})
 	for _, event := range contentEvents {
-		if e.hidesSubagentEvent(event) {
+		if e.hidesSubagentEvent(event, e.display) {
 			t.Fatalf("event %s should be shown when tool messages are enabled", event.Type)
 		}
 	}
@@ -3133,6 +3194,168 @@ func TestHandleMessage_AutoResetOnIdle_RotatesToNewSession(t *testing.T) {
 	}
 	if got := sent[len(sent)-1]; got != "fresh reply" {
 		t.Fatalf("final reply = %q, want fresh reply", got)
+	}
+}
+
+func TestHandleMessage_AutoResetOnIdle_PlatformOverrideZeroDisablesReset(t *testing.T) {
+	// Engine-wide reset is 60m, but the "web" platform opts out via a
+	// per-platform override of 0 — so a stale session on "web" must NOT rotate.
+	p := &stubPlatformEngine{n: "web"}
+	agentSession := newResultAgentSession("web reply")
+	agent := &resultAgent{session: agentSession}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetResetOnIdle(60 * time.Minute)
+	e.SetPlatformResetOnIdleOverrides(map[string]time.Duration{"web": 0})
+
+	key := "web:user1"
+	session := e.sessions.GetOrCreateActive(key)
+	session.AddHistory("user", "stale context")
+	session.SetAgentSessionID("old-session", "stub")
+	staleAt := time.Now().Add(-2 * time.Hour)
+	session.mu.Lock()
+	session.UpdatedAt = staleAt
+	session.mu.Unlock()
+
+	msg := &Message{
+		SessionKey: key,
+		Platform:   "web",
+		UserID:     "u1",
+		UserName:   "user",
+		Content:    "hello after idle",
+		ReplyCtx:   "ctx",
+	}
+	e.handleMessage(p, msg)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		sent := p.getSent()
+		if len(sent) >= 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for reply, sent=%v", sent)
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	active := e.sessions.GetOrCreateActive(key)
+	if active.ID != session.ID {
+		t.Fatalf("expected session NOT to rotate on web (override 0), got new session %s (old %s)", active.ID, session.ID)
+	}
+	if got := active.GetAgentSessionID(); got != "old-session" {
+		t.Fatalf("session agent id = %q, want old-session preserved (no reset)", got)
+	}
+}
+
+func TestHandleMessage_AutoResetOnIdle_PlatformOverrideZeroUsesMsgPlatform(t *testing.T) {
+	// Regression: Web admin messages reach the engine through a BridgePlatform
+	// whose Name() is "bridge", while the message Platform is "web" (the type
+	// the client registered with). The per-platform override is keyed by the
+	// config `type = "web"` entry, so the override must be resolved from
+	// msg.Platform, NOT p.Name(). Otherwise a "bridge" Name() never matches the
+	// "web" key and falls back to the engine-wide 720m threshold, wrongly
+	// rotating the Web session.
+	p := &stubPlatformEngine{n: "bridge"}
+	agentSession := newResultAgentSession("web reply")
+	agent := &resultAgent{session: agentSession}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetResetOnIdle(720 * time.Minute)
+	e.SetPlatformResetOnIdleOverrides(map[string]time.Duration{"web": 0})
+
+	key := "web:user1"
+	session := e.sessions.GetOrCreateActive(key)
+	session.AddHistory("user", "stale context")
+	session.SetAgentSessionID("old-session", "stub")
+	// Stale well beyond the engine-wide 720m threshold (1200m), so that if the
+	// override is NOT applied (i.e. resolution falls back to the project-level
+	// value because it matched p.Name()="bridge" instead of msg.Platform="web")
+	// the session WOULD rotate. The override must win and keep it alive.
+	staleAt := time.Now().Add(-20 * time.Hour)
+	session.mu.Lock()
+	session.UpdatedAt = staleAt
+	session.mu.Unlock()
+
+	msg := &Message{
+		SessionKey: key,
+		Platform:   "web",
+		UserID:     "u1",
+		UserName:   "user",
+		Content:    "hello after idle",
+		ReplyCtx:   "ctx",
+	}
+	e.handleMessage(p, msg)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		sent := p.getSent()
+		if len(sent) >= 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for reply, sent=%v", sent)
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	active := e.sessions.GetOrCreateActive(key)
+	if active.ID != session.ID {
+		t.Fatalf("expected web session NOT to rotate (msg.Platform=web, override 0), got new session %s (old %s)", active.ID, session.ID)
+	}
+	if got := active.GetAgentSessionID(); got != "old-session" {
+		t.Fatalf("session agent id = %q, want old-session preserved (no reset)", got)
+	}
+}
+
+func TestHandleMessage_AutoResetOnIdle_PlatformOverrideDoesNotAffectOtherPlatform(t *testing.T) {
+	// A zero override for "web" must not disable reset for an unlisted "wecom"
+	// platform, which still uses the engine-wide 60m threshold.
+	p := &stubPlatformEngine{n: "wecom"}
+	agentSession := newResultAgentSession("wecom reply")
+	agent := &resultAgent{session: agentSession}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetResetOnIdle(60 * time.Minute)
+	e.SetPlatformResetOnIdleOverrides(map[string]time.Duration{"web": 0})
+
+	key := "wecom:user1"
+	old := e.sessions.GetOrCreateActive(key)
+	old.AddHistory("user", "stale context")
+	old.SetAgentSessionID("old-session", "stub")
+	staleAt := time.Now().Add(-2 * time.Hour)
+	old.mu.Lock()
+	old.UpdatedAt = staleAt
+	old.mu.Unlock()
+
+	msg := &Message{
+		SessionKey: key,
+		Platform:   "wecom",
+		UserID:     "u1",
+		UserName:   "user",
+		Content:    "hello after idle",
+		ReplyCtx:   "ctx",
+	}
+	e.handleMessage(p, msg)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		active := e.sessions.GetOrCreateActive(key)
+		sent := p.getSent()
+		if active.ID != old.ID && len(sent) >= 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for reset on wecom, sent=%v active=%s old=%s", sent, active.ID, old.ID)
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	if got := e.sessions.GetOrCreateActive(key).ID; got == old.ID {
+		t.Fatal("expected wecom session to rotate (no override); got same session")
 	}
 }
 
@@ -12342,9 +12565,11 @@ func TestCouldBeSilentPrefix(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestCmdList_AllSessionsVisibleAfterRepeatedNew verifies that /list shows ALL
-// sessions after multiple /new cycles. This is the exact reproduction scenario
-// reported by users: /new clears the active session's AgentSessionID, causing
-// filterOwnedSessions to progressively hide older sessions.
+// sessions after multiple /new cycles. This goes through the REAL cmdNew path
+// (which DetachAgentSession's the old session and records its ID into
+// PastAgentSessionIDs), so /list's filterOwnedSessions keeps every past
+// conversation visible. Previously /new cleared the active session's
+// AgentSessionID without recording it, progressively hiding older sessions.
 func TestCmdList_AllSessionsVisibleAfterRepeatedNew(t *testing.T) {
 	base := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
 	agentSessions := make([]AgentSessionInfo, 5)
@@ -12361,22 +12586,21 @@ func TestCmdList_AllSessionsVisibleAfterRepeatedNew(t *testing.T) {
 	p := &stubPlatformEngine{n: "plain"}
 	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
 	userKey := "test:user1"
+	msg := &Message{SessionKey: userKey, ReplyCtx: "ctx"}
 
 	for i, as := range agentSessions {
-		if i > 0 {
-			old := e.sessions.GetOrCreateActive(userKey)
-			old.SetAgentSessionID("", "")
-			old.ClearHistory()
-			e.sessions.Save()
-			e.sessions.NewSession(userKey, fmt.Sprintf("session-%d", i+1))
-		}
+		// Seed the active session with the agent session, then /new for the
+		// next cycle — this is the real user flow being protected.
 		s := e.sessions.GetOrCreateActive(userKey)
 		s.SetAgentSessionID(as.ID, "codex")
 		e.sessions.Save()
+
+		if i < len(agentSessions)-1 {
+			e.cmdNew(p, msg, []string{fmt.Sprintf("session-%d", i+2)})
+		}
 	}
 
 	p.sent = nil
-	msg := &Message{SessionKey: userKey, ReplyCtx: "ctx"}
 	e.cmdList(p, msg, nil)
 
 	if len(p.sent) != 1 {
@@ -13608,5 +13832,830 @@ func TestReapIdleSessions_FallsBackToTurnStartTime(t *testing.T) {
 
 	if exists {
 		t.Fatal("expected session to be reaped via turnStartTime fallback")
+	}
+}
+
+// --- Session auto-title tests -----------------------------------------------
+
+// TestMaybeAutoTitleSession_PrefersAgentSummary verifies that the agent
+// backend's own session summary (e.g. ACP session Title) wins over the
+// first-user-message fallback when it is available for the current agent
+// session ID.
+func TestMaybeAutoTitleSession_PrefersAgentSummary(t *testing.T) {
+	e := newTestEngine()
+	e.SetAutoSessionTitle(true)
+	agent := &controllableAgent{
+		listFn: func() ([]AgentSessionInfo, error) {
+			return []AgentSessionInfo{{ID: "agent-sid-1", Summary: "  Agent-generated title  "}}, nil
+		},
+	}
+	sess := e.sessions.GetOrCreateActive("test:user1")
+	sess.SetAgentSessionID("agent-sid-1", "controllable")
+	sess.AddHistory("user", "first user message")
+
+	e.maybeAutoTitleSession(agent, e.sessions, sess)
+	if got := sess.GetName(); got != "Agent-generated title" {
+		t.Fatalf("name = %q, want agent summary %q", got, "Agent-generated title")
+	}
+	if !sess.GetNameAuto() {
+		t.Fatal("NameAuto should be true after auto-title")
+	}
+}
+
+// TestMaybeAutoTitleSession_FallbackToFirstUserMessage verifies the fallback
+// path used when the agent reports no sessions (e.g. codebuddy): the first
+// user message snippet, truncated to 30 runes.
+func TestMaybeAutoTitleSession_FallbackToFirstUserMessage(t *testing.T) {
+	e := newTestEngine()
+	e.SetAutoSessionTitle(true)
+	agent := &controllableAgent{} // ListSessions returns nil, nil
+	sess := e.sessions.GetOrCreateActive("test:user2")
+	sess.SetAgentSessionID("agent-sid-2", "controllable")
+	sess.AddHistory("assistant", "hi there")
+	sess.AddHistory("user", "第二行\n"+strings.Repeat("字", 40))
+
+	e.maybeAutoTitleSession(agent, e.sessions, sess)
+	// "第二行" + space + 40 runes collapses whitespace, then truncates to 30 runes.
+	want := "第二行 " + strings.Repeat("字", 26) + "…"
+	if got := sess.GetName(); got != want {
+		t.Fatalf("name = %q, want %q", got, want)
+	}
+}
+
+// TestMaybeAutoTitleSession_SkipsCustomNameAndDisabled verifies that
+// user-chosen names are never overwritten and that the feature can be
+// switched off per project.
+func TestMaybeAutoTitleSession_SkipsCustomNameAndDisabled(t *testing.T) {
+	e := newTestEngine()
+	e.SetAutoSessionTitle(true)
+	agent := &controllableAgent{
+		listFn: func() ([]AgentSessionInfo, error) {
+			return []AgentSessionInfo{{ID: "agent-sid-3", Summary: "Agent title"}}, nil
+		},
+	}
+
+	// Custom name: not overwritten.
+	custom := e.sessions.GetOrCreateActive("test:user3")
+	custom.SetName("my own name")
+	e.maybeAutoTitleSession(agent, e.sessions, custom)
+	if got := custom.GetName(); got != "my own name" {
+		t.Fatalf("custom name overwritten: %q", got)
+	}
+
+	// Feature disabled: placeholder name stays untouched.
+	e.SetAutoSessionTitle(false)
+	plain := e.sessions.GetOrCreateActive("test:user4")
+	plain.SetAgentSessionID("agent-sid-3", "controllable")
+	plain.AddHistory("user", "hello")
+	e.maybeAutoTitleSession(agent, e.sessions, plain)
+	if got := plain.GetName(); got != "default" {
+		t.Fatalf("auto-title ran while disabled, name = %q", got)
+	}
+}
+
+// TestMaybeAutoTitleSession_RecheckBeforeWrite verifies that a user rename
+// racing with the (async) ListSessions call is not clobbered.
+func TestMaybeAutoTitleSession_RecheckBeforeWrite(t *testing.T) {
+	e := newTestEngine()
+	e.SetAutoSessionTitle(true)
+	sess := e.sessions.GetOrCreateActive("test:user5")
+	sess.SetAgentSessionID("agent-sid-5", "controllable")
+	sess.AddHistory("user", "hello")
+	agent := &controllableAgent{
+		listFn: func() ([]AgentSessionInfo, error) {
+			sess.SetName("user named it") // rename while listing
+			return []AgentSessionInfo{{ID: "agent-sid-5", Summary: "Agent title"}}, nil
+		},
+	}
+	e.maybeAutoTitleSession(agent, e.sessions, sess)
+	if got := sess.GetName(); got != "user named it" {
+		t.Fatalf("rename during list was clobbered: %q", got)
+	}
+}
+
+// TestAutoSessionTitle_FirstTurnEndToEnd runs a full turn and verifies the
+// session gets the agent-provided title, flagged as auto, without leaking
+// into the SessionManager custom-name index.
+func TestAutoSessionTitle_FirstTurnEndToEnd(t *testing.T) {
+	sess := newCodexLikeSession("auto-title-sid-1")
+	agent := &controllableAgent{
+		nextSession: sess,
+		listFn: func() ([]AgentSessionInfo, error) {
+			return []AgentSessionInfo{{ID: "auto-title-sid-1", Summary: "E2E auto title"}}, nil
+		},
+	}
+	p := &stubPlatformEngine{n: "plain"}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetAutoSessionTitle(true)
+	userKey := "test:user6"
+
+	e.ReceiveMessage(p, &Message{SessionKey: userKey, Content: "please do something", ReplyCtx: "ctx"})
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if e.sessions.GetOrCreateActive(userKey).GetNameAuto() {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	s := e.sessions.GetOrCreateActive(userKey)
+	if got := s.GetName(); got != "E2E auto title" {
+		t.Fatalf("session name = %q, want %q", got, "E2E auto title")
+	}
+	if got := e.sessions.GetSessionName("auto-title-sid-1"); got != "" {
+		t.Fatalf("auto title leaked into custom-name index: %q", got)
+	}
+
+	// Simulate an agent switch: AgentSessionID is invalidated, so the next
+	// turn's CompareAndSet succeeds again. The auto name must still NOT be
+	// promoted into the custom-name index.
+	e.sessions.InvalidateForAgent("controllable")
+	sess2 := newCodexLikeSession("auto-title-sid-2")
+	agent.nextSession = sess2
+	e.ReceiveMessage(p, &Message{SessionKey: userKey, Content: "second round", ReplyCtx: "ctx2"})
+	time.Sleep(300 * time.Millisecond)
+
+	if got := e.sessions.GetSessionName("auto-title-sid-2"); got != "" {
+		t.Fatalf("auto title promoted into custom-name index after agent switch: %q", got)
+	}
+}
+
+// TestFirstUserMessageSnippet covers the snippet helper used as the
+// auto-title fallback.
+func TestFirstUserMessageSnippet(t *testing.T) {
+	history := []HistoryEntry{
+		{Role: "assistant", Content: "hi"},
+		{Role: "user", Content: "  多行\n\n消息  内容  "},
+		{Role: "user", Content: "later message"},
+	}
+	if got := firstUserMessageSnippet(history, 30); got != "多行 消息 内容" {
+		t.Fatalf("got %q", got)
+	}
+	long := []HistoryEntry{{Role: "user", Content: strings.Repeat("a", 40)}}
+	if got := firstUserMessageSnippet(long, 30); got != strings.Repeat("a", 30)+"…" {
+		t.Fatalf("got %q", got)
+	}
+	if got := firstUserMessageSnippet(nil, 30); got != "" {
+		t.Fatalf("got %q, want empty", got)
+	}
+}
+
+func TestResolveWeComQuotedSession(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	agent := &resultAgent{session: newResultAgentSession("ok")}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	sm := e.sessions
+
+	chatID := "wrkGROUP1"
+	keyA := "wecom:" + chatID + ":UA"
+	keyB := "wecom:" + chatID + ":UB"
+
+	// Session A contains a distinctive assistant reply.
+	sa := sm.GetOrCreateActive(keyA)
+	sa.AddHistory("assistant", "这是一段很长的独特机器人回复内容，用于验证引用会话解析是否准确命中。")
+
+	// Case 1: unique hit → returns A's key.
+	msg := &Message{
+		SessionKey: "wecom:" + chatID + ":UC",
+		Platform:   "wecom",
+		QuotedText: "这是一段很长的独特机器人回复内容，用于验证引用会话解析是否准确命中。",
+	}
+	if got := e.resolveWeComQuotedSession(msg, sm); got != keyA {
+		t.Fatalf("case1: got %q, want %q", got, keyA)
+	}
+
+	// Case 2: short boilerplate quote (< 12 runes) → no switch.
+	msg2 := &Message{
+		SessionKey: "wecom:" + chatID + ":UC",
+		Platform:   "wecom",
+		QuotedText: "好的收到",
+	}
+	if got := e.resolveWeComQuotedSession(msg2, sm); got != "" {
+		t.Fatalf("case2: got %q, want empty (short quote must not switch)", got)
+	}
+
+	// Case 3: quote matches nothing → fallback (empty).
+	msg3 := &Message{
+		SessionKey: "wecom:" + chatID + ":UC",
+		Platform:   "wecom",
+		QuotedText: "这段内容在任何一个会话的助手历史里都完全不存在，因此不应切换会话。",
+	}
+	if got := e.resolveWeComQuotedSession(msg3, sm); got != "" {
+		t.Fatalf("case3: got %q, want empty (no match)", got)
+	}
+
+	// Case 4: ambiguous — B also contains the same text → multiple hits → no switch.
+	sb := sm.GetOrCreateActive(keyB)
+	sb.AddHistory("assistant", "这是一段很长的独特机器人回复内容，用于验证引用会话解析是否准确命中。")
+	msg4 := &Message{
+		SessionKey: "wecom:" + chatID + ":UC",
+		Platform:   "wecom",
+		QuotedText: "这是一段很长的独特机器人回复内容，用于验证引用会话解析是否准确命中。",
+	}
+	if got := e.resolveWeComQuotedSession(msg4, sm); got != "" {
+		t.Fatalf("case4: got %q, want empty (ambiguous multi-hit must not switch)", got)
+	}
+
+	// Case 5: non-wecom platform → never switches.
+	msg5 := &Message{
+		SessionKey: "feishu:" + chatID + ":UC",
+		Platform:   "feishu",
+		QuotedText: "这是一段很长的独特机器人回复内容，用于验证引用会话解析是否准确命中。",
+	}
+	if got := e.resolveWeComQuotedSession(msg5, sm); got != "" {
+		t.Fatalf("case5: got %q, want empty (non-wecom must not switch)", got)
+	}
+}
+
+// --- Queued-message merge tests ---------------------------------------------
+
+// TestProcessInteractiveEvents_MergesQueuedMessages verifies merge mode: the
+// whole queue accumulated during a turn is submitted as ONE prompt in ONE
+// follow-up turn, while each message keeps its own history entry.
+func TestProcessInteractiveEvents_MergesQueuedMessages(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	sess := newQueuingSession("qs-merge")
+	agent := &controllableAgent{nextSession: sess}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetQueuedMessagesMode("merge")
+
+	key := "test:user1"
+	session := e.sessions.GetOrCreateActive(key)
+
+	state := &interactiveState{
+		agentSession: sess,
+		platform:     p,
+		replyCtx:     "ctx-turn1",
+		pendingMessages: []queuedMessage{
+			{platform: p, replyCtx: "ctx-q1", content: "first part"},
+			{platform: p, replyCtx: "ctx-q2", content: "second part"},
+		},
+	}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = state
+	e.interactiveMu.Unlock()
+
+	go func() {
+		sess.events <- Event{Type: EventResult, Content: "response1", Done: true}
+		// Wait for the merged Send before finishing the merged turn.
+		sess.sendMu.Lock()
+		for len(sess.sendCalls) == 0 {
+			sess.sendMu.Unlock()
+			time.Sleep(5 * time.Millisecond)
+			sess.sendMu.Lock()
+		}
+		sess.sendMu.Unlock()
+		sess.events <- Event{Type: EventResult, Content: "response2", Done: true}
+	}()
+
+	session.AddHistory("user", "initial-msg")
+	sendDone := make(chan error, 1)
+	sendDone <- nil
+
+	done := make(chan struct{})
+	go func() {
+		e.processInteractiveEvents(state, session, e.sessions, key, "msg1", time.Now(), nil, sendDone, "ctx-turn1")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("processInteractiveEvents did not complete in time")
+	}
+
+	state.mu.Lock()
+	remaining := len(state.pendingMessages)
+	state.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("pendingMessages after processing = %d, want 0", remaining)
+	}
+
+	sess.sendMu.Lock()
+	calls := append([]string(nil), sess.sendCalls...)
+	sess.sendMu.Unlock()
+	if len(calls) != 1 {
+		t.Fatalf("queued turn Send calls = %d, want 1 (merged): %v", len(calls), calls)
+	}
+	if !strings.Contains(calls[0], "first part\n\nsecond part") {
+		t.Fatalf("merged prompt = %q, want both parts joined by blank line", calls[0])
+	}
+
+	history := session.GetHistory(100)
+	var userMsgs, assistantMsgs []string
+	for _, h := range history {
+		switch h.Role {
+		case "user":
+			userMsgs = append(userMsgs, h.Content)
+		case "assistant":
+			assistantMsgs = append(assistantMsgs, h.Content)
+		}
+	}
+	if len(userMsgs) != 3 { // initial + two queued, each kept separately
+		t.Fatalf("user history = %v, want 3 separate entries", userMsgs)
+	}
+	if userMsgs[1] != "first part" || userMsgs[2] != "second part" {
+		t.Fatalf("queued user history order = %v", userMsgs[1:])
+	}
+	if len(assistantMsgs) != 2 {
+		t.Fatalf("assistant history entries = %d, want 2", len(assistantMsgs))
+	}
+}
+
+// TestProcessInteractiveEvents_SerialQueueRegression verifies the serial
+// fallback: with the engine zero value (no merge), two queued messages still
+// produce two separate turns, one Send each.
+func TestProcessInteractiveEvents_SerialQueueRegression(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	sess := newQueuingSession("qs-serial")
+	agent := &controllableAgent{nextSession: sess}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish) // zero value = serial
+
+	key := "test:user1"
+	session := e.sessions.GetOrCreateActive(key)
+
+	state := &interactiveState{
+		agentSession: sess,
+		platform:     p,
+		replyCtx:     "ctx-turn1",
+		pendingMessages: []queuedMessage{
+			{platform: p, replyCtx: "ctx-q1", content: "serial-one"},
+			{platform: p, replyCtx: "ctx-q2", content: "serial-two"},
+		},
+	}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = state
+	e.interactiveMu.Unlock()
+
+	go func() {
+		sess.events <- Event{Type: EventResult, Content: "r1", Done: true}
+		waitForSends := func(n int) {
+			for {
+				sess.sendMu.Lock()
+				if len(sess.sendCalls) >= n {
+					sess.sendMu.Unlock()
+					return
+				}
+				sess.sendMu.Unlock()
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
+		waitForSends(1)
+		sess.events <- Event{Type: EventResult, Content: "r2", Done: true}
+		waitForSends(2)
+		sess.events <- Event{Type: EventResult, Content: "r3", Done: true}
+	}()
+
+	session.AddHistory("user", "initial-msg")
+	sendDone := make(chan error, 1)
+	sendDone <- nil
+
+	done := make(chan struct{})
+	go func() {
+		e.processInteractiveEvents(state, session, e.sessions, key, "msg1", time.Now(), nil, sendDone, "ctx-turn1")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("processInteractiveEvents did not complete in time")
+	}
+
+	sess.sendMu.Lock()
+	calls := append([]string(nil), sess.sendCalls...)
+	sess.sendMu.Unlock()
+	if len(calls) != 2 {
+		t.Fatalf("serial Send calls = %d, want 2: %v", len(calls), calls)
+	}
+	if !strings.Contains(calls[0], "serial-one") || !strings.Contains(calls[1], "serial-two") {
+		t.Fatalf("serial prompts = %v, want one message each in order", calls)
+	}
+}
+
+// TestProcessInteractiveEvents_MergedQueueReplyCtxLast verifies the merged
+// turn's reply is delivered under the LAST queued message's reply context.
+func TestProcessInteractiveEvents_MergedQueueReplyCtxLast(t *testing.T) {
+	p := &replyCtxRecordingPlatform{stubPlatformEngine: stubPlatformEngine{n: "test"}}
+	sess := newQueuingSession("qs-merge-ctx")
+	agent := &controllableAgent{nextSession: sess}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetQueuedMessagesMode("merge")
+
+	key := "test:user1"
+	session := e.sessions.GetOrCreateActive(key)
+
+	state := &interactiveState{
+		agentSession: sess,
+		platform:     p,
+		replyCtx:     "ctx-turn1",
+		pendingMessages: []queuedMessage{
+			{platform: p, replyCtx: "ctx-q1", content: "part one"},
+			{platform: p, replyCtx: "ctx-q2", content: "part two"},
+		},
+	}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = state
+	e.interactiveMu.Unlock()
+
+	go func() {
+		sess.events <- Event{Type: EventResult, Content: "response1", Done: true}
+		sess.sendMu.Lock()
+		for len(sess.sendCalls) == 0 {
+			sess.sendMu.Unlock()
+			time.Sleep(5 * time.Millisecond)
+			sess.sendMu.Lock()
+		}
+		sess.sendMu.Unlock()
+		sess.events <- Event{Type: EventResult, Content: "merged-response", Done: true}
+	}()
+
+	session.AddHistory("user", "initial-msg")
+	sendDone := make(chan error, 1)
+	sendDone <- nil
+
+	done := make(chan struct{})
+	go func() {
+		e.processInteractiveEvents(state, session, e.sessions, key, "msg1", time.Now(), nil, sendDone, "ctx-turn1")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("processInteractiveEvents did not complete in time")
+	}
+
+	for _, ev := range p.recordedEvents() {
+		switch ev.content {
+		case "response1":
+			if ev.replyCtx != "ctx-turn1" {
+				t.Errorf("turn1 reply used replyCtx=%v, want ctx-turn1", ev.replyCtx)
+			}
+		case "merged-response":
+			if ev.replyCtx != "ctx-q2" {
+				t.Errorf("merged turn reply used replyCtx=%v, want ctx-q2 (last queued message)", ev.replyCtx)
+			}
+		}
+	}
+}
+
+// attachmentRecordingSession records the prompt and attachments of every
+// Send so tests can assert how a merged batch concatenates them.
+type attachmentRecordingSession struct {
+	controllableAgentSession
+	mu      sync.Mutex
+	prompts []string
+	images  [][]ImageAttachment
+	files   [][]FileAttachment
+}
+
+func newAttachmentRecordingSession(id string) *attachmentRecordingSession {
+	return &attachmentRecordingSession{
+		controllableAgentSession: controllableAgentSession{
+			sessionID: id,
+			alive:     true,
+			events:    make(chan Event, 16),
+			closed:    make(chan struct{}),
+		},
+	}
+}
+
+func (s *attachmentRecordingSession) Send(prompt string, images []ImageAttachment, files []FileAttachment) error {
+	s.mu.Lock()
+	s.prompts = append(s.prompts, prompt)
+	s.images = append(s.images, images)
+	s.files = append(s.files, files)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *attachmentRecordingSession) recorded() (prompts []string, images [][]ImageAttachment, files [][]FileAttachment) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.prompts...), s.images, s.files
+}
+
+// TestProcessInteractiveEvents_MergedQueueImagesFiles verifies images and
+// files from every queued message are concatenated into the single merged
+// Send.
+func TestProcessInteractiveEvents_MergedQueueImagesFiles(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	sess := newAttachmentRecordingSession("qs-merge-att")
+	agent := &controllableAgent{nextSession: sess}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetQueuedMessagesMode("merge")
+
+	key := "test:user1"
+	session := e.sessions.GetOrCreateActive(key)
+
+	state := &interactiveState{
+		agentSession: sess,
+		platform:     p,
+		replyCtx:     "ctx-turn1",
+		pendingMessages: []queuedMessage{
+			{
+				platform: p, replyCtx: "ctx-q1", content: "with image one",
+				images: []ImageAttachment{{MimeType: "image/png", FileName: "a.png", Data: []byte("a")}},
+				files:  []FileAttachment{{MimeType: "text/plain", FileName: "a.txt", Data: []byte("a")}},
+			},
+			{
+				platform: p, replyCtx: "ctx-q2", content: "with image two",
+				images: []ImageAttachment{{MimeType: "image/png", FileName: "b.png", Data: []byte("b")}},
+				files:  []FileAttachment{{MimeType: "text/plain", FileName: "b.txt", Data: []byte("b")}},
+			},
+		},
+	}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = state
+	e.interactiveMu.Unlock()
+
+	attachReady := make(chan struct{})
+	go func() {
+		sess.events <- Event{Type: EventResult, Content: "r1", Done: true}
+		for {
+			prompts, _, _ := sess.recorded()
+			if len(prompts) > 0 {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		<-attachReady
+		sess.events <- Event{Type: EventResult, Content: "r2", Done: true}
+	}()
+
+	session.AddHistory("user", "initial-msg")
+	sendDone := make(chan error, 1)
+	sendDone <- nil
+
+	done := make(chan struct{})
+	go func() {
+		e.processInteractiveEvents(state, session, e.sessions, key, "msg1", time.Now(), nil, sendDone, "ctx-turn1")
+		close(done)
+	}()
+
+	// Wait until the merged Send has been recorded, then release turn 2.
+	for {
+		prompts, _, _ := sess.recorded()
+		if len(prompts) == 1 {
+			break
+		}
+		select {
+		case <-done:
+			t.Fatal("event loop exited before merged Send was recorded")
+		case <-time.After(5 * time.Second):
+			t.Fatal("merged Send not recorded in time")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	close(attachReady)
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("processInteractiveEvents did not complete in time")
+	}
+
+	prompts, images, files := sess.recorded()
+	if len(prompts) != 1 {
+		t.Fatalf("merged Send count = %d, want 1", len(prompts))
+	}
+	if len(images) != 1 || len(images[0]) != 2 {
+		t.Fatalf("merged images = %v, want 2 attachments in one Send", images)
+	}
+	if images[0][0].FileName != "a.png" || images[0][1].FileName != "b.png" {
+		t.Fatalf("merged images order = %v, want a.png then b.png", images[0])
+	}
+	if len(files) != 1 || len(files[0]) != 2 {
+		t.Fatalf("merged files = %v, want 2 attachments in one Send", files)
+	}
+	if files[0][0].FileName != "a.txt" || files[0][1].FileName != "b.txt" {
+		t.Fatalf("merged files order = %v, want a.txt then b.txt", files[0])
+	}
+}
+
+// TestMergeQueuedBatch_SenderHeader covers the batch fold helper: identity
+// from the last message, blank-line content join, fromVoice=any, one sender
+// header for a uniform batch and per-message headers when senders differ,
+// plus the single-message degeneration.
+func TestMergeQueuedBatch_SenderHeader(t *testing.T) {
+	e := newTestEngine()
+	e.SetInjectSender(true)
+
+	mk := func(id, name, content string, voice bool) queuedMessage {
+		return queuedMessage{
+			userID: id, userName: name, content: content, fromVoice: voice,
+			msgPlatform: "wecom", msgSessionKey: "wecom:chat1:u1", channelKey: "chat1",
+		}
+	}
+
+	// Same sender: exactly one header for the joined content.
+	merged, prompt := e.mergeQueuedBatch([]queuedMessage{
+		mk("u1", "Alice", "hello", false),
+		mk("u1", "Alice", "world", true),
+	})
+	if merged.userID != "u1" || merged.userName != "Alice" {
+		t.Fatalf("merged identity = %s/%s, want u1/Alice", merged.userID, merged.userName)
+	}
+	if !merged.fromVoice {
+		t.Fatal("merged.fromVoice should be true when any message was spoken")
+	}
+	if got := strings.Count(prompt, "[heron-connect sender_id=u1"); got != 1 {
+		t.Fatalf("same-sender prompt has %d headers, want 1:\n%s", got, prompt)
+	}
+	if !strings.Contains(prompt, "hello\n\nworld") {
+		t.Fatalf("same-sender prompt missing blank-line join:\n%s", prompt)
+	}
+
+	// Mixed senders: one header per message.
+	_, prompt = e.mergeQueuedBatch([]queuedMessage{
+		mk("u1", "Alice", "from alice", false),
+		mk("u2", "Bob", "from bob", false),
+	})
+	if got := strings.Count(prompt, "[heron-connect sender_id="); got != 2 {
+		t.Fatalf("mixed-sender prompt has %d headers, want 2:\n%s", got, prompt)
+	}
+
+	// Single message degenerates to the historical per-message prompt.
+	single := mk("u1", "Alice", "only msg", false)
+	merged, prompt = e.mergeQueuedBatch([]queuedMessage{single})
+	if merged.content != "only msg" || prompt != e.buildSenderPrompt("only msg", single.userID, single.userName, single.msgPlatform, single.msgSessionKey, single.channelKey) {
+		t.Fatalf("single-message merge mismatch: merged=%+v prompt=%q", merged, prompt)
+	}
+
+	// Empty batch is a no-op.
+	if _, prompt := e.mergeQueuedBatch(nil); prompt != "" {
+		t.Fatalf("empty batch prompt = %q, want empty", prompt)
+	}
+}
+
+// TestDrainPendingMessages_MergesQueue covers the drain path (used after
+// auto-compress and event-loop exit): the whole queue is submitted as one
+// merged Send.
+func TestDrainPendingMessages_MergesQueue(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	sess := newQueuingSession("qs-drain-merge")
+	agent := &controllableAgent{nextSession: sess}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetQueuedMessagesMode("merge")
+
+	key := "test:user1"
+	session := e.sessions.GetOrCreateActive(key)
+
+	state := &interactiveState{
+		agentSession: sess,
+		platform:     p,
+		replyCtx:     "ctx-1",
+		pendingMessages: []queuedMessage{
+			{platform: p, replyCtx: "ctx-q1", content: "drain one"},
+			{platform: p, replyCtx: "ctx-q2", content: "drain two"},
+		},
+	}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = state
+	e.interactiveMu.Unlock()
+
+	go func() {
+		sess.sendMu.Lock()
+		for len(sess.sendCalls) == 0 {
+			sess.sendMu.Unlock()
+			time.Sleep(5 * time.Millisecond)
+			sess.sendMu.Lock()
+		}
+		sess.sendMu.Unlock()
+		sess.events <- Event{Type: EventResult, Content: "drained response", Done: true}
+	}()
+
+	if unlocked := e.drainPendingMessages(state, session, e.sessions, key); !unlocked {
+		t.Fatal("drainPendingMessages should unlock the session when the queue empties")
+	}
+
+	sess.sendMu.Lock()
+	calls := append([]string(nil), sess.sendCalls...)
+	sess.sendMu.Unlock()
+	if len(calls) != 1 {
+		t.Fatalf("drain Send calls = %d, want 1 (merged): %v", len(calls), calls)
+	}
+	if !strings.Contains(calls[0], "drain one\n\ndrain two") {
+		t.Fatalf("merged drain prompt = %q", calls[0])
+	}
+
+	history := session.GetHistory(100)
+	var userMsgs []string
+	for _, h := range history {
+		if h.Role == "user" {
+			userMsgs = append(userMsgs, h.Content)
+		}
+	}
+	if len(userMsgs) != 2 {
+		t.Fatalf("drained user history = %v, want 2 entries", userMsgs)
+	}
+}
+
+// TestEngine_InteractiveSessionTurnStates verifies the per-session execution
+// state exposed to the management API: running (foreground turn or background
+// reader) and waiting_permission (pending permission prompt).
+func TestEngine_InteractiveSessionTurnStates(t *testing.T) {
+	p := &stubPlatformEngine{n: "web"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+
+	idle := &interactiveState{platform: p}
+	turn := &interactiveState{platform: p, cancelCh: make(chan struct{}), turnStartTime: time.Now()}
+	background := &interactiveState{platform: p, unsolicitedCancel: func() {}}
+	waiting := &interactiveState{platform: p, cancelCh: make(chan struct{}), pending: &pendingPermission{Resolved: make(chan struct{})}}
+	e.interactiveStates["web:chat:idle"] = idle
+	e.interactiveStates["web:chat:turn"] = turn
+	e.interactiveStates["web:chat:background"] = background
+	e.interactiveStates["web:chat:waiting"] = waiting
+	defer func() {
+		delete(e.interactiveStates, "web:chat:idle")
+		delete(e.interactiveStates, "web:chat:turn")
+		delete(e.interactiveStates, "web:chat:background")
+		delete(e.interactiveStates, "web:chat:waiting")
+	}()
+
+	states := e.InteractiveSessionTurnStates()
+	if len(states) != 4 {
+		t.Fatalf("states = %d entries, want 4", len(states))
+	}
+	if st := states["web:chat:idle"]; st.Running || st.WaitingPermission {
+		t.Errorf("idle session: running=%v waiting=%v, want false/false", st.Running, st.WaitingPermission)
+	}
+	if st := states["web:chat:turn"]; !st.Running || st.WaitingPermission {
+		t.Errorf("foreground turn: running=%v waiting=%v, want true/false", st.Running, st.WaitingPermission)
+	}
+	if st := states["web:chat:background"]; !st.Running || st.WaitingPermission {
+		t.Errorf("background reader: running=%v waiting=%v, want true/false", st.Running, st.WaitingPermission)
+	}
+	if st := states["web:chat:waiting"]; !st.Running || !st.WaitingPermission {
+		t.Errorf("permission-blocked turn: running=%v waiting=%v, want true/true", st.Running, st.WaitingPermission)
+	}
+	if st := states["web:chat:turn"]; st.TurnStartedAt.IsZero() {
+		t.Error("TurnStartedAt should be recorded for the foreground turn")
+	}
+}
+
+// TestProcessInteractiveEvents_UnrecoverableErrorDetachesAgentSession verifies
+// the self-heal for poisoned agent_session_id bindings: when an adapter marks
+// an EventError as session_unrecoverable (e.g. codebuddy exited silently
+// because --resume targeted a subagent child id with no .jsonl), the engine
+// detaches the persisted binding so the NEXT message starts a fresh agent
+// session instead of retrying the dead resume target forever.
+func TestProcessInteractiveEvents_UnrecoverableErrorDetachesAgentSession(t *testing.T) {
+	p := &stubPlatformEngine{n: "web"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	sessionKey := "web:unrecoverable"
+	session := e.sessions.GetOrCreateActive(sessionKey)
+	session.SetAgentSessionID("child-session-id-poisoned", "codebuddy")
+
+	agentSession := newControllableSession("s-unrecoverable")
+	state := &interactiveState{
+		agentSession: agentSession,
+		platform:     p,
+		replyCtx:     "ctx-unrecoverable",
+	}
+	e.interactiveStates[sessionKey] = state
+
+	agentSession.events <- Event{
+		Type:     EventError,
+		Error:    fmt.Errorf("process exited with no output and no result event"),
+		Metadata: map[string]any{EventMetadataSessionUnrecoverable: true},
+	}
+
+	e.processInteractiveEvents(state, session, e.sessions, sessionKey, "m-unrecoverable", time.Now(), nil, nil, nil)
+
+	if got := session.GetAgentSessionID(); got != "" {
+		t.Fatalf("agent_session_id = %q, want detached (empty) after unrecoverable error", got)
+	}
+}
+
+// TestProcessInteractiveEvents_OrdinaryErrorKeepsAgentSession verifies the
+// counterpart: ordinary per-turn errors (no unrecoverable marker) leave the
+// persisted agent_session_id binding untouched.
+func TestProcessInteractiveEvents_OrdinaryErrorKeepsAgentSession(t *testing.T) {
+	p := &stubPlatformEngine{n: "web"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	sessionKey := "web:ordinary-error"
+	session := e.sessions.GetOrCreateActive(sessionKey)
+	session.SetAgentSessionID("valid-session-id", "codebuddy")
+
+	agentSession := newControllableSession("s-ordinary")
+	state := &interactiveState{
+		agentSession: agentSession,
+		platform:     p,
+		replyCtx:     "ctx-ordinary",
+	}
+	e.interactiveStates[sessionKey] = state
+
+	agentSession.events <- Event{
+		Type:  EventError,
+		Error: fmt.Errorf("transient network hiccup"),
+	}
+
+	e.processInteractiveEvents(state, session, e.sessions, sessionKey, "m-ordinary", time.Now(), nil, nil, nil)
+
+	if got := session.GetAgentSessionID(); got != "valid-session-id" {
+		t.Fatalf("agent_session_id = %q, want binding preserved for ordinary error", got)
 	}
 }

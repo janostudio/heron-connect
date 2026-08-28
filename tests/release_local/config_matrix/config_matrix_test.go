@@ -102,6 +102,70 @@ app_secret = "secret"
 	}
 }
 
+func TestReleaseConfig_PlatformDisplayOverridesProjectAndGlobal(t *testing.T) {
+	path := writeConfig(t, `
+[display]
+mode = "quiet"
+
+[[projects]]
+name = "release"
+
+[projects.display]
+mode = "quiet"
+
+[projects.agent]
+type = "claudecode"
+work_dir = "/tmp/heron-connect-release-work"
+
+[[projects.platforms]]
+type = "feishu"
+app_id = "cli_release"
+app_secret = "secret"
+
+[[projects.platforms]]
+type = "web"
+
+[projects.platforms.display]
+mode = "full"
+thinking_max_len = 999
+`)
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	proj := &cfg.Projects[0]
+
+	// Platform-tier override: "web" should get full mode with the custom
+	// thinking_max_len, regardless of the project/global quiet default.
+	mode, thinking, tools, thinkingMax, _ := config.EffectiveDisplayForPlatform(cfg, proj, "web")
+	if mode != config.DisplayModeFull {
+		t.Fatalf("web platform mode = %q, want full", mode)
+	}
+	if !thinking || !tools {
+		t.Fatalf("web platform thinking/tools = %v/%v, want true/true (full mode re-derived)", thinking, tools)
+	}
+	if thinkingMax != 999 {
+		t.Fatalf("web platform thinking_max_len = %d, want 999", thinkingMax)
+	}
+
+	// A platform with no [projects.platforms.display] block (feishu) must
+	// not be affected by the web platform's override — it keeps following
+	// the project/global quiet default, proving the new tier is additive.
+	mode, thinking, tools, _, _ = config.EffectiveDisplayForPlatform(cfg, proj, "feishu")
+	if mode != config.DisplayModeQuiet || thinking || tools {
+		t.Fatalf("feishu platform (no override) = mode:%s thinking:%v tools:%v, want quiet/false/false", mode, thinking, tools)
+	}
+
+	// EffectiveDisplay (the pre-existing, platform-unaware resolver) must
+	// remain completely unaffected by the new platform-tier config — same
+	// project-level quiet result as before this feature existed.
+	mode, thinking, tools, _, _ = config.EffectiveDisplay(cfg, proj)
+	if mode != config.DisplayModeQuiet || thinking || tools {
+		t.Fatalf("EffectiveDisplay (platform-unaware) = mode:%s thinking:%v tools:%v, want quiet/false/false", mode, thinking, tools)
+	}
+}
+
 func TestReleaseConfig_DefaultsKeepAttachmentsAndFullDisplayEnabled(t *testing.T) {
 	path := writeConfig(t, baseProjectTOML(""))
 	cfg, err := config.Load(path)

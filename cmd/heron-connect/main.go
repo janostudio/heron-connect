@@ -57,6 +57,27 @@ func resolveResetOnIdle(configured *int) (time.Duration, bool) {
 	return time.Duration(defaultResetOnIdleMins) * time.Minute, true
 }
 
+// buildPlatformResetOnIdleOverrides computes per-platform reset_on_idle_mins
+// overrides for every [[projects.platforms]] entry that sets the field, keyed by
+// lowercase platform type (matching buildPlatformDisplayOverrides). Entries
+// without an override are omitted so the engine falls back to the project-level
+// value. A 0 entry disables idle-session rotation for that platform only (e.g. a
+// virtual `type = "web"` entry) while other platforms keep the project value.
+// Returns nil when no platform declares an override.
+func buildPlatformResetOnIdleOverrides(proj config.ProjectConfig) map[string]time.Duration {
+	var overrides map[string]time.Duration
+	for _, pc := range proj.Platforms {
+		if pc.ResetOnIdleMins == nil {
+			continue
+		}
+		if overrides == nil {
+			overrides = make(map[string]time.Duration)
+		}
+		overrides[strings.ToLower(strings.TrimSpace(pc.Type))] = time.Duration(*pc.ResetOnIdleMins) * time.Minute
+	}
+	return overrides
+}
+
 // createProjectEngines creates engines for all projects in the config.
 // It returns the engines and their effective work directories.
 func createProjectEngines(cfg *config.Config, configPath string, observeFlag *bool, observeChannel *string) ([]*core.Engine, []string) {
@@ -136,6 +157,8 @@ func createProjectEngines(cfg *config.Config, configPath string, observeFlag *bo
 		engine.SetReplyFooterEnabled(showFooter)
 		engine.SetAttachmentSendEnabled(cfg.AttachmentSend != "off")
 		engine.SetFilterExternalSessions(proj.FilterExternalSessions != nil && *proj.FilterExternalSessions)
+		engine.SetAutoSessionTitle(proj.AutoSessionTitle == nil || *proj.AutoSessionTitle)
+		engine.SetQueuedMessagesMode(proj.QueuedMessages)
 		engine.SetBaseWorkDir(workDir)
 		engine.SetProjectStateStore(projectState)
 
@@ -258,6 +281,7 @@ func createProjectEngines(cfg *config.Config, configPath string, observeFlag *bo
 				ToolMaxLen:       toollen,
 				ToolMessages:     tool,
 			})
+			engine.SetPlatformDisplayOverrides(buildPlatformDisplayOverrides(cfg, &proj))
 		}
 
 		// Wire hooks
@@ -392,6 +416,7 @@ func createProjectEngines(cfg *config.Config, configPath string, observeFlag *bo
 		}
 		resetIdle, defaulted := resolveResetOnIdle(proj.ResetOnIdleMins)
 		engine.SetResetOnIdle(resetIdle)
+		engine.SetPlatformResetOnIdleOverrides(buildPlatformResetOnIdleOverrides(proj))
 		if defaulted {
 			slog.Info("project: reset_on_idle_mins not set, applying default — set reset_on_idle_mins = 0 to opt out, see docs/usage.md",
 				"project", proj.Name, "default_minutes", defaultResetOnIdleMins)
@@ -891,6 +916,9 @@ func main() {
 		mgmtSrv = management.NewManagementServer(port, cfg.Management.Token, cfg.Management.CORSOrigins)
 		for i, e := range engines {
 			mgmtSrv.RegisterEngine(cfg.Projects[i].Name, e)
+			if i < len(effectiveWorkDirs) {
+				mgmtSrv.RegisterProjectWorkDir(cfg.Projects[i].Name, effectiveWorkDirs[i])
+			}
 		}
 		if cronSched != nil {
 			mgmtSrv.SetCronScheduler(cronSched)
@@ -1459,6 +1487,7 @@ func reloadConfig(configPath, projName string, engine *core.Engine) (*core.Confi
 		ToolMaxLen:       toollen,
 		ToolMessages:     tool,
 	})
+	engine.SetPlatformDisplayOverrides(buildPlatformDisplayOverrides(cfg, proj))
 	result.DisplayUpdated = true
 
 	// Reload auto-compress settings
@@ -1477,6 +1506,7 @@ func reloadConfig(configPath, projName string, engine *core.Engine) (*core.Confi
 	}
 	resetIdle, defaulted := resolveResetOnIdle(proj.ResetOnIdleMins)
 	engine.SetResetOnIdle(resetIdle)
+	engine.SetPlatformResetOnIdleOverrides(buildPlatformResetOnIdleOverrides(*proj))
 	if defaulted {
 		slog.Info("project: reset_on_idle_mins not set, applying default — set reset_on_idle_mins = 0 to opt out, see docs/usage.md",
 			"project", proj.Name, "default_minutes", defaultResetOnIdleMins)
@@ -1511,6 +1541,12 @@ func reloadConfig(configPath, projName string, engine *core.Engine) (*core.Confi
 
 	// Reload filter_external_sessions
 	engine.SetFilterExternalSessions(proj.FilterExternalSessions != nil && *proj.FilterExternalSessions)
+
+	// Reload auto_session_title
+	engine.SetAutoSessionTitle(proj.AutoSessionTitle == nil || *proj.AutoSessionTitle)
+
+	// Reload queued_messages
+	engine.SetQueuedMessagesMode(proj.QueuedMessages)
 
 	// Reload providers
 	if ps, ok := engine.GetAgent().(core.ProviderSwitcher); ok {
@@ -1557,6 +1593,35 @@ func reloadConfig(configPath, projName string, engine *core.Engine) (*core.Confi
 
 	slog.Info("config reloaded", "project", projName)
 	return result, nil
+}
+
+// buildPlatformDisplayOverrides computes the resolved DisplayCfg for every
+// [[projects.platforms]] entry that declares its own [projects.platforms.display]
+// block, keyed by lowercase platform type. Entries without a Display override
+// are omitted from the map (Engine.resolveDisplayForPlatform falls back to
+// the project/global default for them, matching current behavior exactly).
+// Returns nil when no platform declares an override, so
+// SetPlatformDisplayOverrides's "no overrides configured" fast path applies.
+func buildPlatformDisplayOverrides(cfg *config.Config, proj *config.ProjectConfig) map[string]core.DisplayCfg {
+	var overrides map[string]core.DisplayCfg
+	for _, pc := range proj.Platforms {
+		if pc.Display == nil {
+			continue
+		}
+		mode, tm, tool, tmlen, toollen := config.EffectiveDisplayForPlatform(cfg, proj, pc.Type)
+		if overrides == nil {
+			overrides = make(map[string]core.DisplayCfg)
+		}
+		overrides[strings.ToLower(strings.TrimSpace(pc.Type))] = core.DisplayCfg{
+			Mode:             mode,
+			CardMode:         config.EffectiveCardMode(cfg, proj),
+			ThinkingMessages: tm,
+			ThinkingMaxLen:   tmlen,
+			ToolMaxLen:       toollen,
+			ToolMessages:     tool,
+		}
+	}
+	return overrides
 }
 
 func buildUserRoleManager(uc *config.UsersConfig) *core.UserRoleManager {

@@ -20,7 +20,7 @@ import (
 )
 
 // codebuddySession manages a multi-turn CodeBuddy Code conversation.
-// Each Send() spawns `codebuddy -p <prompt> --output-format stream-json`.
+// Each Send() spawns `codebuddy -p --output-format stream-json ... -- <prompt>`.
 // Subsequent turns use `--resume <sessionID>` to continue the conversation.
 type codebuddySession struct {
 	workDir   string
@@ -34,6 +34,36 @@ type codebuddySession struct {
 	wg        sync.WaitGroup
 	alive     atomic.Bool
 	osCmd     *exec.Cmd // for force-kill on Close timeout
+	// toolNameByID caches tool_use_id → readable tool name across the
+	// assistant→user turn boundary. The CLI's user-message stream emits
+	// tool_result blocks with only tool_use_id (no name), so the adapter
+	// must remember the name emitted in the prior assistant tool_use block.
+	// Uses sync.Map so handleAssistant (write) and handleUser (read) can
+	// run concurrently if events arrive out-of-order on different goroutines.
+	toolNameByID sync.Map // string → string
+}
+
+// launchArgs builds the codebuddy CLI argument list. The prompt is passed as
+// the positional argument after the "--" end-of-options marker: the CLI
+// rejects tokens starting with "-" as unknown options, so without the marker
+// any prompt beginning with "-" (e.g. custom command files whose YAML
+// frontmatter starts with "---") fails with "error: unknown option".
+func launchArgs(prompt, sid, mode, model string) []string {
+	args := []string{"-p", "--output-format", "stream-json"}
+
+	if sid != "" {
+		args = append(args, "--resume", sid)
+	}
+
+	if mode == "yolo" {
+		args = append(args, "--dangerously-skip-permissions")
+	}
+
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+
+	return append(args, "--", prompt)
 }
 
 func newCodeBuddySession(ctx context.Context, workDir, model, mode, resumeID string, extraEnv []string) (*codebuddySession, error) {
@@ -69,20 +99,8 @@ func (cs *codebuddySession) Send(prompt string, images []core.ImageAttachment, f
 		return fmt.Errorf("session is closed")
 	}
 
-	args := []string{"-p", prompt, "--output-format", "stream-json"}
-
 	sid := cs.CurrentSessionID()
-	if sid != "" {
-		args = append(args, "--resume", sid)
-	}
-
-	if cs.mode == "yolo" {
-		args = append(args, "--dangerously-skip-permissions")
-	}
-
-	if cs.model != "" {
-		args = append(args, "--model", cs.model)
-	}
+	args := launchArgs(prompt, sid, cs.mode, cs.model)
 
 	slog.Debug("codebuddySession: launching", "resume", sid != "", "args_len", len(args))
 
@@ -112,12 +130,26 @@ func (cs *codebuddySession) Send(prompt string, images []core.ImageAttachment, f
 	return nil
 }
 
+// shouldTrackInitSessionID reports whether a system/init event's session id
+// may update the tracked top-level session id: only the FIRST init of a
+// process run qualifies. Subagent (child) sessions also emit init events with
+// their own ids mid-conversation; accepting those would overwrite the
+// top-level id, the engine would persist the child id as the session's
+// agent_session_id, and the next --resume would target a child session that
+// has no .jsonl on disk → silent zero-output exit.
+func shouldTrackInitSessionID(sawInit bool, subtype, sessionID string) bool {
+	return !sawInit && subtype == "init" && sessionID != ""
+}
+
 func (cs *codebuddySession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderrBuf *bytes.Buffer) {
 	defer cs.wg.Done()
 
 	var gotResult bool
 	var nonJSONLines []string
 	var pendingText string
+	// sawInit: only the first system/init of a process run belongs to the
+	// top-level conversation — see shouldTrackInitSessionID.
+	var sawInit bool
 
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
@@ -138,8 +170,13 @@ func (cs *codebuddySession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderr
 		switch raw.Type {
 		case "system":
 			if raw.Subtype == "init" && raw.SessionID != "" {
-				cs.sessionID.Store(raw.SessionID)
-				slog.Debug("codebuddySession: init", "session_id", raw.SessionID)
+				if shouldTrackInitSessionID(sawInit, raw.Subtype, raw.SessionID) {
+					sawInit = true
+					cs.sessionID.Store(raw.SessionID)
+					slog.Debug("codebuddySession: init", "session_id", raw.SessionID)
+				} else {
+					slog.Debug("codebuddySession: ignoring non-primary init (subagent)", "session_id", raw.SessionID)
+				}
 			}
 
 		case "assistant":
@@ -180,38 +217,55 @@ func (cs *codebuddySession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderr
 	}
 
 	// No result event — emit fallback
-	if len(nonJSONLines) > 0 {
+	stderrMsg := strings.TrimSpace(stderrBuf.String())
+	evt := exitFallbackEvent(nonJSONLines, exitErr, scanErr, stderrMsg, cs.CurrentSessionID())
+	if evt.Type == core.EventError {
+		// Error fallback means the turn is dead. When the exit was silent
+		// (zero output) the tracked session id itself is suspect — typically
+		// --resume targeted a session with no backing store. Mark the
+		// session dead so the engine tears down the interactive state and,
+		// for unrecoverable bindings, detaches the persisted agent_session_id
+		// (next message then starts a fresh agent session).
+		cs.alive.Store(false)
+	}
+	select {
+	case cs.events <- evt:
+	case <-cs.ctx.Done():
+	}
+}
+
+// exitFallbackEvent builds the terminal event when the CLI process exits
+// without a result event. Priority: plain-text stdout lines > process error >
+// scanner error > silent clean exit. A silent clean exit (exit 0, nothing on
+// stdout or stderr) previously surfaced as an empty result — the user just saw
+// "(空响应)" and the turn looked successful while the CLI had actually failed;
+// it is now an explicit error so the turn visibly fails and the log carries
+// whatever the CLI wrote to stderr.
+func exitFallbackEvent(nonJSONLines []string, exitErr, scanErr error, stderrMsg, sessionID string) core.Event {
+	switch {
+	case len(nonJSONLines) > 0:
 		slog.Warn("codebuddySession: no result event, falling back to plain-text output", "lines", len(nonJSONLines))
-		text := strings.Join(nonJSONLines, "\n")
-		evt := core.Event{Type: core.EventResult, Content: text, SessionID: cs.CurrentSessionID(), Done: true}
-		select {
-		case cs.events <- evt:
-		case <-cs.ctx.Done():
+		return core.Event{Type: core.EventResult, Content: strings.Join(nonJSONLines, "\n"), SessionID: sessionID, Done: true}
+	case exitErr != nil:
+		msg := stderrMsg
+		if msg == "" {
+			msg = exitErr.Error()
 		}
-	} else if exitErr != nil {
-		stderrMsg := strings.TrimSpace(stderrBuf.String())
-		if stderrMsg == "" {
-			stderrMsg = exitErr.Error()
+		slog.Error("codebuddySession: process failed with no result", "error", exitErr, "stderr", truncStr(msg, 200))
+		return core.Event{Type: core.EventError, Error: fmt.Errorf("%s", msg)}
+	case scanErr != nil:
+		return core.Event{Type: core.EventError, Error: fmt.Errorf("read stdout: %w", scanErr)}
+	default:
+		// Clean exit (0) with zero stdout. stderr may still hold the real
+		// reason (auth notice, resume failure, CLI internal message) — log it
+		// and surface it; never silently swallow a zero-output turn. Marked
+		// unrecoverable: the persisted agent_session_id cannot be resumed
+		// (no backing session), so the engine detaches it for a fresh start.
+		slog.Warn("codebuddySession: process exited with no output and no result event", "stderr", truncStr(stderrMsg, 200))
+		if stderrMsg != "" {
+			return core.Event{Type: core.EventError, Error: fmt.Errorf("%s", stderrMsg), Metadata: map[string]any{core.EventMetadataSessionUnrecoverable: true}}
 		}
-		slog.Error("codebuddySession: process failed with no result", "error", exitErr, "stderr", truncStr(stderrMsg, 200))
-		evt := core.Event{Type: core.EventError, Error: fmt.Errorf("%s", stderrMsg)}
-		select {
-		case cs.events <- evt:
-		case <-cs.ctx.Done():
-		}
-	} else if scanErr != nil {
-		evt := core.Event{Type: core.EventError, Error: fmt.Errorf("read stdout: %w", scanErr)}
-		select {
-		case cs.events <- evt:
-		case <-cs.ctx.Done():
-		}
-	} else {
-		slog.Warn("codebuddySession: process exited with no output and no result event")
-		evt := core.Event{Type: core.EventResult, Content: "", SessionID: cs.CurrentSessionID(), Done: true}
-		select {
-		case cs.events <- evt:
-		case <-cs.ctx.Done():
-		}
+		return core.Event{Type: core.EventError, Error: fmt.Errorf("process exited with no output and no result event"), Metadata: map[string]any{core.EventMetadataSessionUnrecoverable: true}}
 	}
 }
 
@@ -242,6 +296,11 @@ type contentItem struct {
 	Input      json.RawMessage `json:"input"`
 	ToolUseID  string          `json:"tool_use_id"`
 	Content    json.RawMessage `json:"content"`
+	// Thinking is a defensive fallback for codebuddy protocol variants that
+	// emit the thinking block under a "thinking" key instead of "text".
+	// Anthropic-style protocols use "thinking"; codebuddy CLI may use either
+	// depending on version, so we accept both.
+	Thinking string `json:"thinking"`
 }
 
 // ── event handling ───────────────────────────────────────────
@@ -278,11 +337,34 @@ func (cs *codebuddySession) handleAssistant(ev *streamEvent, pendingText string)
 
 		case "tool_use":
 			inputPreview := extractToolPreview(item.Input)
+			// Cache tool_use_id → readable name so handleUser can resolve
+			// the same name when the CLI returns the tool_result block (which
+			// only carries tool_use_id, not name).
+			if item.ID != "" && item.Name != "" {
+				cs.toolNameByID.Store(item.ID, item.Name)
+			}
 			evt := core.Event{Type: core.EventToolUse, ToolName: item.Name, ToolInput: inputPreview}
 			select {
 			case cs.events <- evt:
 			case <-cs.ctx.Done():
 				return ""
+			}
+
+		case "thinking":
+			// Accept either the Anthropic-style "thinking" field or a "text"
+			// field under the same block, depending on the CLI protocol
+			// variant. Both must be non-empty to emit a thinking event.
+			thinking := item.Thinking
+			if thinking == "" {
+				thinking = item.Text
+			}
+			if thinking != "" {
+				evt := core.Event{Type: core.EventThinking, Content: thinking}
+				select {
+				case cs.events <- evt:
+				case <-cs.ctx.Done():
+					return ""
+				}
 			}
 		}
 	}
@@ -308,9 +390,19 @@ func (cs *codebuddySession) handleUser(ev *streamEvent) {
 
 		// Extract the tool result text from nested content
 		resultText := extractToolResultText(item.Content)
+		// Resolve readable tool name from the assistant-side cache; the CLI
+		// only sends tool_use_id on tool_result blocks, not the name.
+		// Fall back to the raw id so the entry is still identifiable when
+		// the cache is cold (e.g. CLI reordered, or output was truncated).
+		toolName := item.ToolUseID
+		if v, ok := cs.toolNameByID.Load(item.ToolUseID); ok {
+			if name, ok := v.(string); ok && name != "" {
+				toolName = name
+			}
+		}
 		evt := core.Event{
 			Type:      core.EventToolResult,
-			ToolName:  item.ToolUseID,
+			ToolName:  toolName,
 			Content:   resultText,
 			SessionID: cs.CurrentSessionID(),
 		}

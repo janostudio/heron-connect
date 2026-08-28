@@ -117,6 +117,13 @@ func (qs *qoderSession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderrBuf 
 
 	var gotResult bool
 	var nonJSONLines []string
+	// sawSessionID guards against subagent session-id poisoning: only the
+	// FIRST event carrying a session id belongs to the top-level conversation.
+	// Subagent (child) sessions emit events with their own ids mid-conversation;
+	// accepting those would overwrite the top-level id, the engine would
+	// persist the child id, and the next --resume would target a child session
+	// with no backing store → silent zero-output exit.
+	var sawSessionID bool
 
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
@@ -136,6 +143,14 @@ func (qs *qoderSession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderrBuf 
 
 		if raw.Type == "result" {
 			gotResult = true
+		}
+		if raw.SessionID != "" {
+			if !sawSessionID {
+				sawSessionID = true
+				qs.sessionID.Store(raw.SessionID)
+			} else if raw.SessionID != qs.CurrentSessionID() {
+				slog.Debug("qoderSession: ignoring non-primary session id (subagent)", "session_id", raw.SessionID)
+			}
 		}
 		qs.handleEvent(&raw)
 	}
@@ -161,43 +176,57 @@ func (qs *qoderSession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderrBuf 
 
 	// No result event was received — emit a fallback to prevent the engine
 	// from hanging forever on the events channel.
-	if len(nonJSONLines) > 0 {
+	stderrMsg := strings.TrimSpace(stderrBuf.String())
+	evt := qs.exitFallbackEvent(nonJSONLines, exitErr, scanErr, stderrMsg)
+	if evt.Type == core.EventError {
+		// Error fallback means the turn is dead. When the exit was silent
+		// (zero output) the tracked session id itself is suspect — mark the
+		// session dead so the engine tears down the interactive state and,
+		// for unrecoverable bindings, detaches the persisted agent_session_id
+		// (next message then starts a fresh agent session).
+		qs.alive.Store(false)
+	}
+	select {
+	case qs.events <- evt:
+	case <-qs.ctx.Done():
+	}
+}
+
+// exitFallbackEvent builds the terminal event when the CLI process exits
+// without a result event. A silent clean exit (exit 0, nothing on stdout or
+// stderr) previously surfaced as an empty result — the user just saw
+// "(空响应)" while the CLI had actually failed; it is now an explicit error
+// so the turn visibly fails and the log carries whatever the CLI wrote to
+// stderr.
+func (qs *qoderSession) exitFallbackEvent(nonJSONLines []string, exitErr, scanErr error, stderrMsg string) core.Event {
+	switch {
+	case len(nonJSONLines) > 0:
 		// qodercli produced plain text instead of stream-json; forward it
 		// as a result so the user at least sees the response.
 		slog.Warn("qoderSession: no result event, falling back to plain-text output", "lines", len(nonJSONLines))
-		text := strings.Join(nonJSONLines, "\n")
-		evt := core.Event{Type: core.EventResult, Content: text, SessionID: qs.CurrentSessionID(), Done: true}
-		select {
-		case qs.events <- evt:
-		case <-qs.ctx.Done():
-		}
-	} else if exitErr != nil {
+		return core.Event{Type: core.EventResult, Content: strings.Join(nonJSONLines, "\n"), SessionID: qs.CurrentSessionID(), Done: true}
+	case exitErr != nil:
 		// Process failed with no usable output.
-		stderrMsg := strings.TrimSpace(stderrBuf.String())
-		if stderrMsg == "" {
-			stderrMsg = exitErr.Error()
+		msg := stderrMsg
+		if msg == "" {
+			msg = exitErr.Error()
 		}
-		slog.Error("qoderSession: process failed with no result", "error", exitErr, "stderr", truncStr(stderrMsg, 200))
-		evt := core.Event{Type: core.EventError, Error: fmt.Errorf("%s", stderrMsg)}
-		select {
-		case qs.events <- evt:
-		case <-qs.ctx.Done():
-		}
-	} else if scanErr != nil {
+		slog.Error("qoderSession: process failed with no result", "error", exitErr, "stderr", truncStr(msg, 200))
+		return core.Event{Type: core.EventError, Error: fmt.Errorf("%s", msg)}
+	case scanErr != nil:
 		// Scanner error with no output.
-		evt := core.Event{Type: core.EventError, Error: fmt.Errorf("read stdout: %w", scanErr)}
-		select {
-		case qs.events <- evt:
-		case <-qs.ctx.Done():
+		return core.Event{Type: core.EventError, Error: fmt.Errorf("read stdout: %w", scanErr)}
+	default:
+		// Process exited cleanly but produced nothing at all. stderr may hold
+		// the real reason — log it and surface it; never silently swallow a
+		// zero-output turn. Marked unrecoverable: the persisted
+		// agent_session_id cannot be resumed (no backing session), so the
+		// engine detaches it for a fresh start.
+		slog.Warn("qoderSession: process exited with no output and no result event", "stderr", truncStr(stderrMsg, 200))
+		if stderrMsg != "" {
+			return core.Event{Type: core.EventError, Error: fmt.Errorf("%s", stderrMsg), Metadata: map[string]any{core.EventMetadataSessionUnrecoverable: true}}
 		}
-	} else {
-		// Process exited cleanly but produced nothing at all.
-		slog.Warn("qoderSession: process exited with no output and no result event")
-		evt := core.Event{Type: core.EventResult, Content: "", SessionID: qs.CurrentSessionID(), Done: true}
-		select {
-		case qs.events <- evt:
-		case <-qs.ctx.Done():
-		}
+		return core.Event{Type: core.EventError, Error: fmt.Errorf("process exited with no output and no result event"), Metadata: map[string]any{core.EventMetadataSessionUnrecoverable: true}}
 	}
 }
 
@@ -233,10 +262,6 @@ type contentItem struct {
 // ── event handling ───────────────────────────────────────────
 
 func (qs *qoderSession) handleEvent(ev *streamEvent) {
-	if ev.SessionID != "" {
-		qs.sessionID.Store(ev.SessionID)
-	}
-
 	switch ev.Type {
 	case "system":
 		slog.Debug("qoderSession: init", "session_id", ev.SessionID)

@@ -1,9 +1,9 @@
 import { useTranslation } from 'react-i18next';
 import {
-  X, MessageSquare, Circle, User, Bot, Plus,
+  X, MessageSquare, Circle, User, Bot, Plus, Loader2, Clock, Pin, PinOff, Pencil,
 } from 'lucide-react';
 import { Badge } from '@/components/ui';
-import type { Session } from '@/api/sessions';
+import { sessionTitle, sessionSource, type Session } from '@/api/sessions';
 import { cn } from '@/lib/utils';
 
 function timeAgo(iso: string): string {
@@ -24,9 +24,11 @@ interface Props {
   currentSessionId: string;
   onSelect: (session: Session) => void;
   onNewSession?: () => void;
+  onRename?: (session: Session) => void;
+  onTogglePin?: (session: Session) => void;
 }
 
-export default function SessionDrawer({ open, onClose, sessions, currentSessionId, onSelect, onNewSession }: Props) {
+export default function SessionDrawer({ open, onClose, sessions, currentSessionId, onSelect, onNewSession, onRename, onTogglePin }: Props) {
   const { t } = useTranslation();
 
   return (
@@ -39,7 +41,7 @@ export default function SessionDrawer({ open, onClose, sessions, currentSessionI
       {/* Drawer */}
       <div
         className={cn(
-          'fixed top-0 right-0 h-full w-80 z-50 flex flex-col transition-transform duration-300 ease-out',
+          'fixed top-0 right-0 h-dvh w-80 max-w-[90vw] z-50 flex flex-col transition-transform duration-300 ease-out',
           'bg-white/95 backdrop-blur-xl border-l border-gray-200/80 shadow-2xl shadow-black/15',
           'dark:bg-[rgba(15,15,15,0.97)] dark:border-white/[0.08] dark:shadow-black/50',
           open ? 'translate-x-0' : 'translate-x-full',
@@ -76,13 +78,15 @@ export default function SessionDrawer({ open, onClose, sessions, currentSessionI
           ) : (
             sessions.map((s) => {
               const isCurrent = s.id === currentSessionId;
+              const title = sessionTitle(s);
+              const source = sessionSource(s);
               return (
                 <button
                   key={s.id}
                   type="button"
                   onClick={() => onSelect(s)}
                   className={cn(
-                    'w-full text-left p-3 rounded-xl mb-1 transition-all duration-200',
+                    'w-full text-left p-3 rounded-xl mb-1 transition-all duration-200 group',
                     isCurrent
                       ? 'bg-accent/10 ring-1 ring-accent/30'
                       : 'hover:bg-gray-100/80 dark:hover:bg-white/[0.04]',
@@ -95,13 +99,36 @@ export default function SessionDrawer({ open, onClose, sessions, currentSessionI
                         className={cn(s.live ? 'text-accent' : 'text-gray-400', 'shrink-0')}
                       />
                       <span className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                        {s.name || s.user_name || s.id.slice(0, 8)}
+                        {title}
                       </span>
                       {s.live && <Circle size={4} className="fill-emerald-500 text-emerald-500 shrink-0" />}
                     </div>
-                    <span className="text-[10px] text-gray-400 shrink-0 mt-0.5">
-                      {timeAgo(s.updated_at || s.created_at)}
-                    </span>
+                    <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      {onRename && (
+                        <button
+                          type="button"
+                          onClick={() => onRename(s)}
+                          className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.06] opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="重命名"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                      )}
+                      {onTogglePin && (
+                        <button
+                          type="button"
+                          onClick={() => onTogglePin(s)}
+                          className={cn(
+                            'p-1 rounded transition-colors',
+                            s.pinned ? 'text-accent' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100',
+                          )}
+                          title={s.pinned ? '取消置顶' : '置顶'}
+                        >
+                          {s.pinned ? <Pin size={12} /> : <PinOff size={12} />}
+                        </button>
+                      )}
+                      <span className="text-[10px] text-gray-400">{timeAgo(s.updated_at || s.created_at)}</span>
+                    </div>
                   </div>
 
                   {s.last_message && (
@@ -117,6 +144,16 @@ export default function SessionDrawer({ open, onClose, sessions, currentSessionI
 
                   <div className="flex items-center gap-1.5 pl-5">
                     {s.platform && <Badge variant="info" className="text-[9px] px-1 py-0">{s.platform}</Badge>}
+                    {s.waiting_permission ? (
+                      <Badge variant="warning" className="text-[9px] px-1 py-0 gap-0.5">
+                        <Clock size={8} /> {t('sessions.waitingPermission')}
+                      </Badge>
+                    ) : s.running ? (
+                      <Badge variant="success" className="text-[9px] px-1 py-0 gap-0.5">
+                        <Loader2 size={8} className="animate-spin" /> {t('sessions.running')}
+                      </Badge>
+                    ) : null}
+                    {source && source !== title && <Badge variant="info" className="text-[9px] px-1 py-0">{source}</Badge>}
                     <span className="text-[10px] text-gray-400 ml-auto">{s.history_count} msgs</span>
                   </div>
                 </button>

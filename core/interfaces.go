@@ -205,6 +205,16 @@ type ProgressUpdateThrottler interface {
 	ProgressUpdateInterval() time.Duration
 }
 
+// MessageSizeLimitProvider is an optional interface for platforms that enforce a
+// hard cap on a single outgoing message length (most IM platforms do, e.g.
+// ~4000 chars). Platforms that do NOT implement this interface — such as the
+// bridge/Web admin console which streams over WebSocket with no practical limit
+// — are treated as unlimited and never have their progress/preview text trimmed.
+// Returning 0 or a negative value also means "no limit".
+type MessageSizeLimitProvider interface {
+	MessageSizeLimit() int
+}
+
 // StreamPreviewModeProvider is an optional interface for platforms that want
 // to customize stream-preview semantics. The empty string keeps the default
 // behavior.

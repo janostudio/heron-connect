@@ -448,6 +448,170 @@ func TestEffectiveDisplay_ProjectOverride(t *testing.T) {
 	}
 }
 
+func TestEffectiveDisplayForPlatform(t *testing.T) {
+	tru := true
+	fullMode, quietMode, streamMode := DisplayModeFull, DisplayModeQuiet, DisplayModeStream
+	platThinkLen, platToolLen := 150, 800
+
+	tests := []struct {
+		name           string
+		cfg            Config
+		proj           ProjectConfig
+		platformName   string
+		wantMode       string
+		wantTM         bool
+		wantTool       bool
+		wantThinkLen   int
+		wantToolMaxLen int
+	}{
+		{
+			name: "platform override wins over project",
+			cfg:  Config{},
+			proj: ProjectConfig{
+				Display: &DisplayConfig{Mode: &quietMode},
+				Platforms: []PlatformConfig{
+					{Type: "web", Display: &DisplayConfig{Mode: &fullMode}},
+				},
+			},
+			platformName:   "web",
+			wantMode:       DisplayModeFull,
+			wantTM:         true,
+			wantTool:       true,
+			wantThinkLen:   300,
+			wantToolMaxLen: 500,
+		},
+		{
+			name: "platform entry present but Display nil falls back to project",
+			cfg:  Config{},
+			proj: ProjectConfig{
+				Display: &DisplayConfig{Mode: &quietMode},
+				Platforms: []PlatformConfig{
+					{Type: "feishu"},
+				},
+			},
+			platformName:   "feishu",
+			wantMode:       DisplayModeQuiet,
+			wantTM:         false,
+			wantTool:       false,
+			wantThinkLen:   300,
+			wantToolMaxLen: 500,
+		},
+		{
+			name: "platformName does not match any entry falls back to project",
+			cfg:  Config{},
+			proj: ProjectConfig{
+				Display: &DisplayConfig{Mode: &quietMode},
+				Platforms: []PlatformConfig{
+					{Type: "web", Display: &DisplayConfig{Mode: &fullMode}},
+				},
+			},
+			platformName:   "wecom",
+			wantMode:       DisplayModeQuiet,
+			wantTM:         false,
+			wantTool:       false,
+			wantThinkLen:   300,
+			wantToolMaxLen: 500,
+		},
+		{
+			name: "empty platformName falls back to project (identical to EffectiveDisplay)",
+			cfg:  Config{},
+			proj: ProjectConfig{
+				Display: &DisplayConfig{Mode: &quietMode},
+				Platforms: []PlatformConfig{
+					{Type: "web", Display: &DisplayConfig{Mode: &fullMode}},
+				},
+			},
+			platformName:   "",
+			wantMode:       DisplayModeQuiet,
+			wantTM:         false,
+			wantTool:       false,
+			wantThinkLen:   300,
+			wantToolMaxLen: 500,
+		},
+		{
+			name: "platform Mode alone re-derives thinking/tool defaults",
+			cfg:  Config{},
+			proj: ProjectConfig{
+				Display: &DisplayConfig{Mode: &quietMode}, // project would otherwise be false/false
+				Platforms: []PlatformConfig{
+					{Type: "web", Display: &DisplayConfig{Mode: &streamMode}},
+				},
+			},
+			platformName:   "web",
+			wantMode:       DisplayModeStream,
+			wantTM:         false, // stream mode: thinking hidden, tool shown
+			wantTool:       true,
+			wantThinkLen:   300,
+			wantToolMaxLen: 500,
+		},
+		{
+			name: "explicit platform ThinkingMessages wins over platform Mode's re-derived default",
+			cfg:  Config{},
+			proj: ProjectConfig{
+				Platforms: []PlatformConfig{
+					{Type: "web", Display: &DisplayConfig{Mode: &quietMode, ThinkingMessages: &tru}},
+				},
+			},
+			platformName:   "web",
+			wantMode:       DisplayModeQuiet,
+			wantTM:         true, // explicit override beats quiet-mode-derived false
+			wantTool:       false,
+			wantThinkLen:   300,
+			wantToolMaxLen: 500,
+		},
+		{
+			name: "platform matching is case-insensitive",
+			cfg:  Config{},
+			proj: ProjectConfig{
+				Platforms: []PlatformConfig{
+					{Type: "Web", Display: &DisplayConfig{Mode: &fullMode}},
+				},
+			},
+			platformName:   "WEB",
+			wantMode:       DisplayModeFull,
+			wantTM:         true,
+			wantTool:       true,
+			wantThinkLen:   300,
+			wantToolMaxLen: 500,
+		},
+		{
+			name: "platform ThinkingMaxLen/ToolMaxLen override independently",
+			cfg:  Config{},
+			proj: ProjectConfig{
+				Platforms: []PlatformConfig{
+					{Type: "web", Display: &DisplayConfig{ThinkingMaxLen: &platThinkLen, ToolMaxLen: &platToolLen}},
+				},
+			},
+			platformName:   "web",
+			wantMode:       DisplayModeFull,
+			wantTM:         true,
+			wantTool:       true,
+			wantThinkLen:   150,
+			wantToolMaxLen: 800,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mode, tm, tool, thinkLen, toolMaxLen := EffectiveDisplayForPlatform(&tt.cfg, &tt.proj, tt.platformName)
+			if mode != tt.wantMode {
+				t.Errorf("Mode = %q, want %q", mode, tt.wantMode)
+			}
+			if tm != tt.wantTM {
+				t.Errorf("ThinkingMessages = %v, want %v", tm, tt.wantTM)
+			}
+			if tool != tt.wantTool {
+				t.Errorf("ToolMessages = %v, want %v", tool, tt.wantTool)
+			}
+			if thinkLen != tt.wantThinkLen {
+				t.Errorf("ThinkingMaxLen = %d, want %d", thinkLen, tt.wantThinkLen)
+			}
+			if toolMaxLen != tt.wantToolMaxLen {
+				t.Errorf("ToolMaxLen = %d, want %d", toolMaxLen, tt.wantToolMaxLen)
+			}
+		})
+	}
+}
+
 func TestValidateProjectDisplayConfig(t *testing.T) {
 	mode := "verbose"
 	cardMode := "modern"
@@ -473,6 +637,42 @@ func TestValidateProjectDisplayConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := Config{Projects: []ProjectConfig{validProject("demo")}}
 			cfg.Projects[0].Display = tt.display
+			err := cfg.validate()
+			if err == nil {
+				t.Fatalf("validate() = nil, want %q", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validate() = %q, want contains %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateProjectPlatformDisplayConfig(t *testing.T) {
+	mode := "verbose"
+	cardMode := "modern"
+
+	tests := []struct {
+		name    string
+		display *DisplayConfig
+		wantErr string
+	}{
+		{
+			name:    "invalid platform display mode",
+			display: &DisplayConfig{Mode: &mode},
+			wantErr: `projects[0].platforms[0].display.mode must be "full", "compact", "quiet", or "stream"`,
+		},
+		{
+			name:    "invalid platform card mode",
+			display: &DisplayConfig{CardMode: &cardMode},
+			wantErr: `projects[0].platforms[0].display.card_mode must be "legacy" or "rich"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{Projects: []ProjectConfig{validProject("demo")}}
+			cfg.Projects[0].Platforms[0].Display = tt.display
 			err := cfg.validate()
 			if err == nil {
 				t.Fatalf("validate() = nil, want %q", tt.wantErr)
@@ -1530,6 +1730,62 @@ func TestLoad_RejectsNegativeResetOnIdleMins(t *testing.T) {
 	}
 }
 
+func TestLoad_ParsesPlatformResetOnIdleMins(t *testing.T) {
+	configPath := writeConfigFixture(t, projectWithPlatformResetOnIdleFixture)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	plats := cfg.Projects[0].Platforms
+	if len(plats) != 2 {
+		t.Fatalf("len(platforms) = %d, want 2", len(plats))
+	}
+	if plats[0].Type != "web" || plats[0].ResetOnIdleMins == nil || *plats[0].ResetOnIdleMins != 0 {
+		t.Fatalf("web platform reset_on_idle_mins = %v, want 0", plats[0].ResetOnIdleMins)
+	}
+	// Unset field stays nil (falls back to project value).
+	if plats[1].Type != "wecom" || plats[1].ResetOnIdleMins != nil {
+		t.Fatalf("wecom platform reset_on_idle_mins = %v, want nil", plats[1].ResetOnIdleMins)
+	}
+}
+
+func TestLoad_RejectsNegativePlatformResetOnIdleMins(t *testing.T) {
+	configPath := writeConfigFixture(t, projectWithNegativePlatformResetOnIdleFixture)
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected error for negative platform reset_on_idle_mins")
+	}
+	if !strings.Contains(err.Error(), "reset_on_idle_mins") {
+		t.Fatalf("error = %q, want platform reset_on_idle_mins validation", err.Error())
+	}
+}
+
+func TestLoad_ParsesQueuedMessages(t *testing.T) {
+	configPath := writeConfigFixture(t, projectWithQueuedMessagesFixture)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if got := cfg.Projects[0].QueuedMessages; got != "serial" {
+		t.Fatalf("queued_messages = %q, want serial", got)
+	}
+}
+
+func TestLoad_RejectsInvalidQueuedMessages(t *testing.T) {
+	configPath := writeConfigFixture(t, projectWithInvalidQueuedMessagesFixture)
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected error for invalid queued_messages")
+	}
+	if !strings.Contains(err.Error(), "queued_messages") {
+		t.Fatalf("error = %q, want queued_messages validation", err.Error())
+	}
+}
+
 func TestLoad_ParsesRunAsUser(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("run_as_user is only supported on Linux/macOS")
@@ -1930,6 +2186,79 @@ const projectWithNegativeResetOnIdleFixture = `
 [[projects]]
 name = "beta"
 reset_on_idle_mins = -1
+
+[projects.agent]
+type = "codex"
+
+[projects.agent.options]
+work_dir = "/tmp/beta"
+
+[[projects.platforms]]
+type = "telegram"
+
+[projects.platforms.options]
+bot_token = "token_xxx"
+`
+
+const projectWithPlatformResetOnIdleFixture = `
+[[projects]]
+name = "beta"
+reset_on_idle_mins = 720
+
+[projects.agent]
+type = "codex"
+
+[projects.agent.options]
+work_dir = "/tmp/beta"
+
+[[projects.platforms]]
+type = "web"
+reset_on_idle_mins = 0
+
+[[projects.platforms]]
+type = "wecom"
+
+[projects.platforms.options]
+bot_id = "bot_xxx"
+`
+
+const projectWithNegativePlatformResetOnIdleFixture = `
+[[projects]]
+name = "beta"
+
+[projects.agent]
+type = "codex"
+
+[projects.agent.options]
+work_dir = "/tmp/beta"
+
+[[projects.platforms]]
+type = "web"
+reset_on_idle_mins = -1
+`
+
+const projectWithQueuedMessagesFixture = `
+[[projects]]
+name = "beta"
+queued_messages = "serial"
+
+[projects.agent]
+type = "codex"
+
+[projects.agent.options]
+work_dir = "/tmp/beta"
+
+[[projects.platforms]]
+type = "telegram"
+
+[projects.platforms.options]
+bot_token = "token_xxx"
+`
+
+const projectWithInvalidQueuedMessagesFixture = `
+[[projects]]
+name = "beta"
+queued_messages = "parallel"
 
 [projects.agent]
 type = "codex"

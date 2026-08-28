@@ -157,8 +157,72 @@ func TestSessionManager_Persistence(t *testing.T) {
 	}
 }
 
-func TestSessionManager_GetOrCreateActive_Persists(t *testing.T) {
+func TestSessionManager_SetSessionMeta_RenameAndPin(t *testing.T) {
+	sm := NewSessionManager("")
+	s := sm.NewSession("user1", "original")
+	if s == nil || s.ID == "" {
+		t.Fatal("expected a session with id")
+	}
+
+	// Rename: name updates and auto flag is cleared.
+	name := "my-renamed"
+	pinned := true
+	ok, err := sm.SetSessionMeta(s.ID, &name, &pinned)
+	if err != nil || !ok {
+		t.Fatalf("SetSessionMeta() ok=%v err=%v", ok, err)
+	}
+	got := sm.FindByID(s.ID)
+	if got.GetName() != "my-renamed" {
+		t.Fatalf("name = %q, want my-renamed", got.GetName())
+	}
+	if got.GetNameAuto() {
+		t.Fatal("expected name_auto to be cleared after manual rename")
+	}
+	if !got.IsPinned() {
+		t.Fatal("expected session to be pinned")
+	}
+
+	// Unpin.
+	f := false
+	ok, _ = sm.SetSessionMeta(s.ID, nil, &f)
+	if !ok {
+		t.Fatal("expected unpin to succeed")
+	}
+	if sm.FindByID(s.ID).IsPinned() {
+		t.Fatal("expected session to be unpinned")
+	}
+}
+
+func TestSessionManager_SetSessionMeta_NotFound(t *testing.T) {
+	sm := NewSessionManager("")
+	ok, _ := sm.SetSessionMeta("nope", nil, nil)
+	if ok {
+		t.Fatal("expected false for unknown session")
+	}
+}
+
+func TestSessionManager_SetSessionMeta_PersistsPinned(t *testing.T) {
 	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+
+	sm1 := NewSessionManager(path)
+	s := sm1.NewSession("user1", "x")
+	pinned := true
+	if _, err := sm1.SetSessionMeta(s.ID, nil, &pinned); err != nil {
+		t.Fatal(err)
+	}
+
+	sm2 := NewSessionManager(path)
+	list := sm2.ListSessions("user1")
+	if len(list) != 1 {
+		t.Fatalf("expected 1 session after reload, got %d", len(list))
+	}
+	if !list[0].IsPinned() {
+		t.Fatal("expected pinned to persist after reload")
+	}
+}
+
+func TestSessionManager_GetOrCreateActive_Persists(t *testing.T) {	dir := t.TempDir()
 	path := filepath.Join(dir, "sessions.json")
 
 	sm1 := NewSessionManager(path)
@@ -271,6 +335,41 @@ func TestSession_SetAgentSessionID_RejectsContinueSentinel(t *testing.T) {
 	s.SetAgentSessionID("", "")
 	if got := s.GetAgentSessionID(); got != "" {
 		t.Fatalf("expected clear, got %q", got)
+	}
+}
+
+// DetachAgentSession must clear the live agent session ID (so it can't be
+// resumed) but PRESERVE display/reference data: agent type, history, name, and
+// past agent session IDs. Regression test for the empty-shell bug where /new
+// wiped history and agent_type, making past conversations unrecoverable.
+func TestSession_DetachAgentSession_PreservesHistoryAndType(t *testing.T) {
+	s := &Session{Name: "my chat"}
+	s.SetAgentSessionID("thread-1", "codex")
+	s.AddHistory("user", "hello")
+	s.AddHistory("assistant", "hi there")
+
+	s.DetachAgentSession()
+
+	if s.GetAgentSessionID() != "" {
+		t.Fatalf("DetachAgentSession should clear AgentSessionID, got %q", s.GetAgentSessionID())
+	}
+	if s.GetAgentName() != "codex" {
+		t.Fatalf("DetachAgentSession should preserve AgentType, got %q", s.GetAgentName())
+	}
+	if s.Name != "my chat" {
+		t.Fatalf("DetachAgentSession should preserve Name, got %q", s.Name)
+	}
+	if len(s.GetHistory(0)) != 2 {
+		t.Fatalf("DetachAgentSession should preserve History, got %d entries", len(s.GetHistory(0)))
+	}
+	if len(s.PastAgentSessionIDs) != 1 || s.PastAgentSessionIDs[0] != "thread-1" {
+		t.Fatalf("DetachAgentSession should record past id, got %v", s.PastAgentSessionIDs)
+	}
+
+	// Detaching again must not duplicate or lose the past id.
+	s.DetachAgentSession()
+	if len(s.PastAgentSessionIDs) != 1 {
+		t.Fatalf("repeated DetachAgentSession should not duplicate past id, got %v", s.PastAgentSessionIDs)
 	}
 }
 
@@ -1024,6 +1123,115 @@ func TestLegacyData_PartiallyMigratedData(t *testing.T) {
 	}
 }
 
+// TestCmdNew_PreservesOldSessionHistoryAndType exercises the REAL cmdNew path
+// (not the inlined old clearing pattern) and asserts the previously-active
+// session keeps its history/agent_type/name after /new, only losing its live
+// AgentSessionID. This is the regression test for the empty-shell Web bug:
+// /new must not wipe the old conversation's display data.
+func TestCmdNew_PreservesOldSessionHistoryAndType(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	sm := NewSessionManager(path)
+
+	e := &Engine{sessions: sm}
+	e.i18n = NewI18n(LangEnglish)
+
+	p := &stubPlatformEngine{n: "test"}
+	userKey := "user:alice"
+	msg := &Message{SessionKey: userKey, ReplyCtx: "ctx"}
+
+	// Seed a live conversation on the active session.
+	old := sm.GetOrCreateActive(userKey)
+	old.SetAgentSessionID("thread-1", "codex")
+	old.Name = "my chat"
+	old.AddHistory("user", "hello")
+	old.AddHistory("assistant", "hi there")
+	old.AddHistory("user", "bye")
+	sm.Save()
+
+	e.cmdNew(p, msg, []string{"我的新会话"})
+
+	// The OLD session must still carry its display/reference data.
+	reloadedOld := sm.FindByID(old.ID)
+	if reloadedOld == nil {
+		t.Fatal("old session record disappeared after /new")
+	}
+	if reloadedOld.GetAgentSessionID() != "" {
+		t.Fatalf("old session AgentSessionID = %q, want empty (detached)", reloadedOld.GetAgentSessionID())
+	}
+	if reloadedOld.GetAgentName() != "codex" {
+		t.Fatalf("old session AgentType = %q, want codex (preserved)", reloadedOld.GetAgentName())
+	}
+	if reloadedOld.Name != "my chat" {
+		t.Fatalf("old session Name = %q, want 'my chat' (preserved)", reloadedOld.Name)
+	}
+	if len(reloadedOld.GetHistory(0)) != 3 {
+		t.Fatalf("old session History = %d entries, want 3 (preserved)", len(reloadedOld.GetHistory(0)))
+	}
+	if len(reloadedOld.PastAgentSessionIDs) != 1 || reloadedOld.PastAgentSessionIDs[0] != "thread-1" {
+		t.Fatalf("old session PastAgentSessionIDs = %v, want [thread-1]", reloadedOld.PastAgentSessionIDs)
+	}
+
+	// A NEW active session must exist and be distinct from the old one.
+	active := sm.GetOrCreateActive(userKey)
+	if active.ID == old.ID {
+		t.Fatal("/new should have created a new active session, not reused the old one")
+	}
+	if active.GetName() != "我的新会话" {
+		t.Fatalf("new active session Name = %q, want '我的新会话'", active.GetName())
+	}
+	if active.GetAgentSessionID() != "" {
+		t.Fatalf("new active session should start with empty AgentSessionID, got %q", active.GetAgentSessionID())
+	}
+}
+
+// TestForceNewSession_PreservesOldSession exercises ForceNewSession (the
+// programmatic /new used by the Web adapter) and asserts the same preservation
+// guarantee as cmdNew.
+func TestForceNewSession_PreservesOldSession(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	sm := NewSessionManager(path)
+
+	e := &Engine{sessions: sm}
+	e.i18n = NewI18n(LangEnglish)
+
+	userKey := "web:admin:proj"
+
+	old := sm.GetOrCreateActive(userKey)
+	old.SetAgentSessionID("thread-web-1", "acp")
+	old.Name = "previous web chat"
+	old.AddHistory("user", "what is the build status?")
+	old.AddHistory("assistant", "build is green")
+	sm.Save()
+
+	newSession := e.ForceNewSession(userKey, "fresh web chat")
+
+	reloadedOld := sm.FindByID(old.ID)
+	if reloadedOld == nil {
+		t.Fatal("old session record disappeared after ForceNewSession")
+	}
+	if reloadedOld.GetAgentSessionID() != "" {
+		t.Fatalf("old AgentSessionID = %q, want empty", reloadedOld.GetAgentSessionID())
+	}
+	if reloadedOld.GetAgentName() != "acp" {
+		t.Fatalf("old AgentType = %q, want acp", reloadedOld.GetAgentName())
+	}
+	if reloadedOld.Name != "previous web chat" {
+		t.Fatalf("old Name = %q, want 'previous web chat'", reloadedOld.Name)
+	}
+	if len(reloadedOld.GetHistory(0)) != 2 {
+		t.Fatalf("old History = %d entries, want 2", len(reloadedOld.GetHistory(0)))
+	}
+
+	if newSession.ID == old.ID {
+		t.Fatal("ForceNewSession should return a new session distinct from the old")
+	}
+	if newSession.GetName() != "fresh web chat" {
+		t.Fatalf("new session Name = %q, want 'fresh web chat'", newSession.GetName())
+	}
+}
+
 // TestLegacyData_ClearsAfterFirstNewCommand verifies the full migration
 // lifecycle: legacy data → disable filter → /new populates PastAgentSessionIDs
 // → filter re-enables on next cycle.
@@ -1066,5 +1274,48 @@ func TestLegacyData_ClearsAfterFirstNewCommand(t *testing.T) {
 	}
 	if _, ok := known2["thread-new"]; !ok {
 		t.Fatal("thread-new should be in known as current ID")
+	}
+}
+
+func TestMintWebSessionKey_ShapeAndUniqueness(t *testing.T) {
+	a := MintWebSessionKey("auto-bugfix")
+	b := MintWebSessionKey("auto-bugfix")
+	c := MintWebSessionKey("other")
+
+	wantPrefix := "bridge:web-admin:auto-bugfix:conv-"
+	if !strings.HasPrefix(a, wantPrefix) {
+		t.Errorf("key %q missing prefix %q", a, wantPrefix)
+	}
+	if a == b {
+		t.Errorf("two MintWebSessionKey calls returned identical key %q", a)
+	}
+	if !strings.HasPrefix(c, "bridge:web-admin:other:conv-") {
+		t.Errorf("project not reflected in key %q", c)
+	}
+	// The key must route to the bridge/web platform and project.
+	if projectFromWebSessionKey(a) != "auto-bugfix" {
+		t.Errorf("projectFromWebSessionKey(%q) = %q, want auto-bugfix", a, projectFromWebSessionKey(a))
+	}
+}
+
+func TestDistinctWebConversationKeysYieldDistinctSessions(t *testing.T) {
+	// The heart of the Web session-isolation fix: two conversations with
+	// distinct keys must map to two distinct active agent sessions, never
+	// collapse onto one.
+	sm := NewSessionManager("")
+	keyA := MintWebSessionKey("auto-bugfix")
+	keyB := MintWebSessionKey("auto-bugfix")
+
+	sA := sm.GetOrCreateActive(keyA)
+	sB := sm.GetOrCreateActive(keyB)
+
+	if sA == sB {
+		t.Fatal("distinct conversation keys mapped to the same active session; sessions are not isolated")
+	}
+	if sm.ActiveSessionID(keyA) != sA.ID {
+		t.Errorf("active for keyA = %q, want %q", sm.ActiveSessionID(keyA), sA.ID)
+	}
+	if sm.ActiveSessionID(keyB) != sB.ID {
+		t.Errorf("active for keyB = %q, want %q", sm.ActiveSessionID(keyB), sB.ID)
 	}
 }

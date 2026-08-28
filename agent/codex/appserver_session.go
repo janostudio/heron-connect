@@ -262,7 +262,7 @@ func (s *appServerSession) initialize() error {
 	params := map[string]any{
 		"clientInfo": map[string]any{
 			"name":    "heron-connect-codex-agent",
-			"title":   "CC Connect Codex Agent",
+			"title":   "Heron Connect Codex Agent",
 			"version": "0.1.0",
 		},
 		"capabilities": map[string]any{

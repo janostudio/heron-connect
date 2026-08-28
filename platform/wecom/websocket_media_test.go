@@ -38,7 +38,7 @@ func TestWsCollectInboundParts_fileAndQuote(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &body); err != nil {
 		t.Fatal(err)
 	}
-	texts, imgs, files := wsCollectInboundParts(&body)
+	texts, imgs, files, _ := wsCollectInboundParts(&body)
 	if len(texts) != 0 || len(imgs) != 0 || len(files) != 1 || files[0].URL != "https://example.com/f" {
 		t.Fatalf("files=%v texts=%v imgs=%v", files, texts, imgs)
 	}
@@ -64,7 +64,7 @@ func TestWsCollectInboundParts_mixed(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &body); err != nil {
 		t.Fatal(err)
 	}
-	texts, imgs, files := wsCollectInboundParts(&body)
+	texts, imgs, files, _ := wsCollectInboundParts(&body)
 	if len(texts) != 1 || texts[0] != "see" || len(imgs) != 1 || imgs[0].URL != "https://i" || len(files) != 0 {
 		t.Fatalf("texts=%v imgs=%v files=%v", texts, imgs, files)
 	}
@@ -89,7 +89,7 @@ func TestWsCollectInboundParts_fileWithNonEmptyMixedUsesTopLevelFile(t *testing.
 	if err := json.Unmarshal([]byte(raw), &body); err != nil {
 		t.Fatal(err)
 	}
-	texts, imgs, files := wsCollectInboundParts(&body)
+	texts, imgs, files, _ := wsCollectInboundParts(&body)
 	if len(files) != 1 || files[0].URL != "https://example.com/doc.pdf" || len(imgs) != 0 {
 		t.Fatalf("texts=%v imgs=%v files=%v", texts, imgs, files)
 	}
@@ -115,7 +115,7 @@ func TestWsCollectInboundParts_mixedContainsFile(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &body); err != nil {
 		t.Fatal(err)
 	}
-	texts, imgs, files := wsCollectInboundParts(&body)
+	texts, imgs, files, _ := wsCollectInboundParts(&body)
 	if len(texts) != 1 || len(imgs) != 0 || len(files) != 1 || files[0].URL != "https://f" {
 		t.Fatalf("texts=%v imgs=%v files=%v", texts, imgs, files)
 	}
@@ -137,7 +137,7 @@ func TestWsCollectInboundParts_quoteTextPrefixed(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &body); err != nil {
 		t.Fatal(err)
 	}
-	texts, _, _ := wsCollectInboundParts(&body)
+	texts, _, _, _ := wsCollectInboundParts(&body)
 	if len(texts) != 2 {
 		t.Fatalf("texts=%v, want main + quoted", texts)
 	}
@@ -165,7 +165,7 @@ func TestWsCollectInboundParts_quoteVoicePrefixed(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &body); err != nil {
 		t.Fatal(err)
 	}
-	texts, _, _ := wsCollectInboundParts(&body)
+	texts, _, _, _ := wsCollectInboundParts(&body)
 	if len(texts) != 2 {
 		t.Fatalf("texts=%v, want main + quoted", texts)
 	}

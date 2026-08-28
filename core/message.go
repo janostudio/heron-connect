@@ -139,6 +139,11 @@ type LocationAttachment struct {
 // Message represents a unified incoming message from any platform.
 type Message struct {
 	SessionKey   string // unique key for user context, e.g. "feishu:{chatID}:{userID}"
+	// SessionID is the heron-connect session ID ("s89") the message should be
+	// routed to, when the platform/client explicitly targets a conversation.
+	// Distinct from Event.SessionID (which is the agent-managed session id for
+	// conversation continuity). Empty when routing purely by SessionKey.
+	SessionID    string
 	Platform     string
 	MessageID    string // platform message ID for tracing
 	Recalled     bool   // true for platform message recall/delete events targeting MessageID
@@ -151,6 +156,7 @@ type Message struct {
 	Audio        *AudioAttachment    // voice message (if any)
 	Location     *LocationAttachment // geographical location (if any)
 	ExtraContent string              // platform-enriched content (e.g. location text, reply quote) prepended for the agent
+	QuotedText  string              // clean text of a quoted/referenced message (if any), used for session resolution
 	ChannelKey   string              // platform-provided channel identifier for workspace binding (optional)
 	ReplyCtx     any                 // platform-specific context needed for replying
 	FromVoice    bool                // true if message originated from voice transcription
@@ -206,6 +212,15 @@ type Event struct {
 	Synthetic    bool           // true if this is a synthetic/generated message (not from real user)
 	IsSubagent   bool           // true if this event originates from a child-agent stream
 }
+
+// EventMetadataSessionUnrecoverable marks an EventError as fatal for the
+// persisted agent_session_id binding: retrying the same resume target can
+// never succeed (e.g. a process-per-turn CLI exited silently because --resume
+// pointed at a session that has no backing store, such as a subagent child
+// session id that was mistakenly persisted). The engine detaches the binding
+// and tears down the interactive state so the NEXT message starts a fresh
+// agent session instead of being stuck forever.
+const EventMetadataSessionUnrecoverable = "session_unrecoverable"
 
 // HistoryEntry is one turn in a conversation.
 type HistoryEntry struct {

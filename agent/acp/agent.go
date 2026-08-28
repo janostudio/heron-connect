@@ -506,13 +506,30 @@ func (a *Agent) GetModel() string {
 
 // AvailableModels returns the models this ACP agent offers. The list
 // is populated from the latest configOptions(models)/models observed
-// on session/new or session/load; before the first successful
-// handshake it returns an empty slice.
+// on session/new or session/load. If the ACP server hasn't reported
+// anything yet (no handshake yet, or the server doesn't advertise a
+// model config option at all) and the underlying CLI is a known one
+// with its own local model config, we fall back to reading that
+// config directly — e.g. `codebuddy --acp` still reads
+// .codebuddy/models.json even though ACP's session/new response may
+// not surface it as a configOptions/models block.
 func (a *Agent) AvailableModels(_ context.Context) []core.ModelOption {
 	a.modelsMu.RLock()
-	defer a.modelsMu.RUnlock()
 	out := make([]core.ModelOption, len(a.modelsCache))
 	copy(out, a.modelsCache)
+	a.modelsMu.RUnlock()
+	if len(out) > 0 {
+		return out
+	}
+
+	if acpCLIBaseName(a.command) == "codebuddy" {
+		a.mu.RLock()
+		workDir := a.workDir
+		a.mu.RUnlock()
+		if models := core.CodeBuddyConfiguredModels(workDir); len(models) > 0 {
+			return models
+		}
+	}
 	return out
 }
 

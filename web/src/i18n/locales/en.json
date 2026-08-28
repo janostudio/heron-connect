@@ -4,7 +4,7 @@
     "projects": "Projects",
     "providers": "Providers",
     "sessions": "Sessions",
-    "chat": "Chat",
+    "chat": "Project Chats",
     "cron": "Cron",
     "bridge": "Bridge",
     "skills": "Skills",
@@ -82,7 +82,13 @@
     "bridgeConnected": "connected",
     "bridgeConnecting": "connecting...",
     "bridgeDisconnected": "disconnected",
-    "bridgeNotAvailable": "Bridge not available. Enable [bridge] in config.toml to chat from web."
+    "running": "running",
+    "waitingPermission": "awaiting approval",
+    "bridgeNotAvailable": "Bridge not available. Enable [bridge] in config.toml to chat from web.",
+    "searchPlaceholder": "Search by session name, user, or message content...",
+    "createNew": "New Session",
+    "selectProject": "Select project",
+    "sessionNameOptional": "Session name (optional)"
   },
   "providers": {
     "title": "Providers",
@@ -182,6 +188,11 @@
     "save": "Save",
     "delete": "Delete",
     "back": "Back",
+    "menu": "Menu",
+    "more": "More",
+    "theme": "Theme",
+    "collapse": "Collapse",
+    "expand": "Expand",
     "refresh": "Refresh",
     "search": "Search",
     "noData": "No data",
@@ -265,6 +276,10 @@
     "slashHint": "Press / to see available commands",
     "inputPlaceholder": "Type a message or press / for commands...",
     "commands": "Commands",
+    "stop": "Stop",
+    "attach": "Attach image/file",
+    "removeAttachment": "Remove",
+    "fileTooBig": "File too large (>10MB)",
     "defaultSession": "Web Session"
   },
   "cmd": {

@@ -4,7 +4,7 @@
     "projects": "Proyectos",
     "providers": "Proveedores",
     "sessions": "Sesiones",
-    "chat": "Chat",
+    "chat": "Chats de proyecto",
     "cron": "Cron",
     "bridge": "Puente",
     "skills": "Habilidades",
@@ -82,7 +82,13 @@
     "bridgeConnected": "conectado",
     "bridgeConnecting": "conectando...",
     "bridgeDisconnected": "desconectado",
-    "bridgeNotAvailable": "Bridge no disponible. Habilite [bridge] en config.toml para chatear desde la web."
+    "running": "en ejecución",
+    "waitingPermission": "esperando aprobación",
+    "bridgeNotAvailable": "Bridge no disponible. Habilite [bridge] en config.toml para chatear desde la web.",
+    "searchPlaceholder": "Buscar por nombre de sesión, usuario o contenido del mensaje...",
+    "createNew": "Nueva sesión",
+    "selectProject": "Seleccionar proyecto",
+    "sessionNameOptional": "Nombre de sesión (opcional)"
   },
   "providers": {
     "title": "Proveedores",
@@ -182,6 +188,11 @@
     "save": "Guardar",
     "delete": "Eliminar",
     "back": "Volver",
+    "menu": "Menú",
+    "more": "Más",
+    "theme": "Tema",
+    "collapse": "Contraer",
+    "expand": "Expandir",
     "refresh": "Actualizar",
     "search": "Buscar",
     "noData": "Sin datos",
@@ -265,6 +276,10 @@
     "slashHint": "Presiona / para ver los comandos disponibles",
     "inputPlaceholder": "Escribe un mensaje o presiona / para comandos...",
     "commands": "Comandos",
+    "stop": "Detener",
+    "attach": "Adjuntar imagen/archivo",
+    "removeAttachment": "Quitar",
+    "fileTooBig": "Archivo demasiado grande (>10MB)",
     "defaultSession": "Sesión Web"
   },
   "cmd": {

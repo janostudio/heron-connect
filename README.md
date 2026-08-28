@@ -274,6 +274,22 @@ make test-fast
 - [docs/bridge-protocol.md](docs/bridge-protocol.md) — Bridge 协议
 - [docs/management-api.md](docs/management-api.md) — Management API
 
+## 配置 Skill（AI 辅助）
+
+内置一个 **heron-connect-config** Skill（[`skills/heron-connect-config/`](skills/heron-connect-config/)），让 AI 编码 Agent（CodeBuddy / Claude Code 等）帮你生成、解释、排查 heron-connect 的 TOML 配置：
+
+- `SKILL.md` — 能力索引：按需路由到 7 份主题参考（project/agent、platform、provider、display、advanced、gotchas 等），版本跟随 heron-connect
+- `scripts/service.sh` — **用一份 toml 后台启停服务**（封装 `heron-connect daemon`）：
+  ```bash
+  ./skills/heron-connect-config/scripts/service.sh --config /path/to/config.toml start
+  ./skills/heron-connect-config/scripts/service.sh --config /path/to/config.toml restart
+  ./skills/heron-connect-config/scripts/service.sh --config /path/to/config.toml stop
+  ./skills/heron-connect-config/scripts/service.sh --config /path/to/config.toml status
+  ./skills/heron-connect-config/scripts/service.sh --config /path/to/config.toml logs -f
+  ```
+  `start` 会先停旧实例再用当前 toml 拉起（等效重启）；支持 launchd / systemd / Windows。
+- `scripts/sync-version.sh` — 发版后同步 skill 版本号到 heron-connect 版本。
+
 ---
 
 ## 项目渊源

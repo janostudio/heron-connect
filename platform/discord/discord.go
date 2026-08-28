@@ -153,6 +153,10 @@ func (p *progressPlatform) ProgressStyle() string {
 	}
 }
 
+// MessageSizeLimit declares Discord's per-message character cap so coalesced
+// progress previews stay within platform limits.
+func (p *progressPlatform) MessageSizeLimit() int { return 4000 }
+
 func (p *progressPlatform) SupportsProgressCardPayload() bool {
 	return p.ProgressStyle() == "card"
 }

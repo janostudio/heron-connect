@@ -2,6 +2,8 @@ package core
 
 import (
 	"fmt"
+	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -130,6 +132,252 @@ func TransformLocalReferences(text string, cfg ReferenceRenderCfg, agentName, pl
 		out.WriteString(transformTextOutsideFence(part.text, cfg, workspaceDir))
 	}
 	return out.String()
+}
+
+// TransformLocalRefsToLinks rewrites local file references in agent reply text
+// into clickable markdown links pointing at the web file-service endpoint
+// (/api/v1/files/<project>/<relative-path>). It is the web-dashboard counterpart
+// to TransformLocalReferences: instead of a text marker (📄/📁) it emits a real
+// link the web UI can open for inline preview / download. Fenced code blocks,
+// existing markdown links, and bare web URLs are left untouched. Incomplete
+// paths are resolved against workspaceDir, reusing the same heuristic as
+// TransformLocalReferences so "guessing/joining" of relative paths still works.
+func TransformLocalRefsToLinks(text, projectName, workspaceDir string) string {
+	if strings.TrimSpace(text) == "" || strings.TrimSpace(projectName) == "" {
+		return text
+	}
+	parts := splitWithMatches(text, reFenceBlock)
+	var out strings.Builder
+	for _, part := range parts {
+		if part.matched {
+			out.WriteString(part.text)
+			continue
+		}
+		out.WriteString(transformTextToLinksOutsideFence(part.text, projectName, workspaceDir))
+	}
+	return out.String()
+}
+
+func transformTextToLinksOutsideFence(text, projectName, workspaceDir string) string {
+	parts := splitWithMatches(text, reInlineCodeSpan)
+	replacements := make([]placeholderReplacement, 0)
+	var out strings.Builder
+	for _, part := range parts {
+		if part.matched {
+			// Linkify a local file path wrapped in inline code, e.g. `src/foo.go`.
+			match := reInlineCodeSpan.FindStringSubmatch(part.text)
+			if len(match) < 2 {
+				out.WriteString(part.text)
+				continue
+			}
+			ref, ok := parseLocalReference(match[1], workspaceDir)
+			rel, ok := resolveServedLocalRef(ref, workspaceDir)
+			if !ok {
+				out.WriteString(part.text)
+				continue
+			}
+			ref.pathRel = rel
+			placeholder := makeReferencePlaceholder(len(replacements))
+			replacements = append(replacements, placeholderReplacement{placeholder: placeholder, ref: ref})
+			out.WriteString(placeholder)
+			continue
+		}
+		transformed, reps := transformNonCodeTextToLinks(part.text, projectName, workspaceDir)
+		if len(replacements) > 0 && len(reps) > 0 {
+			offset := len(replacements)
+			for i := range reps {
+				oldPlaceholder := reps[i].placeholder
+				newPlaceholder := makeReferencePlaceholder(offset + i)
+				transformed = strings.ReplaceAll(transformed, oldPlaceholder, newPlaceholder)
+				reps[i].placeholder = newPlaceholder
+			}
+		}
+		out.WriteString(transformed)
+		replacements = append(replacements, reps...)
+	}
+	return replaceReferencePlaceholdersAsLinks(out.String(), replacements, projectName)
+}
+
+func transformNonCodeTextToLinks(text, projectName, workspaceDir string) (string, []placeholderReplacement) {
+	replacements := make([]placeholderReplacement, 0)
+	// Protect existing web links and markdown links so we never double-wrap them.
+	text = replaceProtectedWebMarkdownLinks(text, &replacements)
+	text = replaceProtectedLinks(text, reBareURL, &replacements)
+	text = replaceLocalRefCandidatesAsLinks(text, reAbsOrFileRef, &replacements, workspaceDir)
+	text = replaceLocalRefCandidatesAsLinks(text, reRelativeRef, &replacements, workspaceDir)
+	text = replaceLocalRefCandidatesAsLinks(text, reBasenameFileRef, &replacements, workspaceDir)
+	return text, replacements
+}
+
+func replaceLocalRefCandidatesAsLinks(text string, re *regexp.Regexp, replacements *[]placeholderReplacement, workspaceDir string) string {
+	matches := re.FindAllStringIndex(text, -1)
+	if len(matches) == 0 {
+		return text
+	}
+	var out strings.Builder
+	last := 0
+	for _, m := range matches {
+		out.WriteString(text[last:m[0]])
+		token := text[m[0]:m[1]]
+		if re == reAbsOrFileRef && !isValidAbsoluteReferenceBoundary(text, m[0]) {
+			out.WriteString(token)
+			last = m[1]
+			continue
+		}
+		if re == reRelativeRef && !isValidRelativeReferenceBoundary(text, m[0]) {
+			out.WriteString(token)
+			last = m[1]
+			continue
+		}
+		ref, ok := parseLocalReference(token, workspaceDir)
+		// Only linkify things that resolve to a real file on disk, with a
+		// unique-basename fallback for missing directory prefixes.
+		rel, ok := resolveServedLocalRef(ref, workspaceDir)
+		if !ok {
+			out.WriteString(token)
+			last = m[1]
+			continue
+		}
+		ref.pathRel = rel
+		placeholder := makeReferencePlaceholder(len(*replacements))
+		*replacements = append(*replacements, placeholderReplacement{placeholder: placeholder, ref: ref})
+		out.WriteString(placeholder)
+		last = m[1]
+	}
+	out.WriteString(text[last:])
+	return out.String()
+}
+
+// replaceReferencePlaceholdersAsLinks substitutes reference placeholders with
+// clickable markdown links to the web file-service endpoint.
+func replaceReferencePlaceholdersAsLinks(text string, replacements []placeholderReplacement, projectName string) string {
+	if len(replacements) == 0 {
+		return text
+	}
+	sort.SliceStable(replacements, func(i, j int) bool {
+		return len(replacements[i].placeholder) > len(replacements[j].placeholder)
+	})
+	for _, rep := range replacements {
+		replacement := rep.keepText
+		if rep.ref != nil {
+			replacement = renderLocalReferenceLink(rep.ref, projectName)
+		}
+		text = strings.ReplaceAll(text, rep.placeholder, replacement)
+	}
+	return text
+}
+
+// localRefResolvesToFile reports whether a parsed local reference points at an
+// actual regular file on disk (not a directory, and not a nonexistent path).
+func localRefResolvesToFile(ref *localReference) bool {
+	if ref == nil || ref.kind == referenceKindDir || ref.pathAbs == "" {
+		return false
+	}
+	info, err := os.Stat(ref.pathAbs)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return true
+}
+
+// resolveServedLocalRef returns the workspace-relative path (slash-normalized)
+// that a local reference should resolve to for the file-service endpoint. It
+// first tries the direct path. If that does not exist and the reference is a
+// bare basename (e.g. the agent wrote "app.ts" but the file lives at
+// "src/app.ts"), it falls back to a recursive, uniquely-matching basename search
+// under the workspace root so "missing-prefix" paths can still be linked when
+// the match is unambiguous. Returns ok=false when it cannot resolve to a real
+// file.
+func resolveServedLocalRef(ref *localReference, workspaceDir string) (string, bool) {
+	if ref == nil || ref.kind == referenceKindDir || ref.pathRel == "" || ref.pathRel == "." || strings.HasPrefix(ref.pathRel, "../") {
+		return "", false
+	}
+	if localRefResolvesToFile(ref) {
+		return ref.pathRel, true
+	}
+	// Fallback: bare basename, recursively unique match under the workspace.
+	if strings.Contains(ref.pathRel, "/") {
+		return "", false
+	}
+	base := filepath.Base(strings.TrimSpace(ref.pathOriginal))
+	if base == "" || base == "." || base == "/" {
+		return "", false
+	}
+	match, ok := findUniqueBasenameFile(workspaceDir, base)
+	if !ok {
+		return "", false
+	}
+	rel, err := filepath.Rel(workspaceDir, match)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
+}
+
+// maxBasenameWalkFiles bounds the recursive basename search so a large
+// workspace (e.g. a whole project checkout) cannot stall reply rendering.
+const maxBasenameWalkFiles = 5000
+
+// findUniqueBasenameFile walks workspaceDir looking for a regular file whose
+// basename equals want. It returns (path, true) only when exactly one file
+// matches; multiple or zero matches yield (path, false).
+func findUniqueBasenameFile(workspaceDir, want string) (string, bool) {
+	var found string
+	count := 0
+	seen := 0
+	_ = filepath.WalkDir(workspaceDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		seen++
+		if seen > maxBasenameWalkFiles {
+			return filepath.SkipAll
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if d.Name() == want {
+			count++
+			found = path
+			if count > 1 {
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	})
+	if count == 1 {
+		return found, true
+	}
+	return "", false
+}
+
+// renderLocalReferenceLink builds a markdown link for a local file reference.
+// The href is the web file route relative path (slash-normalized, URL-escaped).
+// The display text prefers the relative path the agent referenced (trimmed), so
+// it stays concise; it falls back to the raw token when no relative path exists.
+func renderLocalReferenceLink(ref *localReference, projectName string) string {
+	if ref == nil || ref.pathRel == "" || ref.pathRel == "." || strings.HasPrefix(ref.pathRel, "../") {
+		return ref.raw
+	}
+	href := "/api/v1/files/" + url.PathEscape(projectName) + "/" + pathEscapePath(ref.pathRel)
+	display := strings.TrimSpace(ref.pathRel)
+	if display == "" {
+		display = strings.TrimSpace(ref.raw)
+	}
+	if display == "" {
+		display = ref.pathRel
+	}
+	return "[" + display + "](" + href + ")"
+}
+
+// pathEscapePath percent-escapes each slash-separated segment so spaces and
+// special characters in file names survive as a URL, keeping slashes intact.
+func pathEscapePath(p string) string {
+	segments := strings.Split(p, "/")
+	for i := range segments {
+		segments[i] = url.PathEscape(segments[i])
+	}
+	return strings.Join(segments, "/")
 }
 
 func transformTextOutsideFence(text string, cfg ReferenceRenderCfg, workspaceDir string) string {

@@ -4,7 +4,7 @@
     "projects": "專案",
     "providers": "服務商",
     "sessions": "工作階段",
-    "chat": "對話",
+    "chat": "專案對話",
     "cron": "排程工作",
     "bridge": "橋接",
     "skills": "技能",
@@ -82,7 +82,13 @@
     "bridgeConnected": "已連線",
     "bridgeConnecting": "連線中...",
     "bridgeDisconnected": "未連線",
-    "bridgeNotAvailable": "Bridge 未啟用。請在 config.toml 中啟用 [bridge] 以支援網頁聊天。"
+    "running": "執行中",
+    "waitingPermission": "等待授權",
+    "bridgeNotAvailable": "Bridge 未啟用。請在 config.toml 中啟用 [bridge] 以支援網頁聊天。",
+    "searchPlaceholder": "搜尋工作階段名稱、使用者或訊息內容...",
+    "createNew": "新增工作階段",
+    "selectProject": "選擇專案",
+    "sessionNameOptional": "工作階段名稱（可選）"
   },
   "providers": {
     "title": "模型供應商",
@@ -182,6 +188,11 @@
     "save": "儲存",
     "delete": "刪除",
     "back": "返回",
+    "menu": "選單",
+    "more": "更多",
+    "theme": "主題",
+    "collapse": "收起",
+    "expand": "展開",
     "refresh": "重新整理",
     "search": "搜尋",
     "noData": "無資料",
@@ -265,6 +276,10 @@
     "slashHint": "按 / 查看可用命令",
     "inputPlaceholder": "輸入訊息或按 / 使用命令...",
     "commands": "命令",
+    "stop": "停止",
+    "attach": "上傳圖片/檔案",
+    "removeAttachment": "移除",
+    "fileTooBig": "檔案過大（>10MB）",
     "defaultSession": "Web 對話"
   },
   "cmd": {
