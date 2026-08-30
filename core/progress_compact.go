@@ -48,6 +48,7 @@ type ProgressCardEntry struct {
 	Kind     ProgressCardEntryKind `json:"kind"`
 	Text     string                `json:"text"`
 	Tool     string                `json:"tool,omitempty"`
+	ID       string                `json:"id,omitempty"` // tool_use id: lets clients pair a tool_result with its invocation
 	Status   string                `json:"status,omitempty"`
 	ExitCode *int                  `json:"exit_code,omitempty"`
 	Success  *bool                 `json:"success,omitempty"`
@@ -105,6 +106,7 @@ func BuildProgressCardPayloadV2(items []ProgressCardEntry, truncated bool, agent
 			Kind:     kind,
 			Text:     text,
 			Tool:     strings.TrimSpace(item.Tool),
+			ID:       strings.TrimSpace(item.ID),
 			Status:   strings.TrimSpace(item.Status),
 			ExitCode: item.ExitCode,
 			Success:  item.Success,

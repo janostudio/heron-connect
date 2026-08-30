@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.26 (2026-08-30)
+
+### Fixed
+
+- **进度卡工具调用按 id 聚合，不再一行行刷屏**：codebuddy 场景每个工具产生 tool_use + tool_result 两条记录逐条追加，一轮对话卡片被刷满。现在 `Event.ToolID` → `ProgressCardEntry.ID` 全链路透传（codebuddy/claudecode 适配器补齐 id），web 端将同一 id 的调用与结果**合并为一行**（带 ok/error 徽章，展开可见输入+输出两段），**连续同名工具聚合为 "Read ×N" 分组行**（组头汇总状态徽章，展开逐条查看）；无 id 的旧 payload / codex 场景退化为按工具名分组。
+- **修复 /model 模型列表无法滚动**：模型选择用原生 `<select>`，移动端 webview 弹层滚不动、且滚动经过选项即触发 onChange 误切换模型。改为自定义 `SelectList` 内联列表（`max-h-64 overflow-y-auto` 自滚动、当前模型高亮勾选、点击即选），命令结果面板与消息流卡片两处统一替换。
+
 ## v1.1.25 (2026-08-28)
 
 ### Changed

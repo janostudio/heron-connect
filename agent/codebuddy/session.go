@@ -343,7 +343,7 @@ func (cs *codebuddySession) handleAssistant(ev *streamEvent, pendingText string)
 			if item.ID != "" && item.Name != "" {
 				cs.toolNameByID.Store(item.ID, item.Name)
 			}
-			evt := core.Event{Type: core.EventToolUse, ToolName: item.Name, ToolInput: inputPreview}
+			evt := core.Event{Type: core.EventToolUse, ToolName: item.Name, ToolID: item.ID, ToolInput: inputPreview}
 			select {
 			case cs.events <- evt:
 			case <-cs.ctx.Done():
@@ -403,6 +403,7 @@ func (cs *codebuddySession) handleUser(ev *streamEvent) {
 		evt := core.Event{
 			Type:      core.EventToolResult,
 			ToolName:  toolName,
+			ToolID:    item.ToolUseID,
 			Content:   resultText,
 			SessionID: cs.CurrentSessionID(),
 		}

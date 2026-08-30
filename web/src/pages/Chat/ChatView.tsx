@@ -20,6 +20,7 @@ import SessionDrawer from './SessionDrawer';
 import CommandResultPanel, { type CommandResult } from './CommandResultPanel';
 import RenameSessionModal from './RenameSessionModal';
 import ProgressCard, { parseProgressCard, type ProgressCardPayload } from './ProgressCard';
+import SelectList from './SelectList';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -260,15 +261,11 @@ function CardElement({ el, onAction }: { el: any; onAction: (v: string) => void 
   }
   if (el.type === 'select') {
     return (
-      <select
-        defaultValue={el.init_value}
-        onChange={(e) => onAction(e.target.value)}
-        className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/80 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-accent/40"
-      >
-        {el.options?.map((opt: any, j: number) => (
-          <option key={j} value={opt.value}>{opt.text}</option>
-        ))}
-      </select>
+      <SelectList
+        options={(el.options || []).map((opt: any) => ({ value: String(opt.value), text: opt.text }))}
+        value={el.init_value != null ? String(el.init_value) : undefined}
+        onChange={(v) => onAction(v)}
+      />
     );
   }
   return null;

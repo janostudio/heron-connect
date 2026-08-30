@@ -917,7 +917,12 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					sp.detachPreview() // keep frozen preview visible as permanent message
 				}
 			toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, displayToolName, formattedInput)
-			if !cp.AppendEvent(ProgressEntryToolUse, toolInput, event.ToolName, toolMsg) {
+			if !cp.AppendStructured(ProgressCardEntry{
+				Kind: ProgressEntryToolUse,
+				Text: toolInput,
+				Tool: event.ToolName,
+				ID:   event.ToolID,
+			}, toolMsg) {
 					for _, chunk := range SplitMessageCodeFenceAware(toolMsg, maxPlatformMessageLen) {
 						sendWorkspace(p, replyCtx, chunk)
 					}
@@ -982,14 +987,15 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						}
 						break
 					}
-					entry := ProgressCardEntry{
-						Kind:     ProgressEntryToolResult,
-						Tool:     event.ToolName,
-						Text:     result,
-						Status:   event.ToolStatus,
-						ExitCode: event.ToolExitCode,
-						Success:  event.ToolSuccess,
-					}
+				entry := ProgressCardEntry{
+					Kind:     ProgressEntryToolResult,
+					Tool:     event.ToolName,
+					ID:       event.ToolID,
+					Text:     result,
+					Status:   event.ToolStatus,
+					ExitCode: event.ToolExitCode,
+					Success:  event.ToolSuccess,
+				}
 					if !cp.AppendStructured(entry, resultMsg) {
 						if !SuppressStandaloneToolResultEvent(p) {
 							e.sendRaw(p, replyCtx, resultMsg)

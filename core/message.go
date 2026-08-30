@@ -195,6 +195,7 @@ type Event struct {
 	Type         EventType
 	Content      string
 	ToolName     string         // populated for EventToolUse, EventPermissionRequest
+	ToolID       string         // tool_use id matching a tool_result back to its invocation (for progress card pairing)
 	ToolInput    string         // human-readable summary of tool input
 	ToolInputRaw map[string]any // raw tool input (for EventPermissionRequest, used in allow response)
 	ToolResult   string         // populated for EventToolResult
