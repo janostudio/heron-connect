@@ -527,6 +527,11 @@ const (
 	MsgBuiltinCmdWeb       MsgKey = "web"
 	MsgBuiltinCmdHeartbeat MsgKey = "heartbeat"
 	MsgBuiltinCmdCancel    MsgKey = "cancel"
+	MsgBuiltinCmdDashboard MsgKey = "dashboard"
+
+	MsgDashboardNotCollected MsgKey = "dashboard_not_collected"
+	MsgDashboardNoData       MsgKey = "dashboard_no_data"
+	MsgDashboardUsage        MsgKey = "dashboard_usage"
 
 	MsgDiffEmpty       MsgKey = "diff_empty"
 	MsgDiffNoDiff2HTML MsgKey = "diff_no_diff2html"
@@ -3615,6 +3620,34 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "設定週期性的 Agent 心跳提醒",
 		LangJapanese:           "定期的なエージェントのハートビートを設定",
 		LangSpanish:            "Programar pings periódicos del agente",
+	},
+	MsgBuiltinCmdDashboard: {
+		LangEnglish:            "Usage statistics, arg: [today|yesterday|week|lastweek]",
+		LangChinese:            "用量统计，参数: [today|yesterday|week|lastweek]",
+		LangTraditionalChinese: "用量統計，參數: [today|yesterday|week|lastweek]",
+		LangJapanese:           "使用統計、引数: [today|yesterday|week|lastweek]",
+		LangSpanish:            "Estadísticas de uso, arg: [today|yesterday|week|lastweek]",
+	},
+	MsgDashboardNotCollected: {
+		LangEnglish:            "Usage statistics are not collected. Set [dashboard] enabled=true and collect=true to enable.",
+		LangChinese:            "用量统计未开启。请在配置中设置 [dashboard] enabled=true 和 collect=true。",
+		LangTraditionalChinese: "用量統計未開啟。請在配置中設置 [dashboard] enabled=true 和 collect=true。",
+		LangJapanese:           "使用統計が収集されていません。[dashboard] enabled=true と collect=true を設定してください。",
+		LangSpanish:            "Las estadísticas de uso no se recopilan. Configure [dashboard] enabled=true y collect=true.",
+	},
+	MsgDashboardNoData: {
+		LangEnglish:            "No usage data in this period yet.",
+		LangChinese:            "该时间段内暂无用量数据。",
+		LangTraditionalChinese: "該時間段內暫無用量數據。",
+		LangJapanese:           "この期間の使用データはまだありません。",
+		LangSpanish:            "Aún no hay datos de uso en este período.",
+	},
+	MsgDashboardUsage: {
+		LangEnglish:            "Usage:\n/dashboard [today|yesterday|week|lastweek]",
+		LangChinese:            "用法：\n/dashboard [today|yesterday|week|lastweek]",
+		LangTraditionalChinese: "用法：\n/dashboard [today|yesterday|week|lastweek]",
+		LangJapanese:           "使い方：\n/dashboard [today|yesterday|week|lastweek]",
+		LangSpanish:            "Uso:\n/dashboard [today|yesterday|week|lastweek]",
 	},
 	MsgBuiltinCmdCancel: {
 		LangEnglish:            "Cancel the current running task",

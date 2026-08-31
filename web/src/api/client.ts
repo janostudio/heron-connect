@@ -69,11 +69,14 @@ class ApiClient {
    * Fetch a binary resource (e.g. a local file for the web preview) as a Blob.
    * Unlike `raw`, it resolves even for non-2xx so the caller can render the
    * error; the resolved object carries the HTTP status and content type.
+   * `cache: 'no-store'` — the files endpoint sends no Cache-Control, so a
+   * default fetch could be served from the browser's heuristic cache and the
+   * UI would show stale bytes after the agent rewrites a file on disk.
    */
   async file(path: string): Promise<{ ok: boolean; status: number; contentType: string; blob: Blob }> {
     const h: HeadersInit = {};
     if (this.token) h['Authorization'] = `Bearer ${this.token}`;
-    const res = await fetch(`${API_BASE}${path}`, { headers: h });
+    const res = await fetch(`${API_BASE}${path}`, { headers: h, cache: 'no-store' });
     if (res.status === 401 && this.onUnauthorized) {
       this.onUnauthorized();
     }

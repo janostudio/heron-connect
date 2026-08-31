@@ -205,6 +205,9 @@ type Engine struct {
 	hooks              *HookManager
 	cronScheduler      *CronScheduler
 	heartbeatScheduler *HeartbeatScheduler
+	// statsRecorder persists per-turn usage metrics for the project
+	// dashboard. nil = collection disabled ([dashboard] off or collect=false).
+	statsRecorder *TurnRecorder
 
 	commands *CommandRegistry
 	skills   *SkillRegistry
@@ -365,6 +368,11 @@ type interactiveState struct {
 	pendingMessages        []queuedMessage // messages queued while session was busy
 	approveAll             bool            // when true, auto-approve all permission requests for this session
 	fromVoice              bool            // true if current turn originated from voice transcription
+	// turnUserID / turnUserName capture the message sender identity at turn
+	// start, for usage-stats recording at turn completion. turnUserID "cron"
+	// marks synthetic cron-injected turns.
+	turnUserID             string
+	turnUserName           string
 	sideText               string
 	lastTurnMessageID      string
 	deleteMode             *deleteModeState
@@ -1986,6 +1994,8 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	state.mu.Lock()
 	state.currentMessageID = msg.MessageID
 	state.fromVoice = msg.FromVoice
+	state.turnUserID = msg.UserID
+	state.turnUserName = msg.UserName
 	state.sideText = ""
 	state.lastTurnMessageID = msg.MessageID
 	state.mu.Unlock()
@@ -2381,6 +2391,11 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 		},
 	})
 
+	// Dashboard metrics: count freshly spawned sessions (not resumes).
+	if !isResume {
+		e.recordSessionCreated(session, sessions, sessionKey)
+	}
+
 	return state
 }
 
@@ -2461,8 +2476,16 @@ func (e *Engine) cleanupInteractiveState(sessionKey string, expected ...*interac
 func (e *Engine) ForceNewSession(sessionKey, name string) *Session {
 	e.cleanupInteractiveState(sessionKey)
 
-	old := e.sessions.GetOrCreateActive(sessionKey)
-	old.DetachAgentSession()
+	// Detach the key's current active session (if any) so it cannot be
+	// resumed, preserving its history. When the key has no active session —
+	// Web conversations mint a unique key per conversation — skip
+	// GetOrCreateActive, which would materialize an empty stub session that
+	// lingers in the session list next to the real one.
+	if id := e.sessions.ActiveSessionID(sessionKey); id != "" {
+		if old := e.sessions.FindByID(id); old != nil {
+			old.DetachAgentSession()
+		}
+	}
 
 	newSession := e.sessions.NewSession(sessionKey, name)
 	e.sessions.Save()
@@ -2671,6 +2694,8 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 		e.cmdMemory(p, msg, args)
 	case "cron":
 		e.cmdCron(p, msg, args)
+	case "dashboard":
+		e.cmdDashboard(p, msg, args)
 	case "heartbeat":
 		e.cmdHeartbeat(p, msg, args)
 	case "compress":

@@ -1,0 +1,54 @@
+# 项目大盘与统计示例（Dashboard）
+# Project dashboard & usage statistics example
+#
+# 零配置可用：以下 [dashboard] 段整体可省略，默认值即开启。
+# Zero-config: the [dashboard] section below can be omitted entirely.
+
+[log]
+level = "info"
+
+[management]
+enabled = true
+port = 9820
+token = "your-management-token"
+
+# ── 项目大盘 ──────────────────────────────────────────────────────
+# enabled = true     # 总开关；false = 整体关闭（采集/大盘/报告中心）
+# collect = true     # true = connect 自己采集统计；false = 纯展示模式（业务产出数据）
+#
+# [dashboard]
+# enabled = true
+# collect = true
+# retention_days = 90
+# include_message_excerpt = true
+# max_topics = 10
+# insights_path = "dashboards/insights.json"   # 业务结构化数据（固定地址，存在即显示）
+# html_path = "dashboards/index.html"           # 业务 HTML 看板（iframe 兜底）
+# reports_dir = "reports"                       # 报告归档目录（报告中心扫描）
+# public_base_url = ""                          # IM 推送链接前缀；空 = management 监听地址
+
+[[projects]]
+name = "demo"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "/path/to/your/project"
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "cli_xxx"
+app_secret = "xxx"
+
+# 配套业务侧约定（无需在 connect 配置，落在项目 work_dir）：
+#   dashboards/insights.json   — 业务会话分析（见 examples/dashboard-insights.json）
+#   dashboards/index.html      — 业务 HTML 看板（见 examples/dashboard-shell.html）
+#   reports/2026-08-31/*.html  — 归档报告 + 可选 manifest
+#
+# 常用命令：
+#   IM:  /dashboard            今日统计
+#   IM:  /dashboard week       本周统计
+#   cron: /cron add 0 18 * * 1-5 请基于以下统计写今日日报：{{dashboard.today}}

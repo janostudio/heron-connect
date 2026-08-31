@@ -8,7 +8,8 @@
     "cron": "排程工作",
     "bridge": "橋接",
     "skills": "技能",
-    "system": "系統"
+    "system": "系統",
+    "reports": "報告中心"
   },
   "dashboard": {
     "title": "總覽",
@@ -18,7 +19,8 @@
     "projects": "專案",
     "bridgeAdapters": "橋接介接器",
     "noData": "尚無資料",
-    "recentSessions": "最近會話"
+    "recentSessions": "最近會話",
+    "todayUsage": "今日用量"
   },
   "projects": {
     "title": "專案",
@@ -419,5 +421,39 @@
     "light": "淺色",
     "dark": "深色",
     "system": "跟隨系統"
+  },
+  "overview": {
+    "title": "專案大盤",
+    "enterChat": "進入聊天",
+    "projectSettings": "專案設定",
+    "period": {
+      "day": "日",
+      "week": "週",
+      "month": "月",
+      "custom": "自訂"
+    },
+    "sessions": "會話",
+    "turns": "輪次",
+    "tokens": "Token",
+    "cache": "快取讀/寫",
+    "errors": "錯誤",
+    "toolCalls": "工具調用",
+    "activity": "活躍分佈",
+    "sessionList": "會話列表",
+    "turnCount": "輪次",
+    "businessInsights": "業務分析",
+    "coverage": "覆蓋窗口",
+    "clearFilter": "取消篩選",
+    "detail": "詳情",
+    "htmlDashboard": "業務深度分析",
+    "noData": "暫無數據",
+    "noTurnDetail": "暫無輪次明細",
+    "statsOff": "統計功能未開啟（[dashboard] enabled=false）"
+  },
+  "reports": {
+    "title": "報告中心",
+    "noReports": "暫無報告",
+    "openNew": "新視窗開啟",
+    "fullscreen": "全螢幕"
   }
 }

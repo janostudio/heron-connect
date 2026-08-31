@@ -47,6 +47,12 @@ func (e *Engine) SetMultiWorkspace(baseDir, bindingStorePath string) {
 	go e.runIdleReaper()
 }
 
+// SetStatsRecorder attaches the usage-metrics recorder for the project
+// dashboard. A nil recorder (or not calling this) disables collection.
+func (e *Engine) SetStatsRecorder(r *TurnRecorder) {
+	e.statsRecorder = r
+}
+
 // SetWorkspaceIdleTimeout overrides the workspace idle reaper timeout.
 // Must be called after SetMultiWorkspace. A zero value disables reaping.
 func (e *Engine) SetWorkspaceIdleTimeout(d time.Duration) {

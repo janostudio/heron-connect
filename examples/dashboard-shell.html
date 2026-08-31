@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>业务看板 Shell 示例</title>
+<!--
+  参数驱动 HTML 看板 Shell 示例（dashboards/index.html 固定地址）。
+
+  契约（heron-connect 项目大盘 HTML 兜底区）：
+  - 引擎以 iframe 嵌入本文件，并把时间筛选透传为 URL query：
+      ?token=…&period=day|week|month|custom&start=YYYY-MM-DD&end=YYYY-MM-DD
+  - 服务端只消费 token，其余参数原样抵达 location.search，由本页 JS 解释；
+  - 本页为一次性写好的 shell：按参数加载对应日期的数据文件
+    （dashboards/data-YYYYMMDD.json），每日 cron 只更新数据文件，本文件不动。
+
+  注意：iframe 内相对路径请求不带 token —— P0 请把数据 inline 进每日文件，
+  或由 shell 内嵌最近 N 天数据（如下例演示）。
+-->
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 24px; background: #f8fafc; color: #0f172a; }
+  @media (prefers-color-scheme: dark) { body { background: #0b1120; color: #e2e8f0; } }
+  h1 { font-size: 18px; }
+  .range { font-size: 13px; opacity: .7; margin-bottom: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .card { background: rgba(127,127,127,.08); border-radius: 12px; padding: 16px; }
+  .card .label { font-size: 12px; opacity: .7; }
+  .card .value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <h1 id="title">业务深度分析</h1>
+  <div class="range" id="range"></div>
+  <div class="grid" id="cards"></div>
+
+<script>
+  // ── 1. 解析引擎透传的筛选参数 ────────────────────────────────
+  const q = new URLSearchParams(location.search);
+  const period = q.get('period') || 'day';
+  let start = q.get('start'), end = q.get('end');
+  if (!start || !end) {
+    const d = new Date(q.get('date') || Date.now());
+    if (period === 'week') d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    start = d.toISOString().slice(0, 10);
+    end = start;
+  }
+  document.getElementById('range').textContent =
+    `period=${period}  ${start} ~ ${end}`;
+
+  // ── 2. 加载数据（示例：内嵌演示数据；实际由每日 cron 生成 data-YYYYMMDD.json）──
+  const demoData = {
+    // '2026-08-31': { cards: [ { label, value } … ] },
+    '*': {
+      cards: [
+        { label: '修复 Issue', value: '3' },
+        { label: '跳过', value: '2' },
+        { label: '归档验收', value: '5' },
+        { label: '知识沉淀', value: '12' },
+      ],
+      note: '（演示数据——请把本段替换为按 start/end 加载 dashboards/data-*.json 的逻辑）',
+    },
+  };
+  const data = demoData[start] || demoData['*'];
+
+  // ── 3. 渲染 ──────────────────────────────────────────────
+  document.getElementById('cards').innerHTML = (data.cards || [])
+    .map(c => `<div class="card"><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`)
+    .join('') + `<p style="grid-column:1/-1;font-size:12px;opacity:.6">${data.note || ''}</p>`;
+</script>
+</body>
+</html>

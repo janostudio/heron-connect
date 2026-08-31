@@ -57,6 +57,9 @@ type ManagementServer struct {
 	cronScheduler      *core.CronScheduler
 	heartbeatScheduler *core.HeartbeatScheduler
 	bridgeServer       *bridge.BridgeServer
+	// dashboard carries the [dashboard] config for the dashboard/report
+	// endpoints; nil = feature disabled. Injected once at startup.
+	dashboard *DashboardSettings
 
 	setupFeishuSave      func(req FeishuSetupSaveRequest) error
 	setupWeixinSave      func(req WeixinSetupSaveRequest) error
@@ -258,6 +261,11 @@ func (m *ManagementServer) buildHandler(mux *http.ServeMux) http.Handler {
 	// Cron (global)
 	mux.HandleFunc(prefix+"/cron", m.wrap(m.handleCron))
 	mux.HandleFunc(prefix+"/cron/", m.wrap(m.handleCronByID))
+
+	// Dashboard (usage statistics + business report index)
+	mux.HandleFunc(prefix+"/dashboard", m.wrap(m.handleDashboard))
+	mux.HandleFunc(prefix+"/dashboard/", m.wrap(m.handleDashboardRoutes))
+	mux.HandleFunc(prefix+"/reports", m.wrap(m.handleReports))
 
 	// Setup (QR onboarding for feishu/weixin)
 	mux.HandleFunc(prefix+"/setup/feishu/begin", m.wrap(m.handleSetupFeishuBegin))

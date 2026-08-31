@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.1.27 (2026-08-31)
+
+### Added
+
+- **项目大盘（Web 项目统计与业务报告托管）**——回答"今天/本周干了什么"的新特性全家桶，唯一配置段 `[dashboard]`（零配置默认开启）：
+  - **用量采集**：每轮对话记录一条 metrics（会话/平台/agent/用户/触发来源/时长/输入输出 token/工具调用，不含消息正文），按天落 `<data_dir>/metrics/turns-YYYY-MM-DD.jsonl`，`retention_days` 自动清理；agent 未回报 usage 时用上下文估算并标记 `tokens_estimated`。
+  - **IM 命令 `/dashboard [today|yesterday|week|lastweek]`**：当前项目用量统计，卡片平台渲染交互卡片、其他平台 Markdown 文本。
+  - **cron 模板变量 `{{dashboard.today|yesterday|week|last_week[:json]}}`**：cron prompt 执行时注入统计数据（Markdown 表格或原始 JSON），未识别变量原样保留；新增 `turn.complete` hook 事件。
+  - **REST API**：`/api/v1/dashboard`（日/周/月/自定义窗口聚合，`collect=false` 返回 404 供前端隐藏区域）、`/dashboard/summary`、`/dashboard/sessions/<project>/<id>`（单会话逐轮明细）、`/dashboard/settings`、`/api/v1/reports`（业务报告索引 + manifest 元数据）。
+  - **Web 项目大盘页**（`/projects/<name>/overview`，项目卡片新入口；右上角【进入聊天】【项目设置】，原配置台保留）：三区渐进增强——标准统计区（KPI 卡 + 活跃分布 + 会话行点击跳聊天 + 逐轮明细抽屉）、业务结构化区（`dashboards/insights.json` InsightPayload：KPI cards + 会话级 summary/metrics/tags，与引擎会话列表双键合并、标签过滤）、HTML 兜底区（固定地址 iframe，时间筛选参数透传）。三区各自按数据存在性点亮，全无数据退化为项目概览，升级零风险。
+  - **报告中心**（`/reports`）：业务归档报告（`reports/<日期>/` html/md + 可选 manifest）自动收录、按类型过滤、HTML 预览/全屏、Markdown 查看。
+  - **配套交付**：`skills/heron-connect-dashboard`（教业务 agent 产出 insights.json/manifest/HTML shell）、`docs/dashboard.md` 使用指南、`docs/stats-dashboard-design.zh-CN.md` 设计文档、`examples/dashboard*.toml/json/html` 三个示例。
+
+### Changed
+
+- **文件预览支持 HTML 渲染 + 手动刷新**：聊天页文件预览对 `.html` 文件提供双视图——沙箱 iframe 渲染效果（默认）与原始源码切换；工具栏新增手动刷新按钮（磁盘文件无推送机制，agent 重写文件后可一键拉取最新字节）。
+- **文件预览绕过浏览器缓存**：files 端点不发送 Cache-Control，默认 fetch 可能命中启发式缓存导致 agent 重写文件后 UI 显示旧字节。预览请求改用 `cache: 'no-store'`。
+
+### Fixed
+
+- **统计文件窗口枚举边界 bug**：`MetricsFilesBetween` 原按时间戳逐天迭代，当窗口起止源自同一时钟 tick（纳秒相同，macOS 粗粒度时钟下常见）时末位当天文件被静默丢弃（单会话明细接口偶发空数据）。改为按日历天对齐枚举并补回归测试。
+
 ## v1.1.26 (2026-08-30)
 
 ### Fixed

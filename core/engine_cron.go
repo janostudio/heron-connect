@@ -127,12 +127,16 @@ func (e *Engine) ExecuteCronJob(job *CronJob) error {
 		return e.executeCronShell(effectivePlatform, replyCtx, job)
 	}
 
+	// Resolve {{dashboard.*}} template variables (usage statistics) before
+	// injecting the synthetic message. Unrecognized variables stay as-is.
+	prompt := e.resolveDashboardTemplateVars(job.Prompt)
+
 	msg := &Message{
 		SessionKey:   sessionKey,
 		Platform:     platformName,
 		UserID:       "cron",
 		UserName:     "cron",
-		Content:      job.Prompt,
+		Content:      prompt,
 		ReplyCtx:     replyCtx,
 		ModeOverride: job.Mode,
 	}

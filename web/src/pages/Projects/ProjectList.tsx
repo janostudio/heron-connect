@@ -121,7 +121,7 @@ export default function ProjectList() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {projects.map((p) => (
-            <Link key={p.name} to={`/projects/${p.name}`}>
+            <Link key={p.name} to={`/projects/${p.name}/overview`}>
               <Card hover className="h-full flex flex-col">
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-2">

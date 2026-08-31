@@ -8,7 +8,8 @@
     "cron": "Cron",
     "bridge": "Puente",
     "skills": "Habilidades",
-    "system": "Sistema"
+    "system": "Sistema",
+    "reports": "Informes"
   },
   "dashboard": {
     "title": "Panel",
@@ -18,7 +19,8 @@
     "projects": "Proyectos",
     "bridgeAdapters": "Adaptadores de puente",
     "noData": "No hay datos disponibles",
-    "recentSessions": "Sesiones recientes"
+    "recentSessions": "Sesiones recientes",
+    "todayUsage": "Hoy"
   },
   "projects": {
     "title": "Proyectos",
@@ -419,5 +421,39 @@
     "light": "Claro",
     "dark": "Oscuro",
     "system": "Sistema"
+  },
+  "overview": {
+    "title": "Resumen del proyecto",
+    "enterChat": "Chat",
+    "projectSettings": "Configuración",
+    "period": {
+      "day": "Día",
+      "week": "Semana",
+      "month": "Mes",
+      "custom": "Personalizado"
+    },
+    "sessions": "Sesiones",
+    "turns": "Turnos",
+    "tokens": "Tokens",
+    "cache": "Caché R/W",
+    "errors": "Errores",
+    "toolCalls": "Llamadas a herramientas",
+    "activity": "Actividad",
+    "sessionList": "Sesiones",
+    "turnCount": "Turnos",
+    "businessInsights": "Análisis de negocio",
+    "coverage": "Cobertura",
+    "clearFilter": "Quitar filtro",
+    "detail": "Detalle",
+    "htmlDashboard": "Análisis profundo",
+    "noData": "Sin datos",
+    "noTurnDetail": "Sin detalle de turnos",
+    "statsOff": "Estadísticas deshabilitadas ([dashboard] enabled=false)"
+  },
+  "reports": {
+    "title": "Informes",
+    "noReports": "Sin informes",
+    "openNew": "Abrir en nueva pestaña",
+    "fullscreen": "Pantalla completa"
   }
 }

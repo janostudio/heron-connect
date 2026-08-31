@@ -8,7 +8,8 @@
     "cron": "定时任务",
     "bridge": "桥接",
     "skills": "技能",
-    "system": "系统"
+    "system": "系统",
+    "reports": "报告中心"
   },
   "dashboard": {
     "title": "概览",
@@ -18,7 +19,8 @@
     "projects": "项目",
     "bridgeAdapters": "桥接适配器",
     "noData": "暂无数据",
-    "recentSessions": "最近会话"
+    "recentSessions": "最近会话",
+    "todayUsage": "今日用量"
   },
   "projects": {
     "title": "项目",
@@ -419,5 +421,39 @@
     "light": "浅色",
     "dark": "深色",
     "system": "跟随系统"
+  },
+  "overview": {
+    "title": "项目大盘",
+    "enterChat": "进入聊天",
+    "projectSettings": "项目设置",
+    "period": {
+      "day": "日",
+      "week": "周",
+      "month": "月",
+      "custom": "自定义"
+    },
+    "sessions": "会话",
+    "turns": "轮次",
+    "tokens": "Token",
+    "cache": "缓存读/写",
+    "errors": "错误",
+    "toolCalls": "工具调用",
+    "activity": "活跃分布",
+    "sessionList": "会话列表",
+    "turnCount": "轮次",
+    "businessInsights": "业务分析",
+    "coverage": "覆盖窗口",
+    "clearFilter": "取消筛选",
+    "detail": "详情",
+    "htmlDashboard": "业务深度分析",
+    "noData": "暂无数据",
+    "noTurnDetail": "暂无轮次明细",
+    "statsOff": "统计功能未开启（[dashboard] enabled=false）"
+  },
+  "reports": {
+    "title": "报告中心",
+    "noReports": "暂无报告",
+    "openNew": "新窗口打开",
+    "fullscreen": "全屏"
   }
 }

@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "generated_at": "2026-08-31T18:05:00+08:00",
+  "generated_by": "daily-workreport",
+  "period": { "start": "2026-08-30", "end": "2026-08-31" },
+  "cards": [
+    { "label": "修复 PR", "value": 3, "unit": "个", "tone": "good" },
+    { "label": "分析后跳过", "value": 2, "unit": "个", "tone": "neutral" },
+    { "label": "归档验收", "value": 5, "unit": "个" },
+    { "label": "知识整理", "value": 12, "unit": "条", "tone": "info" }
+  ],
+  "sessions": [
+    {
+      "agent_session_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "title": "修复登录 502",
+      "summary": "根因是网关超时未重试，已提交 PR #142",
+      "metrics": [
+        { "label": "Token", "value": 45000 },
+        { "label": "耗时", "value": 32, "unit": "min" }
+      ],
+      "tags": ["bugfix", { "text": "已修复", "tone": "good" }],
+      "tone": "good",
+      "detail": "reports/20260831/token-day.html"
+    },
+    {
+      "agent_session_id": "09876543-2109-8765-4321-098765432109",
+      "title": "重构 API 层设计评审",
+      "summary": "产出三层重构方案，待评审",
+      "metrics": [{ "label": "Token", "value": 900000 }],
+      "tags": ["refactor", "进行中", { "text": "高消耗", "tone": "warn" }],
+      "tone": "warn"
+    },
+    {
+      "title": "本地直连会话（未经引擎）",
+      "summary": "业务脚本发现的纯 CLI 会话，无跳转键，仅展示",
+      "tags": ["cli-only"]
+    }
+  ]
+}

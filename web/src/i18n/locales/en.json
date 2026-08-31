@@ -8,7 +8,8 @@
     "cron": "Cron",
     "bridge": "Bridge",
     "skills": "Skills",
-    "system": "System"
+    "system": "System",
+    "reports": "Reports"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -18,7 +19,8 @@
     "projects": "Projects",
     "bridgeAdapters": "Bridge adapters",
     "noData": "No data available",
-    "recentSessions": "Recent sessions"
+    "recentSessions": "Recent sessions",
+    "todayUsage": "Today"
   },
   "projects": {
     "title": "Projects",
@@ -419,5 +421,39 @@
     "light": "Light",
     "dark": "Dark",
     "system": "System"
+  },
+  "overview": {
+    "title": "Project Overview",
+    "enterChat": "Chat",
+    "projectSettings": "Settings",
+    "period": {
+      "day": "Day",
+      "week": "Week",
+      "month": "Month",
+      "custom": "Custom"
+    },
+    "sessions": "Sessions",
+    "turns": "Turns",
+    "tokens": "Tokens",
+    "cache": "Cache R/W",
+    "errors": "Errors",
+    "toolCalls": "Tool calls",
+    "activity": "Activity",
+    "sessionList": "Sessions",
+    "turnCount": "Turns",
+    "businessInsights": "Business Insights",
+    "coverage": "Coverage",
+    "clearFilter": "Clear filter",
+    "detail": "Detail",
+    "htmlDashboard": "Deep Analysis",
+    "noData": "No data yet",
+    "noTurnDetail": "No turn detail",
+    "statsOff": "Statistics disabled ([dashboard] enabled=false)"
+  },
+  "reports": {
+    "title": "Reports",
+    "noReports": "No reports yet",
+    "openNew": "Open in new tab",
+    "fullscreen": "Fullscreen"
   }
 }

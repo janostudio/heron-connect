@@ -6,6 +6,7 @@ import {
   MessageSquare,
   History,
   Clock,
+  FileBarChart,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -24,6 +25,7 @@ const navItems = [
   { key: 'chat', path: '/chat', icon: MessageSquare },
   { key: 'sessions', path: '/sessions', icon: History },
   { key: 'cron', path: '/cron', icon: Clock },
+  { key: 'reports', path: '/reports', icon: FileBarChart },
   { key: 'system', path: '/system', icon: Settings },
 ];
 

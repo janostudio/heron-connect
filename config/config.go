@@ -109,6 +109,7 @@ type Config struct {
 	Webhook            WebhookConfig           `toml:"webhook"`
 	Bridge             BridgeConfig            `toml:"bridge"`
 	Management         ManagementConfig        `toml:"management"`
+	Dashboard          DashboardConfig         `toml:"dashboard"`
 	Hooks              []HookConfig            `toml:"hooks"`
 	IdleTimeoutMins    *int                    `toml:"idle_timeout_mins,omitempty"` // max minutes between agent events; 0 = no timeout; default 120
 	// WorkspaceIdleTimeoutMins controls the workspace idle reaper timeout
@@ -165,6 +166,77 @@ type ManagementConfig struct {
 	Port        int      `toml:"port,omitempty"`         // listen port; default 9820
 	Token       string   `toml:"token,omitempty"`        // shared secret for authentication; required
 	CORSOrigins []string `toml:"cors_origins,omitempty"` // allowed CORS origins; empty = no CORS
+}
+
+// DashboardConfig controls the project dashboard: built-in usage statistics
+// (per-turn metrics collection + aggregation API) and business report
+// hosting (insights.json / HTML dashboard at fixed paths). One section
+// governs the whole feature family; paths resolve relative to each project's
+// work dir.
+type DashboardConfig struct {
+	Enabled               *bool  `toml:"enabled"`                  // master switch; default true (zero-config)
+	Collect               *bool  `toml:"collect"`                  // engine-side collection; false = display-only mode (business-generated data); default true
+	RetentionDays         *int   `toml:"retention_days"`           // metrics JSONL retention; default 90
+	IncludeMessageExcerpt *bool  `toml:"include_message_excerpt"`  // include first user message excerpt in topics; default true
+	MaxTopics             *int   `toml:"max_topics"`               // UsageReport.topics truncation; default 10
+	InsightsPath          string `toml:"insights_path,omitempty"`  // business structured data (InsightPayload) relative to work dir; default "dashboards/insights.json"
+	HTMLPath              string `toml:"html_path,omitempty"`      // business HTML dashboard relative to work dir; default "dashboards/index.html"
+	ReportsDir            string `toml:"reports_dir,omitempty"`    // report archive root relative to work dir; default "reports"
+	PublicBaseURL         string `toml:"public_base_url,omitempty"` // base URL for report links pushed to IM; empty = management listen address
+}
+
+// IsEnabled reports whether the dashboard feature family is on (default true).
+func (d DashboardConfig) IsEnabled() bool { return d.Enabled == nil || *d.Enabled }
+
+// ShouldCollect reports whether the engine collects usage metrics itself
+// (default true). When false the dashboard runs in display-only mode: all
+// displayed data comes from business-generated files.
+func (d DashboardConfig) ShouldCollect() bool { return d.Collect == nil || *d.Collect }
+
+// GetRetentionDays returns the metrics retention in days (default 90).
+func (d DashboardConfig) GetRetentionDays() int {
+	if d.RetentionDays != nil && *d.RetentionDays > 0 {
+		return *d.RetentionDays
+	}
+	return 90
+}
+
+// GetIncludeMessageExcerpt reports whether topics may include the first user
+// message excerpt (default true).
+func (d DashboardConfig) GetIncludeMessageExcerpt() bool {
+	return d.IncludeMessageExcerpt == nil || *d.IncludeMessageExcerpt
+}
+
+// GetMaxTopics returns the topics truncation limit (default 10).
+func (d DashboardConfig) GetMaxTopics() int {
+	if d.MaxTopics != nil && *d.MaxTopics > 0 {
+		return *d.MaxTopics
+	}
+	return 10
+}
+
+// GetInsightsPath returns the business insights JSON path (default "dashboards/insights.json").
+func (d DashboardConfig) GetInsightsPath() string {
+	if d.InsightsPath != "" {
+		return d.InsightsPath
+	}
+	return "dashboards/insights.json"
+}
+
+// GetHTMLPath returns the business HTML dashboard path (default "dashboards/index.html").
+func (d DashboardConfig) GetHTMLPath() string {
+	if d.HTMLPath != "" {
+		return d.HTMLPath
+	}
+	return "dashboards/index.html"
+}
+
+// GetReportsDir returns the report archive directory (default "reports").
+func (d DashboardConfig) GetReportsDir() string {
+	if d.ReportsDir != "" {
+		return d.ReportsDir
+	}
+	return "reports"
 }
 
 // Display mode constants.

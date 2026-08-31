@@ -421,6 +421,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	var segmentStart int // index into textParts: text before this has been sent/displayed
 	silentHold := false  // true while accumulated segment text could still resolve to a bare NO_REPLY marker
 	toolCount := 0
+	toolCounts := make(map[string]int) // per-tool call counts for dashboard metrics
+	statsErr := ""                     // terminal error message, recorded at turn end
 	waitStart := time.Now()
 	firstEventLogged := false
 	var toolSteps []ToolStep
@@ -782,6 +784,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 
 		case EventToolUse:
 			toolCount++
+			toolCounts[event.ToolName]++
 			toolInput := event.ToolInput
 			// Sub-agent tool calls get a "↳ " prefix on the display name so
 			// users can tell child-agent activity from the main agent's. The
@@ -1283,6 +1286,35 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				"silent", isSilent,
 			)
 
+			// Dashboard metrics: one record per completed turn.
+			if e.statsRecorder != nil {
+				userID, userName := e.turnStatsFromState(state, sessions, sessionKey)
+				platformName := ""
+				state.mu.Lock()
+				platformName = state.platformName
+				state.mu.Unlock()
+				e.recordTurnStats(statsTurnInput{
+					session:         session,
+					sessionKey:      sessionKey,
+					platformName:    platformName,
+					agentName:       replyAgent.Name(),
+					userID:          userID,
+					userName:        userName,
+					msgID:           msgID,
+					turnStart:       turnStart,
+					duration:        turnDuration,
+					inputTokens:     event.InputTokens,
+					outputTokens:    event.OutputTokens,
+					tokensPlausible: sdkPlausible,
+					contextEstimate: contextEstimate,
+					toolCalls:       toolCount,
+					tools:           toolCounts,
+					responseChars:   len(fullResponse),
+					silent:          isSilent,
+					err:             statsErr,
+				})
+			}
+
 			normalizedBaseResponse := strings.TrimSpace(baseResponse)
 			state.mu.Lock()
 			suppressDuplicate := normalizedBaseResponse != "" && normalizedBaseResponse == state.sideText
@@ -1586,6 +1618,32 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			state.mu.Lock()
 			state.eventsNeedResync = true
 			state.mu.Unlock()
+			if event.Error != nil {
+				statsErr = event.Error.Error()
+			}
+			// Dashboard metrics: record the failed turn (duration/tools only —
+			// EventError carries no usage).
+			if e.statsRecorder != nil {
+				userID, userName := e.turnStatsFromState(state, sessions, sessionKey)
+				platformName := ""
+				state.mu.Lock()
+				platformName = state.platformName
+				state.mu.Unlock()
+				e.recordTurnStats(statsTurnInput{
+					session:       session,
+					sessionKey:    sessionKey,
+					platformName:  platformName,
+					agentName:     replyAgent.Name(),
+					userID:        userID,
+					userName:      userName,
+					msgID:         msgID,
+					turnStart:     turnStart,
+					duration:      time.Since(turnStart),
+					toolCalls:     toolCount,
+					tools:         toolCounts,
+					err:           statsErr,
+				})
+			}
 			if hasRichCard && cardMessageID != nil {
 				errCard := richCardSupporter.BuildRichCard(CardStatusError, "", toolSteps, partialText, false, time.Since(turnStart))
 				if updater, ok := p.(MessageUpdater); ok {
@@ -1845,6 +1903,10 @@ func (e *Engine) drainPendingMessages(state *interactiveState, session *Session,
 		state.currentMessageID = merged.messageID
 		state.lastTurnMessageID = merged.messageID
 		state.fromVoice = merged.fromVoice
+		if len(batch) > 0 {
+			state.turnUserID = batch[len(batch)-1].userID
+			state.turnUserName = batch[len(batch)-1].userName
+		}
 		state.mu.Unlock()
 
 		e.i18n.DetectAndSet(merged.content)
@@ -1910,6 +1972,7 @@ var builtinCommands = []struct {
 	{[]string{"provider"}, "provider"},
 	{[]string{"memory"}, "memory"},
 	{[]string{"cron"}, "cron"},
+	{[]string{"dashboard"}, "dashboard"},
 	{[]string{"heartbeat", "hb"}, "heartbeat"},
 	{[]string{"compress", "compact"}, "compress"},
 	{[]string{"cancel"}, "cancel"},

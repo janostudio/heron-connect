@@ -17,6 +17,12 @@
 #   qq-claudecode.toml       — QQ (NapCat) + Claude Code
 #   line-claudecode.toml     — LINE + Claude Code
 #   multi-project.toml       — 多项目：飞书 + Telegram
+#   dashboard.toml           — 项目大盘/统计（[dashboard] 配置 + 业务报告接入示例）
+#
+# 业务大盘样例（配合 dashboard.toml）：
+#   dashboard-insights.json  — 业务结构化数据样例（dashboards/insights.json 契约）
+#   dashboard-shell.html     — 参数驱动 HTML 看板 shell 样例（dashboards/index.html 契约）
 #
 # 完整配置参考：../config.example.toml
 # 安装与接入指南：../INSTALL.md
+# 项目大盘使用指南：../docs/dashboard.md

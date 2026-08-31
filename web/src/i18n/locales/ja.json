@@ -8,7 +8,8 @@
     "cron": "Cron",
     "bridge": "ブリッジ",
     "skills": "スキル",
-    "system": "システム"
+    "system": "システム",
+    "reports": "レポート"
   },
   "dashboard": {
     "title": "ダッシュボード",
@@ -18,7 +19,8 @@
     "projects": "プロジェクト",
     "bridgeAdapters": "ブリッジアダプター",
     "noData": "データがありません",
-    "recentSessions": "最近のセッション"
+    "recentSessions": "最近のセッション",
+    "todayUsage": "本日の使用量"
   },
   "projects": {
     "title": "プロジェクト",
@@ -419,5 +421,39 @@
     "light": "ライト",
     "dark": "ダーク",
     "system": "システムに合わせる"
+  },
+  "overview": {
+    "title": "プロジェクト概要",
+    "enterChat": "チャット",
+    "projectSettings": "設定",
+    "period": {
+      "day": "日",
+      "week": "週",
+      "month": "月",
+      "custom": "カスタム"
+    },
+    "sessions": "セッション",
+    "turns": "ターン",
+    "tokens": "トークン",
+    "cache": "キャッシュ R/W",
+    "errors": "エラー",
+    "toolCalls": "ツール呼び出し",
+    "activity": "アクティビティ",
+    "sessionList": "セッション一覧",
+    "turnCount": "ターン",
+    "businessInsights": "ビジネス分析",
+    "coverage": "対象期間",
+    "clearFilter": "フィルター解除",
+    "detail": "詳細",
+    "htmlDashboard": "詳細分析",
+    "noData": "データなし",
+    "noTurnDetail": "ターン詳細なし",
+    "statsOff": "統計機能は無効です（[dashboard] enabled=false）"
+  },
+  "reports": {
+    "title": "レポート",
+    "noReports": "レポートなし",
+    "openNew": "新しいタブで開く",
+    "fullscreen": "全画面"
   }
 }

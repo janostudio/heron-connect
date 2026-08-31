@@ -8,6 +8,7 @@ import { StatCard, Badge, EmptyState } from '@/components/ui';
 import { getStatus, type SystemStatus } from '@/api/status';
 import { listProjects, type ProjectSummary } from '@/api/projects';
 import { listSessions, type Session } from '@/api/sessions';
+import { getDashboardSummary, formatTokens, type DashboardReport } from '@/api/dashboard';
 import { formatUptime, formatTime } from '@/lib/utils';
 
 const MAX_ITEMS = 4;
@@ -17,6 +18,7 @@ export default function Dashboard() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [recentSessions, setRecentSessions] = useState<(Session & { project: string })[]>([]);
+  const [todaySummary, setTodaySummary] = useState<DashboardReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -28,6 +30,10 @@ export default function Dashboard() {
       setStatus(s);
       const projs = p.projects || [];
       setProjects(projs);
+
+      // Presence-driven: today summary is absent when stats are off — the
+      // strip simply stays hidden.
+      getDashboardSummary().then((r) => setTodaySummary(r.today)).catch(() => setTodaySummary(null));
 
       const sessResults = await Promise.allSettled(
         projs.map(proj => listSessions(proj.name).then(r => ({ project: proj.name, sessions: r.sessions || [] })))
@@ -74,6 +80,29 @@ export default function Dashboard() {
         <StatCard label={t('dashboard.projects')} value={status?.projects_count ?? 0} />
       </div>
 
+      {/* Today usage summary (hidden when stats are off / no data) */}
+      {todaySummary && todaySummary.totals.turns > 0 && (
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white flex items-center gap-1.5">
+              <Activity size={14} className="text-gray-400" />
+              {t('dashboard.todayUsage')}
+            </h3>
+            {projects.length === 1 && (
+              <Link to={`/projects/${projects[0].name}/overview`} className="text-xs text-accent hover:underline flex items-center gap-0.5">
+                {t('common.viewAll')} <ChevronRight size={12} />
+              </Link>
+            )}
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatCard label={t('overview.sessions')} value={todaySummary.totals.sessions_active} accent />
+            <StatCard label={t('overview.turns')} value={todaySummary.totals.turns} />
+            <StatCard label={t('overview.tokens')} value={formatTokens(todaySummary.totals.total_tokens)} />
+            <StatCard label={t('overview.toolCalls')} value={todaySummary.totals.tool_calls} />
+          </div>
+        </section>
+      )}
+
       {/* Projects */}
       <section>
         <div className="flex items-center justify-between mb-3">
@@ -94,7 +123,7 @@ export default function Dashboard() {
             {projects.slice(0, MAX_ITEMS).map((p) => (
               <Link
                 key={p.name}
-                to={`/chat/${p.name}`}
+                to={`/projects/${p.name}/overview`}
                 className="block p-4 rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] hover:border-accent/40 hover:shadow-md hover:shadow-accent/5 transition-all"
               >
                 <div className="flex items-center gap-2.5 mb-3">

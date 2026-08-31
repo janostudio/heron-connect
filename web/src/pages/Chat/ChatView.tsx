@@ -5,10 +5,10 @@ import {
   ArrowLeft, Send, User, Bot, Circle, WifiOff,
   Copy, Check, FileText, Image as ImageIcon, Loader2, Download, FileDown,
   Slash, ChevronDown, Square, Clock, X, Folder, FolderOpen, ChevronLeft, ChevronRight, ArrowUp,
-  Pin, PinOff, Pencil, Paperclip,
+  Pin, PinOff, Pencil, Paperclip, RefreshCw,
 } from 'lucide-react';
 import { Badge, Button } from '@/components/ui';
-import { listSessions, getSession, sessionTitle, updateSession, sortSessions, type Session, type SessionDetail } from '@/api/sessions';
+import { listSessions, getSession, createSession, sessionTitle, updateSession, sortSessions, type Session, type SessionDetail } from '@/api/sessions';
 import api from '@/api/client';
 import { newConvKey } from '@/lib/webSessionKey';
 import {
@@ -329,6 +329,14 @@ function isMarkdown(fileName: string, contentType: string): boolean {
   return ext === 'md' || ext === 'markdown' || contentType.toLowerCase() === 'text/markdown';
 }
 
+// isHtmlFile reports whether the file should offer the two HTML view modes:
+// the rendered effect (sandboxed iframe) and the raw source. Matches on both
+// the file extension and the runtime Content-Type like isMarkdown does.
+function isHtmlFile(fileName: string, contentType: string): boolean {
+  const ext = (fileName.split('.').pop() || '').toLowerCase();
+  return ext === 'html' || ext === 'htm' || contentType.toLowerCase() === 'text/html';
+}
+
 function FilePreview({ filePath, fileName, onClose, previewWidth, isDesktop, onResizeStart }: {
   filePath: string;
   fileName: string;
@@ -414,12 +422,27 @@ async function downloadFile(filePath: string, fileName: string) {
 // FileContentView fetches a file's bytes and renders them inline when the type
 // is previewable (text/code/image/pdf/audio/video); otherwise it shows a
 // "can't be previewed" message. The Download button is rendered by the caller.
+//
+// Files on disk are not pushed to the UI, so the toolbar carries a manual
+// refresh button that re-fetches the latest bytes. HTML files additionally
+// toggle between the rendered effect (sandboxed iframe, default) and the raw
+// source text.
 function FileContentView({ filePath, fileName }: { filePath: string; fileName: string }) {
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [contentType, setContentType] = useState('');
   const [text, setText] = useState('');
   const [dataUrl, setDataUrl] = useState('');
   const [error, setError] = useState('');
+  // Bump refreshTick to re-fetch the file from the server.
+  const [refreshTick, setRefreshTick] = useState(0);
+  // HTML files: 'rendered' shows the page effect, 'source' shows the text.
+  const [htmlView, setHtmlView] = useState<'rendered' | 'source'>('rendered');
+
+  // Reset the HTML view mode only when switching files — a refresh keeps the
+  // mode the user is currently looking at.
+  useEffect(() => {
+    setHtmlView('rendered');
+  }, [filePath, fileName]);
 
   useEffect(() => {
     let alive = true;
@@ -432,6 +455,8 @@ function FileContentView({ filePath, fileName }: { filePath: string; fileName: s
     setText('');
     setDataUrl('');
     setContentType('');
+    // api.file always fetches with cache: 'no-store', so a manual refresh
+    // reliably pulls the latest bytes from the server.
     api.file(filePath).then(async (res) => {
       if (!alive) return;
       if (!res.ok) {
@@ -465,9 +490,11 @@ function FileContentView({ filePath, fileName }: { filePath: string; fileName: s
       setError(e?.message || 'Failed to load file');
     });
     return () => { alive = false; };
-  }, [filePath, fileName]);
+  }, [filePath, fileName, refreshTick]);
 
   const previewable = fileIsPreviewable(fileName, contentType);
+  const isHtml = isHtmlFile(fileName, contentType);
+  const showHtmlRendered = isHtml && htmlView === 'rendered';
 
   return (
     <div className="flex flex-col gap-3">
@@ -481,7 +508,60 @@ function FileContentView({ filePath, fileName }: { filePath: string; fileName: s
       )}
       {state === 'ready' && (
         <>
-          {previewable && text !== '' && (
+          {/* Toolbar: HTML view toggle + manual refresh (files change on disk
+              without any push — refresh re-fetches the latest bytes). */}
+          {previewable && (
+            <div className="flex items-center justify-end gap-2">
+              {isHtml && (
+                <div className="flex items-center rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden text-xs">
+                  <button type="button" onClick={() => setHtmlView('rendered')}
+                    className={cn(
+                      'px-2.5 py-1 transition-colors',
+                      showHtmlRendered
+                        ? 'bg-accent/15 text-accent font-medium'
+                        : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06]',
+                    )}>
+                    效果
+                  </button>
+                  <button type="button" onClick={() => setHtmlView('source')}
+                    className={cn(
+                      'px-2.5 py-1 transition-colors',
+                      !showHtmlRendered
+                        ? 'bg-accent/15 text-accent font-medium'
+                        : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06]',
+                    )}>
+                    源码
+                  </button>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => setRefreshTick((t) => t + 1)}
+                title="刷新（重新获取文件内容）"
+                aria-label="Refresh file"
+                className="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors"
+              >
+                <RefreshCw size={14} />
+              </button>
+            </div>
+          )}
+          {previewable && text !== '' && showHtmlRendered && (
+            // Rendered mode: sandboxed iframe. allow-scripts lets the page's
+            // inline JS (charts etc.) run, but WITHOUT allow-same-origin the
+            // frame lives in an opaque origin — it cannot reach our cookies
+            // or the management API token. srcDoc means relative sibling-file
+            // references won't resolve (only inline/CDN assets render).
+            // key={refreshTick} remounts the frame on refresh so scripts
+            // re-run even when the bytes are identical.
+            <iframe
+              key={refreshTick}
+              srcDoc={text}
+              title={fileName}
+              sandbox="allow-scripts allow-popups allow-forms"
+              className="w-full h-[70vh] rounded-lg border border-gray-200 dark:border-gray-700 bg-white"
+            />
+          )}
+          {previewable && text !== '' && !showHtmlRendered && (
             isMarkdown(fileName, contentType)
               ? <div className="max-h-[70vh] overflow-auto"><RenderMarkdown content={text} /></div>
               : <pre className="max-h-[70vh] overflow-auto rounded-lg bg-[#fafafa] dark:bg-[#0d1117] border border-gray-200 dark:border-gray-700/60 p-4 text-[13px] leading-[1.6] font-mono whitespace-pre-wrap break-words text-gray-800 dark:text-gray-100">
@@ -1354,16 +1434,23 @@ export default function ChatView() {
     sendCardAction(value);
   }, [bridgeStatus, sendCardAction]);
 
-  const handleNewSession = useCallback(() => {
-    if (bridgeStatus !== 'connected') return;
-    setUserPickedSession(false);
-    setMessages(prev => [...prev, { id: `user-${Date.now()}`, role: 'user', content: '/new' }]);
-    bridgeSend('/new');
+  // Create a NEW conversation without disturbing the current one. Uses the
+  // management API (same path as the Sessions page) instead of sending /new
+  // over the bridge: /new used to reset the CURRENT conversation — killing a
+  // running turn and detaching its agent session — and rendered the "/new"
+  // text inside the ongoing chat. Creating a session is purely additive:
+  // the current conversation keeps running and stays resumable.
+  const handleNewSession = useCallback(async () => {
+    if (!projectName) return;
     setDrawerOpen(false);
-    if (routeSessionId) {
-      navigate(`/chat/${projectName}`, { replace: true });
+    try {
+      const res = await createSession(projectName, { session_key: newConvKey(projectName) });
+      navigate(`/chat/${projectName}/${res.id}`);
+    } catch (e) {
+      // Creation failed — stay on the current conversation, untouched.
+      console.error('create session failed:', e);
     }
-  }, [bridgeStatus, bridgeSend, routeSessionId, projectName, navigate]);
+  }, [projectName, navigate]);
 
   const canSend = bridgeStatus === 'connected';
 

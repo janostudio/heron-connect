@@ -1232,6 +1232,103 @@ func TestForceNewSession_PreservesOldSession(t *testing.T) {
 	}
 }
 
+// TestCmdNew_WebPlatform_OnlyAddsConversation is the regression test for the
+// "create session breaks the ongoing conversation" bug: on Web (bridge), /new
+// must ONLY create a new conversation. The current conversation keeps its
+// agent binding, stays the active session under its own key, and keeps its
+// live interactive state (a running turn must not be killed).
+func TestCmdNew_WebPlatform_OnlyAddsConversation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	sm := NewSessionManager(path)
+
+	e := &Engine{sessions: sm}
+	e.i18n = NewI18n(LangEnglish)
+
+	p := &stubPlatformEngine{n: "bridge"}
+	convKey := MintWebSessionKey("auto-bugfix")
+	msg := &Message{SessionKey: convKey, Platform: "web", ReplyCtx: "ctx"}
+
+	// Seed the ongoing conversation: agent binding, history and live state.
+	old := sm.GetOrCreateActive(convKey)
+	old.SetAgentSessionID("thread-1", "codebuddy")
+	old.AddHistory("user", "ongoing question")
+	sm.Save()
+	e.interactiveStates = map[string]*interactiveState{convKey: {}}
+
+	e.cmdNew(p, msg, nil)
+
+	// The ongoing conversation is untouched: agent binding preserved (it must
+	// stay resumable — this is what "原来的会话不能用了" regressed on)...
+	reloaded := sm.FindByID(old.ID)
+	if reloaded == nil {
+		t.Fatal("current conversation disappeared after /new")
+	}
+	if got := reloaded.GetAgentSessionID(); got != "thread-1" {
+		t.Fatalf("current conversation AgentSessionID = %q, want thread-1 (must stay resumable)", got)
+	}
+	if got := reloaded.GetAgentName(); got != "codebuddy" {
+		t.Fatalf("current conversation AgentType = %q, want codebuddy", got)
+	}
+	if len(reloaded.GetHistory(0)) != 1 {
+		t.Fatalf("current conversation History = %d entries, want 1", len(reloaded.GetHistory(0)))
+	}
+	// ...still the active session under its own key...
+	if sm.ActiveSessionID(convKey) != old.ID {
+		t.Fatalf("active session for current key = %q, want %q (must stay current)", sm.ActiveSessionID(convKey), old.ID)
+	}
+	// ...and its live interactive state survives (running turns are not killed).
+	if _, ok := e.interactiveStates[convKey]; !ok {
+		t.Fatal("interactive state for the current conversation was cleaned up; /new must not kill a running web conversation")
+	}
+
+	// The new conversation exists under a DIFFERENT freshly minted key.
+	idToKey, _ := sm.SessionKeyMap()
+	found := false
+	for _, s := range sm.AllSessions() {
+		key := idToKey[s.ID]
+		if s.ID != old.ID && strings.HasPrefix(key, "bridge:web-admin:auto-bugfix:conv-") && key != convKey {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("/new on web should create a new conversation under a fresh minted key; got keys %v", idToKey)
+	}
+}
+
+// TestForceNewSession_FreshKeyCreatesSingleSession: the Web management API
+// create path passes a freshly minted conversation key. ForceNewSession must
+// create exactly ONE session for it — the old GetOrCreateActive call
+// materialized an empty stub session that lingered in the session list.
+func TestForceNewSession_FreshKeyCreatesSingleSession(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	sm := NewSessionManager(path)
+
+	e := &Engine{sessions: sm}
+	e.i18n = NewI18n(LangEnglish)
+
+	freshKey := MintWebSessionKey("auto-bugfix")
+	created := e.ForceNewSession(freshKey, "")
+
+	if created == nil {
+		t.Fatal("ForceNewSession returned nil")
+	}
+	var underKey int
+	idToKey, _ := sm.SessionKeyMap()
+	for _, s := range sm.AllSessions() {
+		if idToKey[s.ID] == freshKey {
+			underKey++
+		}
+	}
+	if underKey != 1 {
+		t.Fatalf("fresh key should yield exactly 1 session, got %d (empty stub leak)", underKey)
+	}
+	if sm.ActiveSessionID(freshKey) != created.ID {
+		t.Fatalf("active session for fresh key = %q, want the created %q", sm.ActiveSessionID(freshKey), created.ID)
+	}
+}
+
 // TestLegacyData_ClearsAfterFirstNewCommand verifies the full migration
 // lifecycle: legacy data → disable filter → /new populates PastAgentSessionIDs
 // → filter re-enables on next cycle.

@@ -84,6 +84,19 @@ func createProjectEngines(cfg *config.Config, configPath string, observeFlag *bo
 	engines := make([]*core.Engine, 0, len(cfg.Projects))
 	effectiveWorkDirs := make([]string, 0, len(cfg.Projects))
 
+	// Dashboard usage metrics: one shared recorder for all engines (records
+	// carry the project dimension). Created only when the feature is enabled
+	// AND engine-side collection is on ([dashboard] collect=true).
+	var statsRecorder *core.TurnRecorder
+	if cfg.Dashboard.IsEnabled() && cfg.Dashboard.ShouldCollect() {
+		r, err := core.NewTurnRecorder(cfg.DataDir, cfg.Dashboard.GetRetentionDays())
+		if err != nil {
+			slog.Warn("dashboard metrics disabled: recorder init failed", "error", err)
+		} else {
+			statsRecorder = r
+		}
+	}
+
 	for _, proj := range cfg.Projects {
 		// Inject project-level run_as_user / run_as_env into the agent's
 		// opts map so agents that support isolation can pick them up
@@ -145,6 +158,7 @@ func createProjectEngines(cfg *config.Config, configPath string, observeFlag *bo
 		}
 
 		engine := core.NewEngine(proj.Name, agent, platforms, sessionFile, lang)
+		engine.SetStatsRecorder(statsRecorder)
 		showCtx := true
 		if proj.ShowContextIndicator != nil {
 			showCtx = *proj.ShowContextIndicator
@@ -922,6 +936,19 @@ func main() {
 		}
 		if cronSched != nil {
 			mgmtSrv.SetCronScheduler(cronSched)
+		}
+		if cfg.Dashboard.IsEnabled() {
+			mgmtSrv.SetDashboardSettings(&management.DashboardSettings{
+				Enabled:               true,
+				Collect:               cfg.Dashboard.ShouldCollect(),
+				MetricsDir:            core.MetricsDir(cfg.DataDir),
+				MaxTopics:             cfg.Dashboard.GetMaxTopics(),
+				IncludeMessageExcerpt: cfg.Dashboard.GetIncludeMessageExcerpt(),
+				InsightsPath:          cfg.Dashboard.GetInsightsPath(),
+				HTMLPath:              cfg.Dashboard.GetHTMLPath(),
+				ReportsDir:            cfg.Dashboard.GetReportsDir(),
+				PublicBaseURL:         cfg.Dashboard.PublicBaseURL,
+			})
 		}
 		mgmtSrv.SetHeartbeatScheduler(heartbeatSched)
 		if bridgeSrv != nil {

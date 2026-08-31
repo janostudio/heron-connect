@@ -31,36 +31,48 @@ func (e *Engine) cmdNew(p Platform, msg *Message, args []string) {
 		return
 	}
 
-	// For Web (bridge) messages, each conversation owns a unique session_key.
-	// A `/new` must start a brand-new conversation, so mint a fresh key rather
-	// than reusing the current conversation's key (which would just append a
-	// sibling session to the SAME key/agent thread — the cause of the earlier
-	// "all conversations collapse into one" bug). Non-bridge platforms keep
-	// their per-user key semantics.
-	targetKey := msg.SessionKey
+	name := ""
+	if len(args) > 0 {
+		name = strings.Join(args, " ")
+	}
+
+	// Web (bridge) conversations each own a unique session_key, so the current
+	// conversation is NOT replaced by /new: it keeps its key, its live agent
+	// session (even mid-turn) and stays fully resumable. /new on the Web only
+	// ADDS a brand-new conversation under a freshly minted key — killing the
+	// interactive state or detaching the old session here would make the
+	// current conversation unusable (the "create session breaks the ongoing
+	// chat" bug).
 	if msg.Platform == "bridge" || msg.Platform == "web" {
 		project := e.name
 		if project == "" {
 			project = projectFromWebSessionKey(msg.SessionKey)
 		}
-		targetKey = MintWebSessionKey(project)
+		targetKey := MintWebSessionKey(project)
+		slog.Info("cmdNew: creating new web conversation", "session_key", msg.SessionKey, "new_session_key", targetKey)
+		sessions.NewSession(targetKey, name)
+		sessions.Save()
+		if name != "" {
+			e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgNewSessionCreatedName), name))
+		} else {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgNewSessionCreated))
+		}
+		return
 	}
 
+	// Other platforms keep the per-user key semantics: /new replaces the
+	// user's single active session under their key, so tear down live state
+	// and detach the old session so it cannot be resumed. History, agent type
+	// and name are preserved — it stays browsable as a past conversation.
+	targetKey := msg.SessionKey
 	slog.Info("cmdNew: cleaning up old session", "session_key", msg.SessionKey, "new_session_key", targetKey)
 	e.cleanupInteractiveState(interactiveKey)
 	slog.Info("cmdNew: cleanup done, creating new session", "session_key", targetKey)
 
-	// Detach the old session's live agent session so it cannot be resumed,
-	// but PRESERVE its history/agent_type/name so it stays browsable in the
-	// Web list (it becomes a past conversation, not an empty shell).
 	old := sessions.GetOrCreateActive(msg.SessionKey)
 	old.DetachAgentSession()
 	sessions.Save()
 
-	name := ""
-	if len(args) > 0 {
-		name = strings.Join(args, " ")
-	}
 	sessions.NewSession(targetKey, name)
 	if name != "" {
 		e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgNewSessionCreatedName), name))
