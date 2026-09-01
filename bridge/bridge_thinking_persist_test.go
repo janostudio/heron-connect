@@ -81,6 +81,10 @@ func TestBridge_WebThinkingToolPersist(t *testing.T) {
 	// like the Web frontend) so the engine turn is not blocked on preview_ack.
 	got := map[string][]map[string]any{}
 	var mu sync.Mutex
+	// connWriteMu serializes WriteJSON on the shared websocket conn: the reader
+	// goroutine (preview_ack) and this goroutine (message) may write
+	// concurrently, and gorilla/websocket is not safe for concurrent writers.
+	var connWriteMu sync.Mutex
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -95,11 +99,13 @@ func TestBridge_WebThinkingToolPersist(t *testing.T) {
 			if typ == "preview_start" {
 				ackCounter++
 				handle := "web-preview-" + itoa(ackCounter)
+				connWriteMu.Lock()
 				mustWriteJSON(t, conn, map[string]any{
 					"type":          "preview_ack",
 					"ref_id":        msg["ref_id"],
 					"preview_handle": handle,
 				})
+				connWriteMu.Unlock()
 			}
 			mu.Lock()
 			got[typ] = append(got[typ], msg)
@@ -112,6 +118,7 @@ func TestBridge_WebThinkingToolPersist(t *testing.T) {
 		}
 	}()
 
+	connWriteMu.Lock()
 	mustWriteJSON(t, conn, map[string]any{
 		"type":        "message",
 		"msg_id":      "m1",
@@ -121,6 +128,7 @@ func TestBridge_WebThinkingToolPersist(t *testing.T) {
 		"reply_ctx":   "web:web-admin:test-proj",
 		"project":     "test-proj",
 	})
+	connWriteMu.Unlock()
 
 	select {
 	case <-done:

@@ -30,9 +30,20 @@ func writeMetrics(t *testing.T, metricsDir string) {
 	if err := os.MkdirAll(metricsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	day := time.Now().Format("2006-01-02")
-	line1 := `{"ts":"` + time.Now().Add(-time.Hour).Format(time.RFC3339) + `","kind":"turn","project":"p","session_id":"s1","session_name":"demo","platform":"feishu","agent":"claudecode","user_id":"u1","user_name":"张三","input_tokens":1000,"output_tokens":500,"tool_calls":2,"duration_ms":60000}`
-	line2 := `{"ts":"` + time.Now().Format(time.RFC3339) + `","kind":"turn","project":"p","session_id":"s1","input_tokens":200,"output_tokens":100,"trigger":"cron"}`
+	now := time.Now()
+	day := now.Format("2006-01-02")
+	// line1 must fall within the SAME calendar day as the file name. A naive
+	// now.Add(-time.Hour) crosses midnight when the test runs 00:00–01:00,
+	// which would drop line1 from the day window (see metrics-window bug note).
+	// Clamp to a safe time: keep now, but backdate only if it stays in-day;
+	// otherwise use 00:05 local of the current day.
+	ts1 := now.Add(-time.Hour)
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if ts1.Before(dayStart) {
+		ts1 = dayStart.Add(5 * time.Minute)
+	}
+	line1 := `{"ts":"` + ts1.Format(time.RFC3339) + `","kind":"turn","project":"p","session_id":"s1","session_name":"demo","platform":"feishu","agent":"claudecode","user_id":"u1","user_name":"张三","input_tokens":1000,"output_tokens":500,"tool_calls":2,"duration_ms":60000}`
+	line2 := `{"ts":"` + now.Format(time.RFC3339) + `","kind":"turn","project":"p","session_id":"s1","input_tokens":200,"output_tokens":100,"trigger":"cron"}`
 	p := filepath.Join(metricsDir, "turns-"+day+".jsonl")
 	if err := os.WriteFile(p, []byte(line1+"\n"+line2+"\n"), 0o644); err != nil {
 		t.Fatal(err)

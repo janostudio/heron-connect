@@ -49,9 +49,15 @@ type ProgressCardEntry struct {
 	Text     string                `json:"text"`
 	Tool     string                `json:"tool,omitempty"`
 	ID       string                `json:"id,omitempty"` // tool_use id: lets clients pair a tool_result with its invocation
-	Status   string                `json:"status,omitempty"`
-	ExitCode *int                  `json:"exit_code,omitempty"`
-	Success  *bool                 `json:"success,omitempty"`
+	// CorrelationKey is the row-merge key. When non-empty, appending an entry
+	// whose CorrelationKey matches an existing row replaces that row in place
+	// instead of appending (tool_use → tool_result status flow). Only populated
+	// when a real ToolID exists — never derived from the tool name, which would
+	// wrongly collapse two parallel same-name tools.
+	CorrelationKey string `json:"correlation_key,omitempty"`
+	Status         string `json:"status,omitempty"`
+	ExitCode       *int   `json:"exit_code,omitempty"`
+	Success        *bool  `json:"success,omitempty"`
 }
 
 // ProgressCardPayload carries structured progress entries for platforms that
@@ -103,13 +109,14 @@ func BuildProgressCardPayloadV2(items []ProgressCardEntry, truncated bool, agent
 			kind = ProgressEntryInfo
 		}
 		cleaned = append(cleaned, ProgressCardEntry{
-			Kind:     kind,
-			Text:     text,
-			Tool:     strings.TrimSpace(item.Tool),
-			ID:       strings.TrimSpace(item.ID),
-			Status:   strings.TrimSpace(item.Status),
-			ExitCode: item.ExitCode,
-			Success:  item.Success,
+			Kind:           kind,
+			Text:           text,
+			Tool:           strings.TrimSpace(item.Tool),
+			ID:             strings.TrimSpace(item.ID),
+			CorrelationKey: strings.TrimSpace(item.CorrelationKey),
+			Status:         strings.TrimSpace(item.Status),
+			ExitCode:       item.ExitCode,
+			Success:        item.Success,
 		})
 	}
 	if len(cleaned) == 0 {
@@ -455,7 +462,22 @@ func (w *compactProgressWriter) AppendStructured(item ProgressCardEntry, fallbac
 	item.Kind = kind
 	item.Text = text
 	item.Tool = strings.TrimSpace(item.Tool)
+	item.ID = strings.TrimSpace(item.ID)
+	item.CorrelationKey = strings.TrimSpace(item.CorrelationKey)
 	item.Status = strings.TrimSpace(item.Status)
+
+	// Row-level in-place merge: when the entry carries a correlation key that
+	// already matches an existing row, replace that row instead of appending.
+	// This collapses tool_use → tool_result into a single status-transition row
+	// for every platform, not just the web client.
+	if w.style == ProgressStyleCard && item.CorrelationKey != "" {
+		if idx := w.findCorrelationKey(item.CorrelationKey); idx >= 0 {
+			w.items[idx] = item
+			w.entries[idx] = fallback
+			w.renderAndUpdate()
+			return true
+		}
+	}
 
 	switch w.style {
 	case ProgressStyleCard:
@@ -495,6 +517,13 @@ func (w *compactProgressWriter) AppendStructured(item ProgressCardEntry, fallbac
 		w.content = trimCompactProgressText(w.content, w.maxChars)
 	}
 
+	return w.renderAndUpdate()
+}
+
+// renderAndUpdate sends the current w.content to the platform as the in-place
+// progress message, creating the handle on first send and updating it after.
+// Shared by the append path and the in-place row-merge path.
+func (w *compactProgressWriter) renderAndUpdate() bool {
 	if w.content == w.lastSent {
 		return true
 	}
@@ -543,6 +572,18 @@ func (w *compactProgressWriter) AppendStructured(item ProgressCardEntry, fallbac
 	w.lastSent = w.content
 	w.lastUpdateAt = time.Now()
 	return true
+}
+
+// findCorrelationKey returns the index of the first item whose CorrelationKey
+// matches key, or -1 when absent. Search is reverse so the most recent row wins
+// (matches tool_use/tool_result pairing semantics).
+func (w *compactProgressWriter) findCorrelationKey(key string) int {
+	for i := len(w.items) - 1; i >= 0; i-- {
+		if w.items[i].CorrelationKey == key {
+			return i
+		}
+	}
+	return -1
 }
 
 // Finalize updates card progress state (running/completed/failed) without

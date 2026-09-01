@@ -34,6 +34,12 @@ type CronJob struct {
 	SessionMode string    `json:"session_mode,omitempty"` // "" or "reuse" = share active session; "new_per_run" = fresh session each run
 	Mode        string    `json:"mode,omitempty"`         // permission mode override for this job; "" = use project default
 	TimeoutMins *int      `json:"timeout_mins,omitempty"` // nil = default 30m wait; 0 = no limit; >0 = minutes
+	// RetryCount is how many times a failed run is retried before giving up.
+	// Default 1 (one retry). 0 = no retry. Negative is treated as 0.
+	RetryCount *int `json:"retry_count,omitempty"`
+	// NotifyOnFailure, when true, pushes a failure notice to the job's target
+	// session when all retries are exhausted. Default false.
+	NotifyOnFailure *bool `json:"notify_on_failure,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	LastRun     time.Time `json:"last_run,omitempty"`
 	LastError   string    `json:"last_error,omitempty"`
@@ -63,6 +69,56 @@ func (j *CronJob) ExecutionTimeout() time.Duration {
 // instead of reusing the active session for the session_key.
 func (j *CronJob) UsesNewSessionPerRun() bool {
 	return NormalizeCronSessionMode(j.SessionMode) == "new_per_run"
+}
+
+// GetRetryCount returns how many retries a failed run gets (default 1).
+func (j *CronJob) GetRetryCount() int {
+	if j.RetryCount == nil {
+		return 1
+	}
+	if *j.RetryCount < 0 {
+		return 0
+	}
+	return *j.RetryCount
+}
+
+// ShouldNotifyOnFailure reports whether to push a failure notice on exhaustion.
+func (j *CronJob) ShouldNotifyOnFailure() bool {
+	return j.NotifyOnFailure != nil && *j.NotifyOnFailure
+}
+
+// normalizeCronSchedule accepts either a standard 5-field cron expression
+// (unchanged) or the "@every <dur>" / "@at <RFC3339>" convenience forms, and
+// returns the robfig-cron-compatible equivalent. oneShot is true for "@at"
+// (a one-shot job the scheduler should self-remove after firing). "@every"
+// maps directly to robfig's interval syntax.
+func normalizeCronSchedule(expr string) (norm string, oneShot bool, err error) {
+	expr = strings.TrimSpace(expr)
+	switch {
+	case strings.HasPrefix(expr, "@every "):
+		// robfig/cron supports "@every 1h30m" natively; validate the duration.
+		dur := strings.TrimSpace(strings.TrimPrefix(expr, "@every "))
+		if dur == "" {
+			return "", false, fmt.Errorf("@every requires a duration (e.g. \"@every 10m\")")
+		}
+		if _, err := time.ParseDuration(dur); err != nil {
+			return "", false, fmt.Errorf("invalid @every duration %q: %w", dur, err)
+		}
+		return expr, false, nil
+	case strings.HasPrefix(expr, "@at "):
+		ts := strings.TrimSpace(strings.TrimPrefix(expr, "@at "))
+		t, err := time.Parse(time.RFC3339, ts)
+		if err != nil {
+			return "", false, fmt.Errorf("invalid @at timestamp %q (want RFC3339, e.g. 2026-09-01T09:00:00+08:00): %w", ts, err)
+		}
+		if t.Before(time.Now()) {
+			return "", false, fmt.Errorf("@at timestamp %q is in the past", ts)
+		}
+		// Map to a 5-field cron expression for that exact minute.
+		return fmt.Sprintf("%d %d %d %d *", t.Minute(), t.Hour(), t.Day(), int(t.Month())), true, nil
+	default:
+		return expr, false, nil
+	}
 }
 
 // NormalizeCronSessionMode maps CLI/API aliases to canonical values ("", "new_per_run").
@@ -102,17 +158,19 @@ func validateCronJob(j *CronJob) error {
 // It is defined in core so both the local API server and the management server
 // can use it without creating a circular import.
 type CronAddRequest struct {
-	Project     string `json:"project"`
-	SessionKey  string `json:"session_key"`
-	CronExpr    string `json:"cron_expr"`
-	Prompt      string `json:"prompt"`
-	Exec        string `json:"exec"`
-	WorkDir     string `json:"work_dir"`
-	Description string `json:"description"`
-	Silent      *bool  `json:"silent,omitempty"`
-	SessionMode string `json:"session_mode,omitempty"`
-	Mode        string `json:"mode,omitempty"`
-	TimeoutMins *int   `json:"timeout_mins,omitempty"`
+	Project         string `json:"project"`
+	SessionKey      string `json:"session_key"`
+	CronExpr        string `json:"cron_expr"`
+	Prompt          string `json:"prompt"`
+	Exec            string `json:"exec"`
+	WorkDir         string `json:"work_dir"`
+	Description     string `json:"description"`
+	Silent          *bool  `json:"silent,omitempty"`
+	SessionMode     string `json:"session_mode,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	TimeoutMins     *int   `json:"timeout_mins,omitempty"`
+	RetryCount      *int   `json:"retry_count,omitempty"`
+	NotifyOnFailure *bool  `json:"notify_on_failure,omitempty"`
 }
 
 // CronStore persists cron jobs to a JSON file.
@@ -418,6 +476,9 @@ type CronScheduler struct {
 	engines       map[string]*Engine // project name → engine
 	mu            sync.RWMutex
 	entries       map[string]cron.EntryID // job ID → cron entry
+	// oneShot tracks job IDs scheduled via "@at" so they self-remove after
+	// firing (a one-shot job should not repeat next month at the same minute).
+	oneShot         map[string]bool
 	defaultSilent      bool   // global default for suppressing cron start notifications
 	defaultSessionMode string // global default session mode; "" = reuse, "new_per_run" = fresh session each run
 }
@@ -428,7 +489,26 @@ func NewCronScheduler(store *CronStore) *CronScheduler {
 		cron:    cron.New(),
 		engines: make(map[string]*Engine),
 		entries: make(map[string]cron.EntryID),
+		oneShot: make(map[string]bool),
 	}
+}
+
+func (cs *CronScheduler) markOneShot(id string) {
+	cs.mu.Lock()
+	cs.oneShot[id] = true
+	cs.mu.Unlock()
+}
+
+func (cs *CronScheduler) isOneShot(id string) bool {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.oneShot[id]
+}
+
+func (cs *CronScheduler) clearOneShot(id string) {
+	cs.mu.Lock()
+	delete(cs.oneShot, id)
+	cs.mu.Unlock()
 }
 
 func (cs *CronScheduler) RegisterEngine(name string, e *Engine) {
@@ -485,11 +565,19 @@ func (cs *CronScheduler) AddJob(job *CronJob) error {
 		return err
 	}
 	job.SessionMode = NormalizeCronSessionMode(job.SessionMode)
-	if _, err := cron.ParseStandard(job.CronExpr); err != nil {
+	expr, oneShot, err := normalizeCronSchedule(job.CronExpr)
+	if err != nil {
+		return err
+	}
+	if _, err := cron.ParseStandard(expr); err != nil {
 		return fmt.Errorf("invalid cron expression %q: %w", job.CronExpr, err)
 	}
+	job.CronExpr = expr
 	if err := cs.store.Add(job); err != nil {
 		return err
+	}
+	if oneShot {
+		cs.markOneShot(job.ID)
 	}
 	if job.Enabled {
 		return cs.scheduleJob(job)
@@ -545,8 +633,16 @@ func (cs *CronScheduler) UpdateJob(id string, field string, value any) error {
 		if !ok {
 			return fmt.Errorf("cron_expr must be a string")
 		}
-		if _, err := cron.ParseStandard(expr); err != nil {
+		norm, oneShot, err := normalizeCronSchedule(expr)
+		if err != nil {
+			return err
+		}
+		if _, err := cron.ParseStandard(norm); err != nil {
 			return fmt.Errorf("invalid cron expression %q: %w", expr, err)
+		}
+		value = norm
+		if oneShot {
+			cs.markOneShot(id)
 		}
 	}
 
@@ -660,30 +756,59 @@ func (cs *CronScheduler) executeJob(jobID string) {
 
 	slog.Info("cron: executing job", "id", jobID, "project", job.Project, "prompt", truncateStr(job.Prompt, 60))
 
+	timeout := job.ExecutionTimeout()
+	retryCount := job.GetRetryCount()
+
+	var err error
+	for attempt := 0; attempt <= retryCount; attempt++ {
+		err = cs.runJobOnce(engine, job, timeout)
+		if err == nil {
+			break
+		}
+		if attempt < retryCount {
+			slog.Warn("cron: job failed, retrying", "id", jobID, "attempt", attempt+1, "max_retries", retryCount, "error", err)
+			// Short backoff before retry so transient failures can settle.
+			time.Sleep(cronRetryBackoff)
+		}
+	}
+
+	cs.store.MarkRun(jobID, err)
+
+	// One-shot jobs (@at) self-remove after firing, success or failure.
+	if cs.isOneShot(jobID) {
+		cs.RemoveJob(jobID)
+	}
+
+	if err != nil {
+		slog.Error("cron: job failed", "id", jobID, "error", err)
+		if job.ShouldNotifyOnFailure() {
+			engine.notifyCronFailure(job, err)
+		}
+	} else {
+		slog.Info("cron: job completed", "id", jobID)
+	}
+}
+
+// cronRetryBackoff is the fixed delay between cron run retries.
+const cronRetryBackoff = 5 * time.Second
+
+// runJobOnce executes one attempt of the job and returns its error (or a
+// timeout error). Extracted from executeJob so the retry loop is readable.
+func (cs *CronScheduler) runJobOnce(engine *Engine, job *CronJob, timeout time.Duration) error {
 	done := make(chan error, 1)
 	go func() {
 		done <- engine.ExecuteCronJob(job)
 	}()
 
-	var err error
-	timeout := job.ExecutionTimeout()
 	if timeout > 0 {
 		select {
-		case err = <-done:
+		case err := <-done:
+			return err
 		case <-time.After(timeout):
-			err = fmt.Errorf("job timed out after %v", timeout)
+			return fmt.Errorf("job timed out after %v", timeout)
 		}
-	} else {
-		err = <-done
 	}
-
-	cs.store.MarkRun(jobID, err)
-
-	if err != nil {
-		slog.Error("cron: job failed", "id", jobID, "error", err)
-	} else {
-		slog.Info("cron: job completed", "id", jobID)
-	}
+	return <-done
 }
 
 // mutePlatform wraps a Platform and discards all outgoing messages.

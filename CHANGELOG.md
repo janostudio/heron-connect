@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.1.28 (2026-09-01)
+
+### Changed
+
+- **进度卡工具调用行级就地更新**（借鉴 openclaw 的 mergeChannelProgressDraftLine）：`ProgressCardEntry` 新增 `CorrelationKey` 字段，`compactProgressWriter` 按该键**就地更新已有行**而非追加新行——tool_use → tool_result 自动坍缩为一行状态流转（running→completed/failed），对所有卡片平台生效。仅当存在真实 ToolID 时才合并（不按工具名合并，避免误合并并行同名工具）。
+- **cron 调度表达式扩展**：`CronExpr` 新增 `@every <dur>`（固定间隔）与 `@at <RFC3339>`（一次性定时，触发后自删）两种便捷形式，向后兼容标准 5 段 cron。
+- **cron 可靠投递**：`CronJob` 新增 `retry_count`（默认 1）与 `notify_on_failure` 字段——执行失败自动重试（5s 退避），重试耗尽后可选推一条失败通知到任务目标会话。
+- **入站消息显式准入决策**：新增 `MessageAdmission` 枚举（dispatch/observe_only/handled/drop/reject）与统一 `message admission` 日志，将 rate-limit/banned-word/命令/权限等早退路径的决策与观测收口（不改既有控制流，行为等价）。
+- **会话绑定生命周期**：新增 `SessionBindingPolicy`（IdleTimeout + 硬上限 MaxAge），会话回收器读完整策略；IdleTimeout 按逻辑平台名解析——根治 web/bridge 会话被项目级 idle 误切的隐患（`SetBindingMaxAge` 可设硬上限，默认关闭向后兼容）。
+
+### Fixed
+
+- **修复 bridge 测试的 websocket 并发写 data race**：`TestBridge_WebThinkingToolPersist` 的 reader goroutine 与主 goroutine 并发写同一 `*websocket.Conn`（gorilla 不支持并发写），全量并行测试下稳定触发 race 检测。加 `connWriteMu` 互斥串行化。
+- **修复 management 统计测试跨午夜 flaky**：`writeMetrics` 用 `now.Add(-1h)`，凌晨 00:00–01:00 跑测试时首条记录落昨天、文件名是今天，导致断言失败。改为 clamp 到当天。
+
 ## v1.1.27 (2026-08-31)
 
 ### Added

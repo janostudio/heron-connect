@@ -286,3 +286,45 @@ type = "feishu"
 | **平台原生渲染** | 部分支持 vs 系统性支持 | 格式化效果差 |
 | **可维护性** | 13k 行 God Object | 迭代速度慢 |
 | **能力可见性** | 运行时探测 vs 声明式 | 文档/调试困难 |
+
+## 八、2026-08-31 复核增量（针对 IM 交互，重读最新源码）
+
+> 以下结论基于对 openclaw 当前 main（`0757cad`）源码的重新阅读，是对 §二~§七 的补充与加深，聚焦「IM 交互」这个切口。旧结论仍成立，这里只列新证据或新角度。
+
+### 8.1 显式消息流转状态机 + admission 决策（最值得学）
+
+openclaw 把入站消息处理收口成 `runChannelTurn`（`src/channels/turn/kernel.ts:620`）驱动的 9 阶段管线：
+
+```
+ingest → classify → preflight → resolve → authorize → assemble → record → dispatch → finalize
+```
+
+关键决策点是 `ChannelTurnAdmission`（`turn/types.ts:35`）四选一：`dispatch | observeOnly | handled | drop`。每个阶段 `emit()` 一条 `ChannelTurnLogEvent`（带 stage + event + sessionKey），全链路可观测。
+
+heron-connect 对应物是各平台 `MessageHandler` 回调里散落的路由/允许/命令判断，没有显式 stage、没有 admission 枚举、没有统一日志。**这是 heron-connect 最值得引入的一处**：把「接收→准入→记录→分发」抽成显式管线。
+
+### 8.2 进度草稿的行级就地更新（progress_compact.go 直接升级方向）
+
+openclaw 用判别联合事件 `ChannelProgressDraftLineInput`（`streaming.ts:214`，含 tool/item/plan/approval/command-output/patch）+ 稳定行 `id` + `correlationKey`，靠 `mergeChannelProgressDraftLine`（`streaming.ts:1116`）**就地更新已有行**而非追加新行。
+
+heron-connect 的 `compactProgressWriter`（`core/progress_compact.go:208`）是「追加 entries + 截断到 maxEntries」，**没有行级更新/合并**，只能整体重发。openclaw 还拆了四层正交模块（节流 draft-stream-loop / 分块 chunking / 渲染 streaming / 组合 compositor），heron-connect 是单文件全职责。
+
+### 8.3 会话绑定生命周期（与 web idle 误切事故同源）
+
+openclaw 用 `thread-bindings-policy.ts` 显式管理「IM 会话↔agent 会话」绑定的 idle timeout / maxAge / 回收 / spawn 策略（account > channel > global 三级覆盖），binding id 是 `accountId:conversationId` 前缀。
+
+heron-connect 靠 session_key 字符串前缀约定，回收靠各平台自己或 idle override——之前修过的「web 后台被项目级 720 idle 误切会话」事故正源于缺统一回收策略。
+
+### 8.4 cron 是一等子系统
+
+openclaw `src/cron/` 是完整服务：三种调度（`at`/`every`/`cron`，`schedule.ts:55`）+ durable delivery（`delivery.ts:46`，失败通知）+ isolated agent 会话 + heartbeat 双轨（`auto-reply/heartbeat.ts`，`notify=false` 静默）。
+
+heron-connect 的 cron（`core/cron.go`）是 engine 的辅助能力，只有标准 cron 表达式 + `ReplyContextReconstructor` 重建 replyCtx。两者「从会话重建主动推送目标」思路一致，但 openclaw 泛化成了 outbound session 上下文构建。
+
+### 8.5 结论收敛（若只挑三样引入）
+
+1. **显式消息准入/记录/分发管线**（替代散落 handler）；
+2. **投递前能力矩阵降级**（替代运行时 `p.(Xxx)` 断言——§二已提，此处重申）；
+3. **进度草稿的行级就地更新 + 事件类型化**（progress_compact.go 升级）。
+
+其余（多账号、config schema 插件化、cron 一等化）作为更远期方向，不急于引入。

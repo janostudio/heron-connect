@@ -249,6 +249,10 @@ type Engine struct {
 	autoCompressMaxTokens int
 	autoCompressMinGap    time.Duration
 	resetOnIdle           time.Duration
+	// bindingMaxAge is the engine-wide hard cap on a session binding's total
+	// lifetime (from spawn), independent of activity. 0 disables (default,
+	// matching legacy behavior). Set via SetBindingMaxAge.
+	bindingMaxAge time.Duration
 	// resetOnIdleByPlatform holds per-platform overrides of resetOnIdle,
 	// keyed by lowercase platform name/type (e.g. "web", "wecom"), matching
 	// the platformDisplayOverrides convention. When a platform has an entry,
@@ -401,6 +405,11 @@ type interactiveState struct {
 	// turnStartTime is set when a new foreground turn begins. Used as a
 	// fallback for lastEventTime when no events have been received yet.
 	turnStartTime time.Time
+
+	// spawnedAt records when this interactiveState was created. Used by the
+	// session binding lifecycle (MaxAge hard-reap) to bound a binding's total
+	// lifetime regardless of activity.
+	spawnedAt time.Time
 }
 
 type pendingProviderAddState struct {
@@ -1142,6 +1151,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 
 	content := strings.TrimSpace(msg.Content)
 	if content == "" && len(msg.Images) == 0 && len(msg.Files) == 0 && msg.Location == nil {
+		e.logAdmission(p, msg, "empty", e.admitDrop("empty content with no payload"))
 		return
 	}
 
@@ -1160,6 +1170,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 
 	// Rate limit check (per-user role-based, then global fallback)
 	if !e.checkRateLimit(msg) {
+		e.logAdmission(p, msg, "rate_limit", e.admitReject("rate limited", e.i18n.T(MsgRateLimited)))
 		slog.Info("message rate limited",
 			"session", msg.SessionKey, "user_id", msg.UserID, "user", msg.UserName)
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgRateLimited))
@@ -1169,6 +1180,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 	// Banned words check (skip for slash commands and ! shell shortcut)
 	if !strings.HasPrefix(content, "/") && !strings.HasPrefix(content, "!") {
 		if word := e.matchBannedWord(content); word != "" {
+			e.logAdmission(p, msg, "banned_word", e.admitReject("banned word", e.i18n.T(MsgBannedWordBlocked)))
 			slog.Info("message blocked by banned word", "word", word, "user", msg.UserName)
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgBannedWordBlocked))
 			return
@@ -1227,6 +1239,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 
 	if len(msg.Images) == 0 && strings.HasPrefix(content, "/") {
 		if e.handleCommand(p, msg, content) {
+			e.logAdmission(p, msg, "command", e.admitHandled("slash command handled"))
 			return
 		}
 		// Unrecognized slash command — fall through to agent as normal message
@@ -1234,6 +1247,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 
 	// Permission responses bypass the session lock
 	if e.handlePendingPermission(p, msg, content) {
+		e.logAdmission(p, msg, "permission", e.admitHandled("pending permission answered"))
 		return
 	}
 
@@ -1349,6 +1363,7 @@ sessionLocked:
 		"user", msg.UserName,
 		"session", session.ID,
 	)
+	e.logAdmission(p, msg, "dispatch", e.admitDispatch())
 
 	e.turnWg.Add(1)
 	go func() {
@@ -1556,6 +1571,7 @@ func (e *Engine) ensureInteractiveStateForQueueing(key string, p Platform, reply
 			platform:         p,
 			replyCtx:         replyCtx,
 			eventsNeedResync: true,
+			spawnedAt:        time.Now(),
 		}
 	}
 }
@@ -2294,7 +2310,7 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 	// Check if context is already canceled (e.g. during shutdown/restart)
 	if e.ctx.Err() != nil {
 		slog.Debug("skipping session start: context canceled", "session_key", sessionKey)
-		newState := &interactiveState{platform: p, replyCtx: replyCtx, agent: agent, eventsNeedResync: true}
+		newState := &interactiveState{platform: p, replyCtx: replyCtx, agent: agent, eventsNeedResync: true, spawnedAt: time.Now()}
 		adoptPendingFromPlaceholder(e.interactiveStates[sessionKey], newState)
 		state = newState
 		e.interactiveStates[sessionKey] = state
@@ -2336,7 +2352,7 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 				Platform:   p.Name(),
 				Error:      fmt.Sprintf("failed to start session: %v", err),
 			})
-			newState := &interactiveState{platform: p, replyCtx: replyCtx, agent: agent, eventsNeedResync: true}
+			newState := &interactiveState{platform: p, replyCtx: replyCtx, agent: agent, eventsNeedResync: true, spawnedAt: time.Now()}
 			adoptPendingFromPlaceholder(e.interactiveStates[sessionKey], newState)
 			state = newState
 			e.interactiveStates[sessionKey] = state
@@ -2374,6 +2390,7 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 		replyCtx:         replyCtx,
 		agent:            agent,
 		eventsNeedResync: true,
+		spawnedAt:        time.Now(),
 	}
 	adoptPendingFromPlaceholder(e.interactiveStates[sessionKey], newState)
 	state = newState
@@ -3052,21 +3069,39 @@ func (e *Engine) startSessionReaper() {
 }
 
 // reapIdleSessions scans interactiveStates and cleans up any session whose
-// agent process has been idle (no events) for longer than resetOnIdle.
+// binding has expired — either idle past IdleTimeout (no agent events, the
+// legacy resetOnIdle behavior) or past the hard MaxAge bound.
 func (e *Engine) reapIdleSessions() {
-	if e.resetOnIdle <= 0 {
+	// Fast path: nothing to do when both reclamation dimensions are disabled.
+	if e.resetOnIdle <= 0 && e.bindingMaxAge <= 0 {
 		return
 	}
 
 	type reapTarget struct {
-		key   string
-		state *interactiveState
+		key    string
+		state  *interactiveState
+		reason string
 	}
 
 	var targets []reapTarget
 	e.interactiveMu.Lock()
 	for key, state := range e.interactiveStates {
 		if state == nil || state.agentSession == nil || !state.agentSession.Alive() {
+			continue
+		}
+
+		// Hard MaxAge bound: reap regardless of activity, based on spawn time.
+		if e.bindingMaxAge > 0 && !state.spawnedAt.IsZero() {
+			if time.Since(state.spawnedAt) > e.bindingMaxAge {
+				targets = append(targets, reapTarget{key: key, state: state, reason: "max_age"})
+				continue
+			}
+		}
+
+		// Idle bound: reuse the per-platform resolution via the state's logical
+		// platform name (NOT p.Name(), which is "bridge" for web/bridge states).
+		policy := e.resolveBindingPolicy(state.platformName)
+		if policy.IdleTimeout <= 0 {
 			continue
 		}
 		lastEvent := state.lastEventTime
@@ -3076,17 +3111,18 @@ func (e *Engine) reapIdleSessions() {
 		if lastEvent.IsZero() {
 			continue
 		}
-		if time.Since(lastEvent) > e.resetOnIdle {
-			targets = append(targets, reapTarget{key: key, state: state})
+		if time.Since(lastEvent) > policy.IdleTimeout {
+			targets = append(targets, reapTarget{key: key, state: state, reason: "idle"})
 		}
 	}
 	e.interactiveMu.Unlock()
 
 	for _, t := range targets {
-		slog.Info("reaping idle agent session",
+		slog.Info("reaping expired session binding",
 			"session_key", t.key,
+			"reason", t.reason,
 			"idle_for", time.Since(t.state.lastEventTime),
-			"threshold", e.resetOnIdle)
+			"idle_threshold", e.resolveBindingPolicy(t.state.platformName).IdleTimeout)
 		e.cleanupInteractiveState(t.key, t.state)
 	}
 }

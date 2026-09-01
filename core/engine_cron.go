@@ -594,3 +594,56 @@ func (e *Engine) cmdCronSetup(p Platform, msg *Message) {
 	}
 }
 
+
+// notifyCronFailure pushes a best-effort failure notice to the job's target
+// session after all retries are exhausted. It is deliberately lightweight: it
+// reconstructs a reply context and sends a single message; any error is logged
+// and swallowed (a failure notice must never fail the scheduler).
+func (e *Engine) notifyCronFailure(job *CronJob, runErr error) {
+	if job == nil || runErr == nil {
+		return
+	}
+	sessionKey := job.SessionKey
+	platformName := ""
+	if idx := strings.Index(sessionKey, ":"); idx > 0 {
+		platformName = sessionKey[:idx]
+	}
+	var targetPlatform Platform
+	for _, p := range e.platforms {
+		if p.Name() == platformName {
+			targetPlatform = p
+			break
+		}
+	}
+	if targetPlatform == nil {
+		for _, p := range e.platforms {
+			needle := ":" + p.Name() + ":"
+			if idx := strings.Index(sessionKey, needle); idx >= 0 {
+				targetPlatform = p
+				platformName = p.Name()
+				sessionKey = sessionKey[idx+1:]
+				break
+			}
+		}
+	}
+	if targetPlatform == nil {
+		return
+	}
+	rc, ok := targetPlatform.(ReplyContextReconstructor)
+	if !ok {
+		return
+	}
+	replyCtx, err := rc.ReconstructReplyCtx(sessionKey)
+	if err != nil {
+		slog.Warn("cron: failure-notice reply context failed", "job", job.ID, "error", err)
+		return
+	}
+	desc := job.Description
+	if desc == "" {
+		desc = truncateStr(job.Prompt, 40)
+	}
+	msg := fmt.Sprintf("⚠️ 定时任务「%s」执行失败：%s", desc, truncateStr(runErr.Error(), 120))
+	if err := targetPlatform.Send(e.ctx, replyCtx, msg); err != nil {
+		slog.Warn("cron: failure-notice send failed", "job", job.ID, "error", err)
+	}
+}
