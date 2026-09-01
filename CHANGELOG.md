@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.29 (2026-09-01)
+
+### Fixed
+
+- **修复高并发下 queued-turn 的 nil pointer panic**：`processInteractiveEvents` 处理排队消息时，`state.agentSession` 可能被并发的会话清理（idle reaper / /new / 消息撤回）置为 nil，闭包直接解引用导致 SIGSEGV。现改为在解引用前将 `agentSession` 快照到局部变量并判空，清理后安全跳过该排队轮次。压测（200 并发会话持续收发）暴露并验证修复。
+
 ## v1.1.28 (2026-09-01)
 
 ### Changed

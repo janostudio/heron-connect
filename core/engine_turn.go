@@ -1506,7 +1506,17 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				// Drain stale events before starting the next turn. Between
 				// EventResult and Send(), the only buffered events would be
 				// stale leftovers (e.g. a deferred EventError from cmd.Wait()).
-				drainEvents(state.agentSession.Events())
+				//
+				// Snapshot agentSession into a local so a concurrent
+				// cleanupInteractiveState (idle reaper / /new / recall) that
+				// nils state.agentSession between the queued-batch take and
+				// here cannot cause a nil dereference below.
+				agentSession := state.agentSession
+				if agentSession == nil {
+					slog.Debug("queued turn skipped: agent session cleaned up", "session", sessionKey)
+					return
+				}
+				drainEvents(agentSession.Events())
 
 				if pendingSend != nil {
 					if err := <-pendingSend; err != nil {
@@ -1516,7 +1526,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 
 				nextSend := make(chan error, 1)
 				go func() {
-					nextSend <- state.agentSession.Send(queuedPrompt, merged.images, merged.files)
+					nextSend <- agentSession.Send(queuedPrompt, merged.images, merged.files)
 				}()
 				pendingSend = nextSend
 
