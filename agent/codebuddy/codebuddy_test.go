@@ -392,6 +392,55 @@ func TestHandleResult_Error(t *testing.T) {
 	}
 }
 
+// TestHandleResult_EmptyContent verifies an empty result (model/API returned
+// nothing) does NOT emit an EventResult — it returns false so readLoop falls
+// through to exitFallbackEvent and surfaces the reason as an EventError. This
+// is the regression guard for the "(空响应)" symptom.
+func TestHandleResult_EmptyContent(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	ev := &streamEvent{
+		Type:      "result",
+		Subtype:   "success",
+		SessionID: "test-sid-empty",
+		Result:    "",
+		IsError:   false,
+	}
+	if got := cs.handleResult(ev, ""); got {
+		t.Fatal("handleResult() = true for empty result, want false (so readLoop falls through to exitFallback)")
+	}
+
+	// No EventResult must be emitted.
+	select {
+	case evt := <-cs.events:
+		t.Fatalf("unexpected event emitted for empty result: type=%s", evt.Type)
+	default:
+		// expected: nothing emitted
+	}
+}
+
+// TestHandleResult_EmptyResultButPendingText verifies pendingText still counts
+// as output — an empty result with buffered assistant text is a valid turn.
+func TestHandleResult_EmptyResultButPendingText(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	ev := &streamEvent{Type: "result", Subtype: "success", Result: ""}
+	if got := cs.handleResult(ev, "buffered assistant text"); !got {
+		t.Fatal("handleResult() = false with pendingText, want true")
+	}
+
+	select {
+	case got := <-cs.events:
+		if got.Type != core.EventResult || got.Content != "buffered assistant text" {
+			t.Errorf("got type=%s content=%q, want EventResult/buffered assistant text", got.Type, got.Content)
+		}
+	default:
+		t.Error("expected a result event but channel was empty")
+	}
+}
+
 // ── exitFallbackEvent tests ─────────────────────────────────
 
 // The silent clean-exit case (exit 0, zero stdout) previously produced an

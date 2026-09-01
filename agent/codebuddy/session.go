@@ -187,8 +187,9 @@ func (cs *codebuddySession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderr
 			cs.handleUser(&raw)
 
 		case "result":
-			gotResult = true
-			cs.handleResult(&raw, pendingText)
+			if cs.handleResult(&raw, pendingText) {
+				gotResult = true
+			}
 			pendingText = ""
 
 		case "file-history-snapshot":
@@ -416,10 +417,18 @@ func (cs *codebuddySession) handleUser(ev *streamEvent) {
 }
 
 // handleResult processes the final result event.
-func (cs *codebuddySession) handleResult(ev *streamEvent, pendingText string) {
+// handleResult emits the terminal EventResult. It returns whether the result
+// carried non-empty content — a result event with empty text (model/API
+// returned nothing) must NOT be treated as a successful turn, so the caller
+// falls through to exitFallbackEvent which surfaces stderr as an EventError.
+func (cs *codebuddySession) handleResult(ev *streamEvent, pendingText string) bool {
 	finalText := ev.Result
 	if finalText == "" && pendingText != "" {
 		finalText = pendingText
+	}
+	if strings.TrimSpace(finalText) == "" {
+		slog.Warn("codebuddySession: result event with empty content", "session_id", cs.CurrentSessionID())
+		return false
 	}
 
 	evt := core.Event{
@@ -432,6 +441,7 @@ func (cs *codebuddySession) handleResult(ev *streamEvent, pendingText string) {
 	case cs.events <- evt:
 	case <-cs.ctx.Done():
 	}
+	return true
 }
 
 func (cs *codebuddySession) RespondPermission(_ string, _ core.PermissionResult) error {

@@ -36,6 +36,9 @@ type opencodeSession struct {
 	wg       sync.WaitGroup
 	alive    atomic.Bool
 	expectingContinue atomic.Bool // true when compaction_continue received, waiting for next step
+	// sawOutput tracks whether this turn produced any visible text, so an
+	// empty result (model/API returned nothing) surfaces as an error.
+	sawOutput atomic.Bool
 
 	// osCmd holds the running *exec.Cmd so Close() can force-kill the
 	// entire process group (including grandchildren) when graceful
@@ -245,6 +248,15 @@ func (s *opencodeSession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderrBu
 	// Emit EventResult after all steps are done and the process has finished writing.
 	sid := s.CurrentSessionID()
 	slog.Debug("opencodeSession: readLoop complete, sending fallback EventResult", "session_id", sid)
+	if !s.sawOutput.Load() {
+		slog.Warn("opencodeSession: turn completed with no output", "session_id", sid)
+		evt := core.Event{Type: core.EventError, Error: fmt.Errorf("model returned an empty result"), SessionID: sid, Done: true}
+		select {
+		case s.events <- evt:
+		case <-s.ctx.Done():
+		}
+		return
+	}
 	evt := core.Event{Type: core.EventResult, SessionID: sid, Done: true}
 	select {
 	case s.events <- evt:
@@ -302,6 +314,7 @@ func (s *opencodeSession) handleText(raw map[string]any) {
 	}
 
 	if text != "" {
+		s.sawOutput.Store(true)
 		evt := core.Event{Type: core.EventText, Content: text, Metadata: metadata, Synthetic: synthetic}
 		select {
 		case s.events <- evt:

@@ -141,9 +141,6 @@ func (qs *qoderSession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderrBuf 
 			continue
 		}
 
-		if raw.Type == "result" {
-			gotResult = true
-		}
 		if raw.SessionID != "" {
 			if !sawSessionID {
 				sawSessionID = true
@@ -152,7 +149,9 @@ func (qs *qoderSession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderrBuf 
 				slog.Debug("qoderSession: ignoring non-primary session id (subagent)", "session_id", raw.SessionID)
 			}
 		}
-		qs.handleEvent(&raw)
+		if qs.handleEvent(&raw) {
+			gotResult = true
+		}
 	}
 
 	scanErr := scanner.Err()
@@ -261,7 +260,7 @@ type contentItem struct {
 
 // ── event handling ───────────────────────────────────────────
 
-func (qs *qoderSession) handleEvent(ev *streamEvent) {
+func (qs *qoderSession) handleEvent(ev *streamEvent) bool {
 	switch ev.Type {
 	case "system":
 		slog.Debug("qoderSession: init", "session_id", ev.SessionID)
@@ -270,8 +269,9 @@ func (qs *qoderSession) handleEvent(ev *streamEvent) {
 		qs.handleAssistant(ev)
 
 	case "result":
-		qs.handleResult(ev)
+		return qs.handleResult(ev)
 	}
+	return false
 }
 
 func (qs *qoderSession) handleAssistant(ev *streamEvent) {
@@ -317,7 +317,7 @@ func (qs *qoderSession) handleAssistant(ev *streamEvent) {
 	}
 }
 
-func (qs *qoderSession) handleResult(ev *streamEvent) {
+func (qs *qoderSession) handleResult(ev *streamEvent) bool {
 	var finalText string
 
 	// qodercli <0.2: result text is in message.content[].text
@@ -337,12 +337,21 @@ func (qs *qoderSession) handleResult(ev *streamEvent) {
 		finalText = ev.Result
 	}
 
+	// Empty result (model/API returned nothing) must not surface as a
+	// successful empty reply. Return false so readLoop does NOT set gotResult
+	// and instead emits its exitFallbackEvent (which surfaces stderr as an
+	// explicit EventError).
+	if strings.TrimSpace(finalText) == "" {
+		slog.Warn("qoderSession: result event with empty content", "session_id", qs.CurrentSessionID())
+		return false
+	}
+
 	evt := core.Event{Type: core.EventResult, Content: finalText, SessionID: qs.CurrentSessionID(), Done: true}
 	select {
 	case qs.events <- evt:
 	case <-qs.ctx.Done():
-		return
 	}
+	return true
 }
 
 func (qs *qoderSession) RespondPermission(_ string, _ core.PermissionResult) error {

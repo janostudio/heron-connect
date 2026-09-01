@@ -36,6 +36,9 @@ type piSession struct {
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	alive     atomic.Bool
+	// sawOutput tracks whether this turn produced any visible text, so an
+	// empty result (model/API returned nothing) surfaces as an error.
+	sawOutput atomic.Bool
 	osCmd     *exec.Cmd // for force-kill on Close timeout
 
 	thinkingBuf strings.Builder // accumulates thinking_delta chunks
@@ -187,6 +190,15 @@ func (s *piSession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderrBuf *byt
 
 	// Emit EventResult when the process finishes.
 	sid := s.CurrentSessionID()
+	if !s.sawOutput.Load() {
+		slog.Warn("piSession: turn completed with no output", "session_id", sid)
+		evt := core.Event{Type: core.EventError, Error: fmt.Errorf("model returned an empty result"), SessionID: sid, Done: true}
+		select {
+		case s.events <- evt:
+		case <-s.ctx.Done():
+		}
+		return
+	}
 	evt := core.Event{Type: core.EventResult, SessionID: sid, Done: true}
 	select {
 	case s.events <- evt:
@@ -240,6 +252,7 @@ func (s *piSession) handleMessageUpdate(raw map[string]any) {
 	case "text_delta":
 		delta, _ := ame["delta"].(string)
 		if delta != "" {
+			s.sawOutput.Store(true)
 			evt := core.Event{Type: core.EventText, Content: delta}
 			select {
 			case s.events <- evt:

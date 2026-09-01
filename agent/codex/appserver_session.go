@@ -1306,7 +1306,15 @@ func (s *appServerSession) completeTurn() {
 		return
 	}
 	s.currentTurn = ""
+	// A completed turn with no accumulated text (model/API returned nothing)
+	// must not surface as a successful empty reply.
+	noOutput := len(s.pendingMsgs) == 0
 	s.stateMu.Unlock()
+	if noOutput {
+		slog.Warn("appServerSession: turn completed with no output", "session_id", s.CurrentSessionID())
+		s.emit(core.Event{Type: core.EventError, Error: fmt.Errorf("model returned an empty result"), SessionID: s.CurrentSessionID(), Done: true})
+		return
+	}
 	s.flushPendingAsText()
 	s.emit(core.Event{Type: core.EventResult, SessionID: s.CurrentSessionID(), Done: true})
 }

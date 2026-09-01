@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.1.30 (2026-09-01)
+
+### Fixed
+
+- **修复空响应被静默吞掉（模型接口返回空时用户只看到"(空响应)"）**：所有 agent 适配器在模型返回空结果时，不再发出空 `EventResult`，改为发出明确的 `EventError`（携带 stderr 或诊断信息），用户看到的是具体错误而非占位符。覆盖 codebuddy/claudecode/cursor/qoder/codex（stdio+app-server）/gemini/kimi/opencode/pi/iflow/heron；acp/devin 保留已有的 `extractACPReturnError`（已覆盖模型错误主场景）。
+- **engine 空响应加诊断日志**：`(空响应)` 占位符处新增 `slog.Warn`（含 session/agent/耗时/工具数上下文），空响应可追溯。
+- **pendingSend 错误 Debug→Warn**：三处"已完成 turn 的异步 Send 尾音错误"从 Debug 级升级为 Warn 级，错误可查而不误导用户。
+
+### 文档
+
+- 新增 `docs/research/07-empty-response-analysis.md`（空响应根因分析）与 `docs/research/08-silent-error-audit.md`（静默吞错模式系统排查报告）。
+
 ## v1.1.29 (2026-09-01)
 
 ### Fixed

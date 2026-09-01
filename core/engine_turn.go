@@ -1191,6 +1191,20 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				fullResponse = strings.Join(textParts, "")
 			}
 			if fullResponse == "" {
+				// An empty result reached the engine with no accumulated text:
+				// log a diagnostic so the "(空响应)" placeholder is traceable.
+				// Adapters now convert empty model output into EventError, so
+				// reaching here means the agent emitted a bare EventResult with
+				// no content and no error — the actual reason lives in the
+				// agent's own logs/stderr.
+				slog.Warn("turn produced empty response",
+					"session", session.ID,
+					"agent_session", session.GetAgentSessionID(),
+					"agent", replyAgent.Name(),
+					"msg_id", msgID,
+					"tools", toolCount,
+					"turn_duration", time.Since(turnStart),
+				)
 				fullResponse = e.i18n.T(MsgEmptyResponse)
 			}
 
@@ -1453,7 +1467,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				if ok && compressor.CompressCommand() != "" {
 					if pendingSend != nil {
 						if err := <-pendingSend; err != nil {
-							slog.Debug("async send error before compress", "error", err)
+							slog.Warn("async send error before compress", "error", err, "session", sessionKey)
 						}
 					}
 					state.mu.Lock()
@@ -1520,7 +1534,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 
 				if pendingSend != nil {
 					if err := <-pendingSend; err != nil {
-						slog.Debug("async send error before queued turn", "error", err)
+						slog.Warn("async send error before queued turn", "error", err, "session", sessionKey)
 					}
 				}
 
@@ -1608,7 +1622,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 
 			if pendingSend != nil {
 				if err := <-pendingSend; err != nil {
-					slog.Debug("async send error after EventResult", "error", err)
+					slog.Warn("async send error after EventResult", "error", err, "session", sessionKey)
 				}
 			}
 

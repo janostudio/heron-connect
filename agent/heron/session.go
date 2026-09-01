@@ -268,6 +268,17 @@ func (s *heronSession) handleResponse(response heronJSONRPCResponse) error {
 			SessionID: result.SessionID,
 		})
 	}
+	// Empty reply with no error (model/API returned nothing) must not surface
+	// as a successful empty result.
+	if strings.TrimSpace(result.Reply) == "" {
+		slog.Warn("heronSession: turn returned empty reply", "session_id", result.SessionID)
+		return s.emit(core.Event{
+			Type:      core.EventError,
+			Error:     errors.New("model returned an empty result"),
+			SessionID: result.SessionID,
+			Done:      true,
+		})
+	}
 	return s.emit(core.Event{
 		Type:         core.EventResult,
 		Content:      result.Reply,

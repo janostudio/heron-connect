@@ -708,6 +708,7 @@ func TestClose_ForceKillsAllTrackedProcessesAfterCmdOverwrite(t *testing.T) {
 		"printf '%s\\n' \"$prompt\" >> \"$CODEX_STARTS_FILE\"\n" +
 		"if [ \"$prompt\" = \"first\" ]; then\n" +
 		"  printf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-overlap\"}'\n" +
+		"  printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}}'\n" +
 		"  printf '%s\\n' '{\"type\":\"turn.completed\"}'\n" +
 		"fi\n" +
 		"sleep 30\n"

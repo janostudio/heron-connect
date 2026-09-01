@@ -445,6 +445,24 @@ func (cs *claudeSession) handleResult(raw map[string]any) {
 		}
 	}
 
+	// An empty result (model/API returned nothing) must not surface as a
+	// successful empty reply. Emit an explicit error instead so the user sees
+	// a diagnostic rather than "(空响应)".
+	if strings.TrimSpace(content) == "" {
+		slog.Warn("claudeSession: result event with empty content", "session_id", cs.CurrentSessionID())
+		evt := core.Event{
+			Type:      core.EventError,
+			Error:     fmt.Errorf("model returned an empty result"),
+			SessionID: cs.CurrentSessionID(),
+			Done:      true,
+		}
+		select {
+		case cs.events <- evt:
+		case <-cs.ctx.Done():
+		}
+		return
+	}
+
 	evt := core.Event{
 		Type:         core.EventResult,
 		Content:      content,

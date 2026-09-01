@@ -345,6 +345,19 @@ func (cs *codexSession) handleEvent(raw map[string]any) {
 
 	case "turn.completed":
 		cs.refreshContextUsageFromRollout()
+		// A completed turn with no accumulated text (model/API returned
+		// nothing) must not surface as a successful empty reply. Emit an
+		// explicit error instead.
+		if len(cs.pendingMsgs) == 0 {
+			slog.Warn("codexSession: turn completed with no output", "session_id", cs.CurrentSessionID())
+			evt := core.Event{Type: core.EventError, Error: fmt.Errorf("model returned an empty result"), SessionID: cs.CurrentSessionID(), Done: true}
+			select {
+			case cs.events <- evt:
+			case <-cs.ctx.Done():
+				return
+			}
+			break
+		}
 		cs.flushPendingAsText()
 		evt := core.Event{Type: core.EventResult, SessionID: cs.CurrentSessionID(), Done: true}
 		select {

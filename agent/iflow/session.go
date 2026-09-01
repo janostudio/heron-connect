@@ -271,6 +271,15 @@ func (s *iflowSession) readLoop(turn *iflowTurn, cmd *exec.Cmd, ptmx *os.File) {
 		return
 	}
 
+	// Fallback: turn produced no text, no error, no API failure — the
+	// model/API returned nothing. Surface an explicit error rather than an
+	// empty EventResult.
+	if strings.TrimSpace(turn.finalContent()) == "" {
+		slog.Warn("iflowSession: turn completed with no output", "session_id", s.CurrentSessionID())
+		s.emitEvent(core.Event{Type: core.EventError, Error: fmt.Errorf("model returned an empty result"), SessionID: s.CurrentSessionID(), Done: true})
+		return
+	}
+
 	s.emitEvent(core.Event{
 		Type:      core.EventResult,
 		Content:   turn.finalContent(),

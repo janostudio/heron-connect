@@ -283,7 +283,19 @@ func (ks *kimiSession) readLoop(ctx context.Context, cmd *exec.Cmd, stdout io.Re
 	}
 
 	// Flush any remaining pending messages as text and send result event.
+	// A turn with no accumulated text (model/API returned nothing) must not
+	// surface as a successful empty reply.
+	noOutput := len(ks.pendingMsgs) == 0
 	ks.flushPendingAsText()
+	if noOutput {
+		slog.Warn("kimiSession: turn completed with no output", "session_id", ks.CurrentSessionID())
+		evt := core.Event{Type: core.EventError, Error: fmt.Errorf("model returned an empty result"), SessionID: ks.CurrentSessionID(), Done: true}
+		select {
+		case ks.events <- evt:
+		case <-ks.ctx.Done():
+		}
+		return
+	}
 	evt := core.Event{Type: core.EventResult, SessionID: ks.CurrentSessionID(), Done: true}
 	select {
 	case ks.events <- evt:

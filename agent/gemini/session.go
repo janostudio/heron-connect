@@ -43,6 +43,11 @@ type geminiSession struct {
 	osCmd *exec.Cmd
 
 	pendingMsgs []string // buffered assistant messages awaiting classification
+
+	// sawOutput tracks whether this turn produced any visible text (via either
+	// the delta streaming path or the buffered non-delta path), so an empty
+	// result (model/API returned nothing) surfaces as an error.
+	sawOutput atomic.Bool
 }
 
 func newGeminiSession(ctx context.Context, cmd, workDir, model, mode, resumeID string, extraEnv []string, timeout time.Duration) (*geminiSession, error) {
@@ -328,6 +333,7 @@ func (gs *geminiSession) handleMessage(raw map[string]any) {
 	// (thinking vs final text) based on what event follows.
 	delta, _ := raw["delta"].(bool)
 	if delta {
+		gs.sawOutput.Store(true)
 		evt := core.Event{Type: core.EventText, Content: content}
 		select {
 		case gs.events <- evt:
@@ -336,6 +342,7 @@ func (gs *geminiSession) handleMessage(raw map[string]any) {
 		return
 	}
 
+	gs.sawOutput.Store(true)
 	gs.pendingMsgs = append(gs.pendingMsgs, content)
 }
 
@@ -400,6 +407,10 @@ func (gs *geminiSession) handleError(raw map[string]any) {
 }
 
 func (gs *geminiSession) handleResult(raw map[string]any) {
+	// Detect empty result BEFORE flushing: if the turn produced no text (via
+	// delta OR buffered path) and no error, the model/API returned nothing —
+	// surface an explicit error rather than a successful empty reply.
+	noOutput := !gs.sawOutput.Load()
 	gs.flushPendingAsText()
 
 	status, _ := raw["status"].(string)
@@ -420,6 +431,13 @@ func (gs *geminiSession) handleResult(raw map[string]any) {
 		case gs.events <- evt:
 		case <-gs.ctx.Done():
 			return
+		}
+	} else if noOutput {
+		slog.Warn("geminiSession: result with no output", "session_id", sid)
+		evt := core.Event{Type: core.EventError, Error: fmt.Errorf("model returned an empty result"), SessionID: sid, Done: true}
+		select {
+		case gs.events <- evt:
+		case <-gs.ctx.Done():
 		}
 	} else {
 		evt := core.Event{Type: core.EventResult, SessionID: sid, Done: true}
