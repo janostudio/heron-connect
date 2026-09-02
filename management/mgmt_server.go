@@ -1803,6 +1803,7 @@ func (m *ManagementServer) handleCron(w http.ResponseWriter, r *http.Request) {
 			TimeoutMins:     req.TimeoutMins,
 			RetryCount:      req.RetryCount,
 			NotifyOnFailure: req.NotifyOnFailure,
+			NoDelivery:      req.NoDelivery,
 			CreatedAt:       time.Now(),
 		}
 		if err := m.cronScheduler.AddJob(job); err != nil {

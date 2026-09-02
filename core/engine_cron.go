@@ -38,6 +38,14 @@ func (e *Engine) ExecuteCronJob(job *CronJob) error {
 		Extra:      map[string]any{"job_id": job.ID, "job_description": job.Description},
 	})
 
+	// No-delivery jobs run with no platform target at all: the agent executes
+	// and produces files/side-effects, but nothing is pushed anywhere. This is
+	// for prompt jobs that only generate data (reports, dashboards) with no
+	// chat notification. SessionKey is ignored entirely.
+	if job.NoDelivery {
+		return e.executeCronNoDelivery(job)
+	}
+
 	sessionKey := job.SessionKey
 	platformName := ""
 	if idx := strings.Index(sessionKey, ":"); idx > 0 {
@@ -646,4 +654,90 @@ func (e *Engine) notifyCronFailure(job *CronJob, runErr error) {
 	if err := targetPlatform.Send(e.ctx, replyCtx, msg); err != nil {
 		slog.Warn("cron: failure-notice send failed", "job", job.ID, "error", err)
 	}
+}
+
+// cronNoopPlatform is a minimal Platform for no-delivery cron jobs: it never
+// sends anything and never receives inbound messages. It exists so a
+// no_delivery cron job can still run the agent through the normal turn
+// pipeline without targeting any real platform.
+type cronNoopPlatform struct{}
+
+func (cronNoopPlatform) Name() string                          { return "cron-noop" }
+func (cronNoopPlatform) Start(MessageHandler) error       { return nil }
+func (cronNoopPlatform) Reply(context.Context, any, string) error { return nil }
+func (cronNoopPlatform) Send(context.Context, any, string) error  { return nil }
+func (cronNoopPlatform) Stop() error                           { return nil }
+
+// executeCronNoDelivery runs a no_delivery cron job: the agent executes the
+// prompt and produces its side-effects (files, dashboards), but no message is
+// pushed to any platform. SessionKey is ignored; a synthetic internal key is
+// used so each run gets a fresh, isolated session regardless of session_mode.
+func (e *Engine) executeCronNoDelivery(job *CronJob) error {
+	if job.IsShellJob() {
+		// Shell jobs with no delivery just run the command and discard output.
+		return e.executeCronShell(&mutePlatform{cronNoopPlatform{}}, nil, job)
+	}
+
+	prompt := e.resolveDashboardTemplateVars(job.Prompt)
+
+	// Synthetic internal session key: isolated per job, never collides with a
+	// real platform key, and lets new_per_run / reuse semantics still work.
+	sessionKey := fmt.Sprintf("cron-noop:%s:%s", e.name, job.ID)
+	platform := &mutePlatform{cronNoopPlatform{}}
+	msg := &Message{
+		SessionKey:   sessionKey,
+		Platform:     "cron-noop",
+		UserID:       "cron",
+		UserName:     "cron",
+		Content:      prompt,
+		ReplyCtx:     nil,
+		ModeOverride: job.Mode,
+	}
+
+	agent := e.agent
+	sessions := e.sessions
+	workspaceDir := ""
+	if job.WorkDir != "" {
+		wsAgent, wsSessions, err := e.getOrCreateWorkspaceAgent(job.WorkDir)
+		if err == nil {
+			agent = wsAgent
+			sessions = wsSessions
+			workspaceDir = job.WorkDir
+		} else {
+			slog.Warn("cron: workspace agent creation failed, using global",
+				"work_dir", job.WorkDir, "job", job.ID, "error", err)
+		}
+	}
+
+	useNewSession := false
+	if e.cronScheduler != nil {
+		useNewSession = e.cronScheduler.UsesNewSession(job)
+	} else {
+		useNewSession = job.UsesNewSessionPerRun()
+	}
+
+	if useNewSession {
+		session := sessions.NewSideSession(sessionKey, "cron-"+job.ID)
+		if !session.TryLock() {
+			return fmt.Errorf("session %q is busy", sessionKey)
+		}
+		iKey := fmt.Sprintf("%s#cron:%s", sessionKey, session.ID)
+		if workspaceDir != "" {
+			iKey = workspaceDir + ":" + iKey
+		}
+		e.processInteractiveMessageWith(platform, msg, session, agent, sessions, iKey, workspaceDir, sessionKey)
+		e.cleanupInteractiveState(iKey)
+		return nil
+	}
+
+	session := sessions.GetOrCreateActive(sessionKey)
+	if !session.TryLock() {
+		return fmt.Errorf("session %q is busy", sessionKey)
+	}
+	iKey := sessionKey
+	if workspaceDir != "" {
+		iKey = workspaceDir + ":" + sessionKey
+	}
+	e.processInteractiveMessageWith(platform, msg, session, agent, sessions, iKey, workspaceDir, sessionKey)
+	return nil
 }

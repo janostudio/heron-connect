@@ -40,6 +40,11 @@ type CronJob struct {
 	// NotifyOnFailure, when true, pushes a failure notice to the job's target
 	// session when all retries are exhausted. Default false.
 	NotifyOnFailure *bool `json:"notify_on_failure,omitempty"`
+	// NoDelivery runs the job with no delivery target at all: the agent runs
+	// and produces files/side-effects, but no message is pushed to any
+	// platform. SessionKey is ignored (may be empty). For prompt jobs that
+	// only generate data (reports, dashboards) with no chat notification.
+	NoDelivery  bool      `json:"no_delivery,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	LastRun     time.Time `json:"last_run,omitempty"`
 	LastError   string    `json:"last_error,omitempty"`
@@ -171,6 +176,7 @@ type CronAddRequest struct {
 	TimeoutMins     *int   `json:"timeout_mins,omitempty"`
 	RetryCount      *int   `json:"retry_count,omitempty"`
 	NotifyOnFailure *bool  `json:"notify_on_failure,omitempty"`
+	NoDelivery      bool   `json:"no_delivery,omitempty"`
 }
 
 // CronStore persists cron jobs to a JSON file.

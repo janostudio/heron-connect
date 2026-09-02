@@ -1,6 +1,6 @@
 ---
 name: heron-connect-config
-description: 解释并生成 heron-connect 的 TOML 配置。当用户需要配置/修改 heron-connect（config.toml / config.example.toml），或询问任何配置项怎么写时使用——project、agent、platform、provider、display、management、bridge、webhook、cron、heartbeat、commands/aliases、banned_words、speech/tts、auto_compress、multi-workspace、多 project 等。
+description: 解释并生成 heron-connect 的 TOML 配置。当用户需要配置/修改 heron-connect（config.toml / config.example.toml），或询问任何配置项怎么写时使用——project、agent、platform、provider、display、management、bridge、webhook、cron、heartbeat、commands/aliases、banned_words、speech/tts、auto_compress、multi-workspace、多 project、dashboard/项目大盘（业务数据产出 insights.json、HTML 看板、reports 归档、no_delivery 无投递 cron、{{dashboard.*}} 模板变量）等。
 metadata:
   project: heron-connect
   category: config
@@ -29,6 +29,7 @@ heron-connect 把本地 AI 编码 Agent（Claude Code / CodeBuddy / Codex / Gemi
 | 5 | 消息展示 `[display]`、thinking/tool、覆盖优先级、限流/流式预览 | `references/display.md` |
 | 6 | Web 后台、Bridge、Webhook、`[[commands]]`/`[[aliases]]`/`banned_words`、`[speech]`/`[tts]`、cron、heartbeat、多用户 ACL、admin_from、auto_compress/observe/multi-workspace/relay | `references/advanced.md` |
 | 7 | 排查报错、常见坑、排错命令 | `references/gotchas.md` |
+| 8 | 项目大盘 `[dashboard]`、业务数据产出（insights.json/HTML 看板/reports 归档）、`no_delivery` 无投递 cron、`{{dashboard.*}}` 模板变量、`/dashboard` 命令 | `references/dashboard.md` |
 
 **脚本**：
 - 后台启/停/重启某份 toml：`scripts/service.sh --config <path> <start|stop|restart|status|logs>`

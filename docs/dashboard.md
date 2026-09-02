@@ -80,9 +80,14 @@ CronJob 的 prompt 中可注入统计数据（执行时替换，未识别变量�
 
 ### 1. 结构化业务数据（dashboards/insights.json）
 
-业务 cron 把会话级分析结论写成固定 schema 的 JSON，大盘"业务结构化区"原生渲染（与引擎会话列表合并、支持标签过滤、命中会话可点击跳聊天）。完整契约见 `skills/heron-connect-dashboard/SKILL.md`。要点：
+业务 cron 把会话级分析结论写成固定 schema 的 JSON，大盘"业务结构化区"原生渲染（与引擎会话列表合并、支持标签过滤、命中会话可点击跳聊天）。
+
+> **⚠️ 字段级契约以 `docs/dashboard-contract.md` 为唯一权威规范**——字段类型、必填性、跳转键语义、subagent 过滤要求、no_delivery 用法都在那里，业务侧实现前必须先读它。下面只列要点，不重复完整契约。
+
+要点：
 
 - 会话行带**两个跳转键**（`agent_session_id` CLI 会话 ID / `session_id` 引擎会话 ID）至少一个，命中即可点击直达聊天记录；
+- `metrics` 是 **`InsightMetric[]` 数组**（`{label, value, unit}`），**不是对象**；`title` **必填**，不允许 null；
 - `tags` 语义中立（`已修复/已整理` 等业务状态随便写，引擎只画徽章）；纯字符串中性色，`{text, tone}` 彩色（good/info/warn/error）；
 - 文件存在即生效，无需注册、无需重启。
 

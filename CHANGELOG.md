@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.1.31 (2026-09-02)
+
+### Added
+
+- **cron 无投递模式（`no_delivery`）**：`CronJob` 新增 `no_delivery` 字段，为 `true` 时 agent 正常执行并产出文件/副作用，但不向任何平台推送消息，`session_key` 留空即可（会被忽略）。用于「只产数据不推送」的定时任务（如每日复盘只写报告、不打扰群）。此前这类需求只能靠 `NEVER:SEND:TO:USER` 假 session_key 硬凑，引擎第一步按前缀找 platform 就报 `platform not found`，任务根本没执行。
+- **项目大盘业务数据契约权威规范**：新增 `docs/dashboard-contract.md`，字段级、不可歧义地定义 `InsightPayload`/`InsightSession` 契约（字段类型、必填性、跳转键语义、subagent 假会话过滤要求、no_delivery 用法），供业务侧（如 auto_bugfix）照此实现。
+
+### Changed
+
+- **Skill 合并**：`heron-connect-dashboard` 合并进 `heron-connect-config`（新增 `references/dashboard.md`），避免两个分散 skill；`docs/dashboard.md` 与 skill 均指向 `dashboard-contract.md` 权威契约。
+
 ## v1.1.30 (2026-09-01)
 
 ### Fixed
