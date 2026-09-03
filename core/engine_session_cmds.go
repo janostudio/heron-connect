@@ -471,13 +471,25 @@ func (e *Engine) buildReplyFooter(agent Agent, session AgentSession, workspaceDi
 		parts = append(parts, usage)
 		hasStatus = true
 	}
-	if dir := replyFooterWorkDir(session, agent, workspaceDir); dir != "" {
-		parts = append(parts, dir)
+	if label := replyFooterLocation(e.name, session, agent, workspaceDir); label != "" {
+		parts = append(parts, label)
 	}
 	if !hasStatus {
 		return ""
 	}
 	return strings.Join(parts, " · ")
+}
+
+// replyFooterLocation returns the trailing location label for the reply
+// footer: the project's display name (toml [[projects]].name) when set,
+// otherwise the agent's work_dir path (compact form). The project name is the
+// short, human-facing identity (e.g. "simple-qa") and is preferred over the
+// full workspace path when both are available.
+func replyFooterLocation(projectName string, session AgentSession, agent Agent, workspaceDir string) string {
+	if name := strings.TrimSpace(projectName); name != "" {
+		return name
+	}
+	return replyFooterWorkDir(session, agent, workspaceDir)
 }
 
 func replyFooterModel(session AgentSession, agent Agent) string {

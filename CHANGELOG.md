@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.35 (2026-09-03)
+
+### Changed
+
+- **回复底部状态行用项目名替代 work_dir 路径**：footer 末尾原本固定显示 agent 的 work_dir 路径（如 `~/Documents/.../simple-qa`），现在优先显示 toml `[[projects]].name`（如 `simple-qa`）作为展示名，更短更易读；项目未设置 name 时才回退到原来的路径。逻辑在 engine 层通用，对所有 agent type（codebuddy/claudecode/codex 等）生效。
+
 ## v1.1.34 (2026-09-03)
 
 ### Fixed
