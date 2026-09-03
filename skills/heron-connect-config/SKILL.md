@@ -4,7 +4,7 @@ description: 解释并生成 heron-connect 的 TOML 配置。当用户需要配�
 metadata:
   project: heron-connect
   category: config
-  version: 1.1.8
+  version: 1.1.34
 ---
 
 # Heron Connect 配置 Skill
@@ -13,7 +13,7 @@ heron-connect 把本地 AI 编码 Agent（Claude Code / CodeBuddy / Codex / Gemi
 连接到聊天平台（飞书 / Telegram / Discord / Slack / 钉钉 / 企微 / QQ / LINE 等），
 **所有配置由一个 TOML 文件描述**。
 
-本 Skill 对应 heron-connect **v1.1.8**（版本号与 heron-connect 同步，见本文件 frontmatter 的 `metadata.version`，由 `scripts/sync-version.sh` 维护）。
+本 Skill 对应 heron-connect **v1.1.34**（版本号与 heron-connect 同步，见本文件 frontmatter 的 `metadata.version`，由 `scripts/sync-version.sh` 维护）。
 
 ## 能力索引（给模型的导航）
 
@@ -27,7 +27,7 @@ heron-connect 把本地 AI 编码 Agent（Claude Code / CodeBuddy / Codex / Gemi
 | 3 | 接入 IM 平台（飞书/Telegram/Discord/Slack/钉钉/企微/QQ/LINE…）、**虚拟 `web` 平台** | `references/platforms.md` |
 | 4 | API Provider、模型切换（全局 `[[providers]]` / 项目内 / `/provider`） | `references/providers.md` |
 | 5 | 消息展示 `[display]`、thinking/tool、覆盖优先级、限流/流式预览 | `references/display.md` |
-| 6 | Web 后台、Bridge、Webhook、`[[commands]]`/`[[aliases]]`/`banned_words`、`[speech]`/`[tts]`、cron、heartbeat、多用户 ACL、admin_from、auto_compress/observe/multi-workspace/relay | `references/advanced.md` |
+| 6 | Web 后台、Bridge、Webhook、**日志 `[log]`（按天归档+按大小轮转）**、`[[commands]]`/`[[aliases]]`/`banned_words`、`[speech]`/`[tts]`、cron、heartbeat、多用户 ACL、admin_from、auto_compress/observe/multi-workspace/relay | `references/advanced.md` |
 | 7 | 排查报错、常见坑、排错命令 | `references/gotchas.md` |
 | 8 | 项目大盘 `[dashboard]`、业务数据产出（insights.json/HTML 看板/reports 归档）、`no_delivery` 无投递 cron、`{{dashboard.*}}` 模板变量、`/dashboard` 命令 | `references/dashboard.md` |
 

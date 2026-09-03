@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -527,6 +528,54 @@ func TestCronStore_MarkRun(t *testing.T) {
 	}
 	if updated.LastRun.Before(before) || updated.LastRun.After(after) {
 		t.Error("LastRun should be between before and after MarkRun call")
+	}
+}
+
+func TestCronStore_StateSeparatedFromDefinition(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewCronStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job := &CronJob{
+		ID:         "sep-test",
+		Project:    "proj",
+		SessionKey: "test:ch1",
+		CronExpr:   "0 6 * * *",
+		Prompt:     "hello",
+		Enabled:    true,
+	}
+	if err := store.Add(job); err != nil {
+		t.Fatal(err)
+	}
+	store.MarkRun("sep-test", nil)
+
+	// jobs.json (definition) must NOT contain last_run / last_error.
+	defRaw, err := os.ReadFile(filepath.Join(dir, "crons", "jobs.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(defRaw), "last_run") || strings.Contains(string(defRaw), "last_error") {
+		t.Errorf("jobs.json should not contain runtime state:\n%s", defRaw)
+	}
+
+	// .state.json must contain last_run.
+	stateRaw, err := os.ReadFile(filepath.Join(dir, "crons", ".state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(stateRaw), "last_run") {
+		t.Errorf(".state.json should contain last_run:\n%s", stateRaw)
+	}
+
+	// A fresh store must reload runtime state from .state.json into memory.
+	reloaded, err := NewCronStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reloaded.Get("sep-test"); got == nil || got.LastRun.IsZero() {
+		t.Errorf("reloaded job should have LastRun restored from .state.json")
 	}
 }
 

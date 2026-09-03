@@ -46,8 +46,14 @@ type CronJob struct {
 	// only generate data (reports, dashboards) with no chat notification.
 	NoDelivery  bool      `json:"no_delivery,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
-	LastRun     time.Time `json:"last_run,omitempty"`
-	LastError   string    `json:"last_error,omitempty"`
+	// LastRun / LastError are runtime state, NOT part of the job definition.
+	// They are persisted separately in <dataDir>/crons/.state.json so that
+	// jobs.json (which is meant to be version-controlled as static config)
+	// does not churn on every run. The json tags remain so API responses
+	// (mgmt_server / local_api) can still surface them; the disk writer
+	// (saveDefinition) strips them explicitly.
+	LastRun   time.Time `json:"last_run,omitempty"`
+	LastError string    `json:"last_error,omitempty"`
 }
 
 // IsShellJob returns true if the job runs a shell command directly.
@@ -179,11 +185,20 @@ type CronAddRequest struct {
 	NoDelivery      bool   `json:"no_delivery,omitempty"`
 }
 
-// CronStore persists cron jobs to a JSON file.
+// cronRunState is the persisted runtime state for a single cron job. Kept in a
+// separate file from the job definitions so jobs.json stays static.
+type cronRunState struct {
+	LastRun   time.Time `json:"last_run,omitempty"`
+	LastError string    `json:"last_error,omitempty"`
+}
+
+// CronStore persists cron jobs to a JSON file, with runtime state (last_run /
+// last_error) stored separately so the job-definition file does not churn.
 type CronStore struct {
-	path string
-	mu   sync.Mutex
-	jobs []*CronJob
+	path      string
+	statePath string
+	mu        sync.Mutex
+	jobs      []*CronJob
 }
 
 func NewCronStore(dataDir string) (*CronStore, error) {
@@ -192,7 +207,8 @@ func NewCronStore(dataDir string) (*CronStore, error) {
 		return nil, err
 	}
 	path := filepath.Join(dir, "jobs.json")
-	s := &CronStore{path: path}
+	statePath := filepath.Join(dir, ".state.json")
+	s := &CronStore{path: path, statePath: statePath}
 	s.load()
 	return s, nil
 }
@@ -205,14 +221,69 @@ func (s *CronStore) load() {
 	if err := json.Unmarshal(data, &s.jobs); err != nil {
 		slog.Error("cron: failed to load jobs", "path", s.path, "error", err)
 	}
+	s.loadState()
 }
 
+// loadState reads runtime state from .state.json (if present) and merges it
+// into the in-memory jobs. Missing/corrupt state is tolerated.
+func (s *CronStore) loadState() {
+	data, err := os.ReadFile(s.statePath)
+	if err != nil {
+		return
+	}
+	var state map[string]cronRunState
+	if err := json.Unmarshal(data, &state); err != nil {
+		slog.Warn("cron: failed to load state", "path", s.statePath, "error", err)
+		return
+	}
+	for _, j := range s.jobs {
+		if st, ok := state[j.ID]; ok {
+			j.LastRun = st.LastRun
+			j.LastError = st.LastError
+		}
+	}
+}
+
+// save writes only the job definitions (static config) to jobs.json. Runtime
+// state (last_run / last_error) is intentionally stripped so the file does not
+// churn on every run.
 func (s *CronStore) save() error {
-	data, err := json.MarshalIndent(s.jobs, "", "  ")
+	defs := make([]map[string]any, 0, len(s.jobs))
+	for _, j := range s.jobs {
+		// Marshal the full job then strip runtime fields. This keeps the field
+		// set in sync with CronJob's json tags (including future additions)
+		// without a hand-maintained definition struct.
+		b, err := json.Marshal(j)
+		if err != nil {
+			return err
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			return err
+		}
+		delete(m, "last_run")
+		delete(m, "last_error")
+		defs = append(defs, m)
+	}
+	data, err := json.MarshalIndent(defs, "", "  ")
 	if err != nil {
 		return err
 	}
 	return AtomicWriteFile(s.path, data, 0o644)
+}
+
+// saveState writes only the runtime state (last_run / last_error) to the
+// separate state file.
+func (s *CronStore) saveState() error {
+	state := make(map[string]cronRunState, len(s.jobs))
+	for _, j := range s.jobs {
+		state[j.ID] = cronRunState{LastRun: j.LastRun, LastError: j.LastError}
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return AtomicWriteFile(s.statePath, data, 0o644)
 }
 
 func (s *CronStore) Add(job *CronJob) error {
@@ -293,8 +364,10 @@ func (s *CronStore) MarkRun(id string, err error) {
 			} else {
 				j.LastError = ""
 			}
-			if saveErr := s.save(); saveErr != nil {
-				slog.Warn("cron: failed to save after mark run", "error", saveErr)
+			// Persist to the separate state file only, so jobs.json (static
+			// config) is untouched by per-run status updates.
+			if saveErr := s.saveState(); saveErr != nil {
+				slog.Warn("cron: failed to save run state", "error", saveErr)
 			}
 			return
 		}

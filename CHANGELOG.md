@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.34 (2026-09-03)
+
+### Fixed
+
+- **cron 状态与定义分离（`jobs.json` 不再随运行频繁变更）**：`last_run`/`last_error` 从 `jobs.json` 拆出，单独持久化到 `crons/.state.json`（已加入 `.gitignore`）。此前每次 cron 执行都会把 `last_run` 写回 `jobs.json`，导致静态配置文件持续变更、多人协作频繁 commit 甚至冲突。现在 `jobs.json` 只保留任务定义（静态配置，可干净纳入版本控制），运行状态落到独立文件；API 返回的 `last_run`/`last_error` 不受影响（内存态仍保留，前端展示正常），旧 `jobs.json` 里的历史字段兼容读取。
+
+### Changed
+
+- **文档**：`heron-connect-config` skill 更新至 v1.1.34（日志 `[log]` 段按天归档+按大小轮转说明、daemon 用法重构、版本号同步）。
+
 ## v1.1.33 (2026-09-03)
 
 ### Added

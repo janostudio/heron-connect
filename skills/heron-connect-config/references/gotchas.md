@@ -31,28 +31,36 @@ heron-connect feishu setup --project <name>   # 平台快速配置（各平台�
 heron-connect provider add --project <name> --name <p> --api-key <k>  # 加 provider
 ```
 
-## 后台运行（推荐用 service.sh）
+## 后台运行（daemon 服务）
 
-推荐用本 skill 的脚本封装，只需指定一份 toml：
-
-```bash
-skills/heron-connect-config/scripts/service.sh --config /path/to/config.toml start
-skills/heron-connect-config/scripts/service.sh --config /path/to/config.toml stop
-skills/heron-connect-config/scripts/service.sh --config /path/to/config.toml restart
-skills/heron-connect-config/scripts/service.sh --config /path/to/config.toml status
-skills/heron-connect-config/scripts/service.sh --config /path/to/config.toml logs -f
-skills/heron-connect-config/scripts/service.sh --config /path/to/config.toml uninstall
-```
-
-改完 toml 重跑 `start` 即生效（内部 `--force` 重装）。底层等价命令：
+**推荐直接用 `daemon install`，无需 shell 脚本**。一条命令完成安装/更新/重启（幂等）：
 
 ```bash
-heron-connect daemon install --work-dir ~/.heron-connect --force   # 安装并启动
-heron-connect daemon start
-heron-connect daemon stop
-heron-connect daemon restart
-heron-connect daemon status
-heron-connect daemon logs -f
-heron-connect daemon uninstall
+# 安装并启动（已装过则覆盖重装 = 先停旧再启新）
+heron-connect daemon install --config /path/to/config.toml --force
+
+# 可选：覆盖日志参数（优先级 CLI > TOML > 默认）
+heron-connect daemon install --config /path/to/config.toml --force \
+  --log-file /path/to/app.log --log-max-size 20 --log-retention-days 30
 ```
+
+**cwd 说明**：daemon 模式下进程 cwd = config.toml 所在目录（`--config` 的父目录）。
+所以 toml 里的相对路径（`work_dir`、`cron_data_dir`、`[log].file`）都基于该目录解析，
+整个目录可整体迁移，无需写死绝对地址。
+
+日常管理：
+
+```bash
+heron-connect daemon status          # 状态 / PID / 日志路径
+heron-connect daemon logs -f         # 实时看日志（-f 跟随，-n N 看最近 N 行）
+heron-connect daemon stop            # 停止
+heron-connect daemon start           # 启动（需已 install）
+heron-connect daemon restart --force # 重启（先杀旧进程）
+heron-connect daemon uninstall       # 卸载（日志与会话数据保留）
+```
+
 支持 Linux systemd / macOS launchd / Windows Task Scheduler。
+
+> 另有 `scripts/service.sh` 脚本封装（`service.sh --config <path> <start|stop|...>`），
+> 本质就是把任意文件名的 toml 软链成 `config.toml` 再走 `daemon install`。
+> 若你的配置文件名就叫 `config.toml`，直接 `daemon install --config` 即可，无需脚本。

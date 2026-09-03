@@ -2,6 +2,23 @@
 
 > 版本：随 heron-connect（见 `../SKILL.md` frontmatter 的 `metadata.version`）。权威字段来源：仓库根 `config.example.toml`。
 
+## 日志（[log]）— 按天归档 + 按大小轮转
+
+```toml
+[log]
+level = "info"               # debug | info | warn | error
+# file = "logs/app.log"      # 日志文件路径；空 = 前台打 stdout
+# max_size_mb = 10           # 单文件大小阈值（MB），超限切分归档
+# retention_days = 7         # 归档保留天数（按天切分 + 自动清理）
+```
+
+- 日志文件路径 / 大小 / 保留天数均可在此配置，也可用 daemon CLI 参数覆盖
+  （优先级 **CLI > TOML > 默认**，默认 10MB / 7 天）。
+- 轮转策略是「按天 + 按大小」双轨：每天切分，且单文件超 `max_size_mb` 也切分。
+  归档命名 `app-YYYY-MM-DD[-seq].log`，主文件始终叫 `app.log`（或你指定的名字）。
+- 归档超过 `retention_days` 天自动删除，不会无限膨胀。
+- 前台运行（非 daemon）若配了 `file` 也写文件并同样轮转；未配则打 stdout。
+
 ## Web 管理后台 + Management API（[management]）
 
 ```toml

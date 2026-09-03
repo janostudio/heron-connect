@@ -3,3 +3,4 @@ dist/
 .npm-cache/
 node_modules/
 .heron-connect/
+crons/.state.json

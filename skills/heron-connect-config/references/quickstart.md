@@ -18,6 +18,9 @@
 ```toml
 [log]
 level = "info"                     # debug | info | warn | error
+# file = "logs/app.log"            # 日志文件路径；空 = 前台打 stdout（daemon 默认写文件）
+# max_size_mb = 10                 # 单文件大小阈值（MB），超限切分归档
+# retention_days = 7               # 归档保留天数（按天切分 + 自动清理）
 
 [[projects]]
 name = "my-project"                # 项目名，唯一标识
