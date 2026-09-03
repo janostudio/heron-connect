@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.36 (2026-09-03)
+
+### Fixed
+
+- **Web 刷新页面后工具结果退化成裸 HTML**：刷新 Web 管理后台时前端重连会生成新的 `clientID`，但引擎仍在跑、progress 消息的 `replyCtx` 仍绑定旧 `clientID`，导致 bridge 的 `UpdateMessage`/`SendPreviewStart` 精确寻址失败、返回 `ErrNotSupported`，`compactProgressWriter` 置 `failed`，后续所有工具结果不再走 ProgressCard 聚合，而是 `sendRaw` 裸发成 markdown，前端渲染成原始 HTML。现在当原 client 已断开时，bridge 回退到同 platform 的任意连接 client，进度消息继续送达刷新后的新页面，工具进度保持聚合展示。
+
 ## v1.1.35 (2026-09-03)
 
 ### Changed

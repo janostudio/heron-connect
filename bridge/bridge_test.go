@@ -489,6 +489,54 @@ func TestBridge_ReconstructReplyCtx_UsesAdapterProgressHints(t *testing.T) {
 	}
 }
 
+// TestBridge_UpdateMessage_FallsBackAfterClientReconnect reproduces the Web
+// admin UI refresh scenario: a turn starts on client-A (creating a replyCtx
+// bound to clientID-A), then the page refreshes and reconnects as client-B.
+// The stale clientID-A no longer resolves, but UpdateMessage must fall back to
+// the newly-connected client so in-place progress keeps flowing instead of
+// failing and degrading tool progress to standalone markdown messages.
+func TestBridge_UpdateMessage_FallsBackAfterClientReconnect(t *testing.T) {
+	bs, wsURL := startTestBridge(t, "")
+	bp := bs.NewPlatform("test-proj")
+
+	// Client-A registers first (the originating client that starts a turn).
+	connA := dialWS(t, wsURL, nil)
+	registerWithClientID(t, connA, "web", "client-a", []string{"text", "preview", "update_message"})
+
+	// Capture a replyCtx bound to client-a.
+	a := bs.getAdapterForClient("web", "client-a")
+	if a == nil {
+		t.Fatal("client-a adapter not found after register")
+	}
+	staleCtx := newBridgeReplyCtx(a, "web:sess-1", "", "handle-1")
+
+	// Client-A disconnects (page refresh drops the old socket).
+	connA.Close()
+
+	// Client-B connects with a new clientID.
+	connB := dialWS(t, wsURL, nil)
+	registerWithClientID(t, connB, "web", "client-b", []string{"text", "preview", "update_message"})
+
+	// The stale replyCtx still references client-a, which is now gone.
+	if got := bs.getAdapterForClient("web", "client-a"); got != nil {
+		t.Fatalf("client-a should be disconnected, got adapter %p", got)
+	}
+
+	// UpdateMessage with the stale ctx must fall back to client-b and deliver.
+	if err := bp.UpdateMessage(context.Background(), staleCtx, "__heron_connect_progress_card_v1__:{}"); err != nil {
+		t.Fatalf("UpdateMessage() with stale clientID = %v, want nil (fallback to connected client)", err)
+	}
+
+	// Client-B should have received the update_message.
+	msg := readMsg(t, connB)
+	if msg["type"] != "update_message" {
+		t.Fatalf("client-b received type = %v, want update_message", msg["type"])
+	}
+	if msg["preview_handle"] != "handle-1" {
+		t.Fatalf("preview_handle = %v, want handle-1", msg["preview_handle"])
+	}
+}
+
 func TestBridge_CardFallback(t *testing.T) {
 	bs, wsURL := startTestBridge(t, "")
 

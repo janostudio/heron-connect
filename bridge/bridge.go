@@ -625,6 +625,14 @@ func (bp *BridgePlatform) UpdateMessage(ctx context.Context, replyCtx any, conte
 		return fmt.Errorf("bridge: invalid reply context")
 	}
 	a := bp.server.getAdapterForClient(rc.Platform, rc.ClientID)
+	if a == nil {
+		// The originating client may have reconnected (e.g. the Web admin UI
+		// refreshed mid-turn, so its clientID changed). Fall back to any
+		// connected client of the same platform so the in-place progress
+		// message keeps flowing instead of failing and degrading tool
+		// progress to standalone markdown messages.
+		a = bp.server.getFirstAdapter(rc.Platform)
+	}
 	if a == nil || !a.capabilities["update_message"] {
 		return core.ErrNotSupported
 	}
@@ -642,6 +650,13 @@ func (bp *BridgePlatform) SendPreviewStart(ctx context.Context, replyCtx any, co
 		return nil, fmt.Errorf("bridge: invalid reply context")
 	}
 	a := bp.server.getAdapterForClient(rc.Platform, rc.ClientID)
+	if a == nil {
+		// Same reconnect fallback as UpdateMessage: the originating client may
+		// have reconnected with a new clientID (Web admin UI refresh). Route
+		// the preview to any connected client of the platform so the turn can
+		// still begin streaming instead of failing outright.
+		a = bp.server.getFirstAdapter(rc.Platform)
+	}
 	if a == nil || !a.capabilities["preview"] {
 		return nil, core.ErrNotSupported
 	}
