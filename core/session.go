@@ -87,12 +87,20 @@ func (s *Session) unlock(update bool) {
 }
 
 func (s *Session) AddHistory(role, content string) {
+	s.AddHistoryWithAttachments(role, content, nil)
+}
+
+// AddHistoryWithAttachments appends a history entry with optional attachment
+// metadata. AddHistory is kept as a thin wrapper so the ~50 existing pure-text
+// call sites remain unchanged.
+func (s *Session) AddHistoryWithAttachments(role, content string, atts []HistoryAttachment) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.History = append(s.History, HistoryEntry{
-		Role:      role,
-		Content:   content,
-		Timestamp: time.Now(),
+		Role:        role,
+		Content:     content,
+		Timestamp:   time.Now(),
+		Attachments: atts,
 	})
 }
 

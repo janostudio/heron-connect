@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.1.33 (2026-09-03)
+
+### Added
+
+- **聊天历史支持多媒体展示**：用户通过复制粘贴/上传发送的图片和文件，现在会持久化到会话历史（刷新/切换会话后仍可见）。文件显示文件名，图片显示缩略图。附件统一落盘到 `work_dir/.heron-connect/history-attachments/<sessionID>/`（按会话隔离，避开 pi agent 每轮清理 `attachments/` 的行为），历史只存元信息引用（相对路径），session.json 不膨胀。`HistoryEntry` 新增 `attachments` 可选字段（`omitempty` 向后兼容，旧历史照常加载）。
+- **日志按天归档 + 按大小轮转**：日志支持「按天切分 + 单文件超限切分」双轨轮转，归档命名 `app-YYYY-MM-DD[-seq].log`，按 `retention_days` 自动清理，不再无限膨胀。日志路径/大小/保留天数可在 `config.toml` 的 `[log]` 段配置（`file`/`max_size_mb`/`retention_days`），也可用 daemon CLI 参数覆盖（`--log-file`/`--log-max-size`/`--log-retention-days`），优先级 CLI > TOML > 默认（10MB / 7 天）。前台运行若配了 `[log].file` 也写文件并同样轮转。
+
+### Changed
+
+- **daemon 日志参数统一**：`daemon install` 的日志参数（file/size/retention）支持从 config.toml `[log]` 段读取默认值，CLI 显式传参时覆盖。`CC_LOG_RETENTION_DAYS` 环境变量贯穿 launchd/systemd/windows 三平台。
+
 ## v1.1.32 (2026-09-03)
 
 ### Added

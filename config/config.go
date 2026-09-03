@@ -555,7 +555,10 @@ type CommandConfig struct {
 }
 
 type LogConfig struct {
-	Level string `toml:"level"`
+	Level         string `toml:"level"`
+	File          string `toml:"file,omitempty"`           // log file path; empty = stdout (foreground)
+	MaxSizeMB     int    `toml:"max_size_mb,omitempty"`    // per-file size threshold in MB; 0 = default 10
+	RetentionDays int    `toml:"retention_days,omitempty"` // archived log retention in days; 0 = default 7
 }
 
 func Load(path string) (*Config, error) {

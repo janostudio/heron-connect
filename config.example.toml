@@ -38,6 +38,9 @@
 
 [log]
 level = "info" # debug, info, warn, error
+# file = "/path/to/app.log"        # 日志文件路径；空 = 前台打 stdout
+# max_size_mb = 10                 # 单文件大小阈值（MB），超限按天+大小切分归档
+# retention_days = 7               # 归档日志保留天数（按天切分 + 清理）
 
 # =============================================================================
 # Global Providers / 全局服务商

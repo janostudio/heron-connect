@@ -298,6 +298,27 @@ func TestSession_History(t *testing.T) {
 	}
 }
 
+func TestSession_AddHistoryWithAttachments(t *testing.T) {
+	s := &Session{}
+	atts := []HistoryAttachment{
+		{Kind: "image", Name: "a.png", MimeType: "image/png", Path: ".heron-connect/history-attachments/s1/a.png", Size: 4},
+	}
+	s.AddHistoryWithAttachments("user", "look", atts)
+	// Plain AddHistory still writes no attachments.
+	s.AddHistory("assistant", "ok")
+
+	all := s.GetHistory(0)
+	if len(all) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(all))
+	}
+	if len(all[0].Attachments) != 1 || all[0].Attachments[0].Name != "a.png" {
+		t.Errorf("expected attachment metadata on first entry, got %+v", all[0].Attachments)
+	}
+	if len(all[1].Attachments) != 0 {
+		t.Errorf("expected no attachments on plain entry, got %+v", all[1].Attachments)
+	}
+}
+
 func TestSession_ConcurrentHistory(t *testing.T) {
 	s := &Session{}
 	var wg sync.WaitGroup

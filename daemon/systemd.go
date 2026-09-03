@@ -174,6 +174,7 @@ func (m *systemdManager) buildUnit(cfg Config) string {
 	sb.WriteString("RestartSec=10\n")
 	fmt.Fprintf(&sb, "Environment=\"CC_LOG_FILE=%s\"\n", cfg.LogFile)
 	fmt.Fprintf(&sb, "Environment=\"CC_LOG_MAX_SIZE=%d\"\n", cfg.LogMaxSize)
+	fmt.Fprintf(&sb, "Environment=\"CC_LOG_RETENTION_DAYS=%d\"\n", cfg.LogRetentionDays)
 	if cfg.EnvPATH != "" {
 		fmt.Fprintf(&sb, "Environment=\"PATH=%s\"\n", cfg.EnvPATH)
 	}

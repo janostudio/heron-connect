@@ -1918,7 +1918,23 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	turnStart := time.Now()
 
 	e.i18n.DetectAndSet(msg.Content)
-	session.AddHistory("user", msg.Content)
+
+	// Persist any image/file attachments to disk (scoped per session) and
+	// record them in the history so the web UI can render them after reload.
+	if len(msg.Images) > 0 || len(msg.Files) > 0 {
+		wd := workspaceDir
+		if wd == "" {
+			wd = e.baseWorkDir
+		}
+		atts := SaveAttachmentsToDisk(wd, session.ID, msg.Images, msg.Files)
+		if len(atts) > 0 {
+			session.AddHistoryWithAttachments("user", msg.Content, atts)
+		} else {
+			session.AddHistory("user", msg.Content)
+		}
+	} else {
+		session.AddHistory("user", msg.Content)
+	}
 
 	// Use the agent override when available (multi-workspace mode)
 	var agentOverride Agent

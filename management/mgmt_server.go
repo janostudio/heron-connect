@@ -1258,11 +1258,15 @@ func (m *ManagementServer) handleProjectSessionDetail(w http.ResponseWriter, r *
 
 		histJSON := make([]map[string]any, len(hist))
 		for i, h := range hist {
-			histJSON[i] = map[string]any{
+			entry := map[string]any{
 				"role":      h.Role,
 				"content":   h.Content,
 				"timestamp": h.Timestamp,
 			}
+			if len(h.Attachments) > 0 {
+				entry["attachments"] = h.Attachments
+			}
+			histJSON[i] = entry
 		}
 
 		idToKey, activeIDs := e.GetSessions().SessionKeyMap()

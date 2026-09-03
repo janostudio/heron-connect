@@ -118,6 +118,104 @@ func AppendFileRefs(prompt string, filePaths []string) string {
 	return prompt + "\n\n(Files saved locally, please read them: " + strings.Join(filePaths, ", ") + ")"
 }
 
+// SaveAttachmentsToDisk persists image + file attachments to
+// workDir/.heron-connect/history-attachments/<sessionID>/ and returns the
+// history metadata (relative paths) for writing into HistoryEntry.Attachments.
+//
+// The dedicated history-attachments/ directory is intentionally separate from
+// the agent-side attachments/ directory so that per-turn cleanup logic (e.g.
+// pi's cleanAttachments, which empties attachments/) never deletes history
+// attachments. Scoping by sessionID keeps same-named files from different
+// conversations isolated.
+func SaveAttachmentsToDisk(workDir, sessionID string, images []ImageAttachment, files []FileAttachment) []HistoryAttachment {
+	if len(images) == 0 && len(files) == 0 {
+		return nil
+	}
+
+	// Sanitize sessionID as a single path segment (it is normally "s<N>").
+	sid := filepath.Base(strings.TrimSpace(sessionID))
+	if sid == "" || sid == "." {
+		sid = "session"
+	}
+
+	attachDir := filepath.Join(workDir, ".heron-connect", "history-attachments", sid)
+	if err := os.MkdirAll(attachDir, 0o755); err != nil {
+		slog.Warn("SaveAttachmentsToDisk: mkdir failed", "dir", attachDir, "error", err)
+	}
+
+	var out []HistoryAttachment
+	write := func(name, mimeType string, data []byte, kind string) {
+		// 1) Strip any path separators to prevent traversal; name is display-only.
+		base := filepath.Base(strings.TrimSpace(name))
+		if base == "" || base == "." || base == string(filepath.Separator) {
+			base = fmt.Sprintf("attachment_%d%s", time.Now().UnixNano(), extFromMime(mimeType, kind))
+		}
+		// 2) If the filename lacks an extension, derive one from mime so the
+		//    /files endpoint returns the correct Content-Type.
+		if filepath.Ext(base) == "" {
+			base += extFromMime(mimeType, kind)
+		}
+		// 3) De-duplicate same-name files within the session dir.
+		final := base
+		if _, err := os.Stat(filepath.Join(attachDir, final)); err == nil {
+			ext := filepath.Ext(base)
+			stem := strings.TrimSuffix(base, ext)
+			for n := 2; ; n++ {
+				final = fmt.Sprintf("%s(%d)%s", stem, n, ext)
+				if _, err := os.Stat(filepath.Join(attachDir, final)); err != nil {
+					break
+				}
+			}
+		}
+		fpath := filepath.Join(attachDir, final)
+		if err := os.WriteFile(fpath, data, 0o644); err != nil {
+			slog.Error("SaveAttachmentsToDisk: write failed", "name", final, "error", err)
+			return
+		}
+		out = append(out, HistoryAttachment{
+			Kind:     kind,
+			Name:     name,
+			MimeType: mimeType,
+			Path:     filepath.ToSlash(filepath.Join(".heron-connect", "history-attachments", sid, final)),
+			Size:     len(data),
+		})
+	}
+
+	for _, im := range images {
+		write(im.FileName, im.MimeType, im.Data, "image")
+	}
+	for _, f := range files {
+		write(f.FileName, f.MimeType, f.Data, "file")
+	}
+	return out
+}
+
+// extFromMime returns a file extension (with leading dot) for a mime type.
+// Used to derive an extension when the original filename lacks one, so the
+// /files endpoint can resolve the correct Content-Type.
+func extFromMime(mimeType, kind string) string {
+	switch mimeType {
+	case "image/png":
+		return ".png"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/svg+xml":
+		return ".svg"
+	case "application/pdf":
+		return ".pdf"
+	case "text/plain":
+		return ".txt"
+	}
+	if kind == "image" {
+		return ".png"
+	}
+	return ".bin"
+}
+
 // AudioAttachment represents a voice/audio message sent by the user.
 type AudioAttachment struct {
 	MimeType string // e.g. "audio/amr", "audio/ogg", "audio/mp4"
@@ -223,11 +321,24 @@ type Event struct {
 // agent session instead of being stuck forever.
 const EventMetadataSessionUnrecoverable = "session_unrecoverable"
 
+// HistoryAttachment is a persisted attachment reference in a history entry.
+// The attachment bytes are written to disk (see SaveAttachmentsToDisk); this
+// struct only carries the metadata needed for the web UI to render a
+// thumbnail (image) or filename (file).
+type HistoryAttachment struct {
+	Kind     string `json:"kind"`      // "image" | "file"
+	Name     string `json:"name"`      // original filename (for display)
+	MimeType string `json:"mime_type"` // e.g. "image/png"
+	Path     string `json:"path"`      // slash path relative to workDir, e.g. ".heron-connect/history-attachments/s89/foo.png"
+	Size     int    `json:"size,omitempty"`
+}
+
 // HistoryEntry is one turn in a conversation.
 type HistoryEntry struct {
-	Role      string    `json:"role"` // "user" or "assistant"
-	Content   string    `json:"content"`
-	Timestamp time.Time `json:"timestamp"`
+	Role        string              `json:"role"` // "user" or "assistant"
+	Content     string              `json:"content"`
+	Timestamp   time.Time           `json:"timestamp"`
+	Attachments []HistoryAttachment `json:"attachments,omitempty"`
 }
 
 // AgentSessionInfo describes one session as reported by the agent backend.

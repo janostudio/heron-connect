@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/janostudio/heron-connect/config"
 	"github.com/janostudio/heron-connect/daemon"
 )
 
@@ -44,14 +45,9 @@ func runDaemon(args []string) {
 // ── install ─────────────────────────────────────────────────
 
 func daemonInstall(args []string) {
-	cfg, force, err := parseDaemonInstallArgs(args)
+	cfg, force, flags, err := parseDaemonInstallArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	if err := daemon.Resolve(&cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -59,6 +55,25 @@ func daemonInstall(args []string) {
 	if _, err := os.Stat(configPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: config.toml not found in %s\n", cfg.WorkDir)
 		fmt.Fprintf(os.Stderr, "  Use --work-dir to specify the config directory or --config to point to the config file\n")
+		os.Exit(1)
+	}
+
+	// Fill log settings from config.toml's [log] section when not overridden
+	// on the command line (CLI > TOML > default).
+	if tomlCfg, err := config.Load(configPath); err == nil {
+		if !flags.logFile && tomlCfg.Log.File != "" {
+			cfg.LogFile = tomlCfg.Log.File
+		}
+		if !flags.logMaxSize && tomlCfg.Log.MaxSizeMB > 0 {
+			cfg.LogMaxSize = int64(tomlCfg.Log.MaxSizeMB) * 1024 * 1024
+		}
+		if !flags.logRetentionDays && tomlCfg.Log.RetentionDays > 0 {
+			cfg.LogRetentionDays = tomlCfg.Log.RetentionDays
+		}
+	}
+
+	if err := daemon.Resolve(&cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -80,11 +95,12 @@ func daemonInstall(args []string) {
 	}
 
 	if err := daemon.SaveMeta(&daemon.Meta{
-		LogFile:     cfg.LogFile,
-		LogMaxSize:  cfg.LogMaxSize,
-		WorkDir:     cfg.WorkDir,
-		BinaryPath:  cfg.BinaryPath,
-		InstalledAt: daemon.NowISO(),
+		LogFile:          cfg.LogFile,
+		LogMaxSize:       cfg.LogMaxSize,
+		LogRetentionDays: cfg.LogRetentionDays,
+		WorkDir:          cfg.WorkDir,
+		BinaryPath:       cfg.BinaryPath,
+		InstalledAt:      daemon.NowISO(),
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save metadata: %v\n", err)
 	}
@@ -105,9 +121,19 @@ func daemonInstall(args []string) {
 	fmt.Println("  heron-connect daemon uninstall - Remove")
 }
 
-func parseDaemonInstallArgs(args []string) (daemon.Config, bool, error) {
+// daemonInstallFlags records which log-related flags were explicitly set on
+// the command line, so daemonInstall can fall back to config.toml [log] for
+// the rest (CLI > TOML > default).
+type daemonInstallFlags struct {
+	logFile          bool
+	logMaxSize       bool
+	logRetentionDays bool
+}
+
+func parseDaemonInstallArgs(args []string) (daemon.Config, bool, daemonInstallFlags, error) {
 	var cfg daemon.Config
 	var force bool
+	var flags daemonInstallFlags
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -117,34 +143,58 @@ func parseDaemonInstallArgs(args []string) (daemon.Config, bool, error) {
 		case arg == "--log-file":
 			value, next, err := daemonInstallFlagValue(args, i, "--log-file")
 			if err != nil {
-				return daemon.Config{}, false, err
+				return daemon.Config{}, false, flags, err
 			}
 			cfg.LogFile = value
+			flags.logFile = true
 			i = next
 		case strings.HasPrefix(arg, "--log-file="):
 			cfg.LogFile = strings.TrimPrefix(arg, "--log-file=")
+			flags.logFile = true
 		case arg == "--log-max-size":
 			value, next, err := daemonInstallFlagValue(args, i, "--log-max-size")
 			if err != nil {
-				return daemon.Config{}, false, err
+				return daemon.Config{}, false, flags, err
 			}
 			mb, err := strconv.Atoi(value)
 			if err != nil {
-				return daemon.Config{}, false, fmt.Errorf("invalid value for --log-max-size: %s", value)
+				return daemon.Config{}, false, flags, fmt.Errorf("invalid value for --log-max-size: %s", value)
 			}
 			cfg.LogMaxSize = int64(mb) * 1024 * 1024
+			flags.logMaxSize = true
 			i = next
 		case strings.HasPrefix(arg, "--log-max-size="):
 			value := strings.TrimPrefix(arg, "--log-max-size=")
 			mb, err := strconv.Atoi(value)
 			if err != nil {
-				return daemon.Config{}, false, fmt.Errorf("invalid value for --log-max-size: %s", value)
+				return daemon.Config{}, false, flags, fmt.Errorf("invalid value for --log-max-size: %s", value)
 			}
 			cfg.LogMaxSize = int64(mb) * 1024 * 1024
+			flags.logMaxSize = true
+		case arg == "--log-retention-days":
+			value, next, err := daemonInstallFlagValue(args, i, "--log-retention-days")
+			if err != nil {
+				return daemon.Config{}, false, flags, err
+			}
+			days, err := strconv.Atoi(value)
+			if err != nil {
+				return daemon.Config{}, false, flags, fmt.Errorf("invalid value for --log-retention-days: %s", value)
+			}
+			cfg.LogRetentionDays = days
+			flags.logRetentionDays = true
+			i = next
+		case strings.HasPrefix(arg, "--log-retention-days="):
+			value := strings.TrimPrefix(arg, "--log-retention-days=")
+			days, err := strconv.Atoi(value)
+			if err != nil {
+				return daemon.Config{}, false, flags, fmt.Errorf("invalid value for --log-retention-days: %s", value)
+			}
+			cfg.LogRetentionDays = days
+			flags.logRetentionDays = true
 		case arg == "--work-dir":
 			value, next, err := daemonInstallFlagValue(args, i, "--work-dir")
 			if err != nil {
-				return daemon.Config{}, false, err
+				return daemon.Config{}, false, flags, err
 			}
 			cfg.WorkDir = value
 			i = next
@@ -153,7 +203,7 @@ func parseDaemonInstallArgs(args []string) (daemon.Config, bool, error) {
 		case arg == "--config" || arg == "-config":
 			value, next, err := daemonInstallFlagValue(args, i, arg)
 			if err != nil {
-				return daemon.Config{}, false, err
+				return daemon.Config{}, false, flags, err
 			}
 			cfg.WorkDir = filepath.Dir(value)
 			i = next
@@ -162,11 +212,11 @@ func parseDaemonInstallArgs(args []string) (daemon.Config, bool, error) {
 		case strings.HasPrefix(arg, "-config="):
 			cfg.WorkDir = filepath.Dir(strings.TrimPrefix(arg, "-config="))
 		default:
-			return daemon.Config{}, false, fmt.Errorf("unknown flag: %s", arg)
+			return daemon.Config{}, false, flags, fmt.Errorf("unknown flag: %s", arg)
 		}
 	}
 
-	return cfg, force, nil
+	return cfg, force, flags, nil
 }
 
 func daemonInstallFlagValue(args []string, index int, flagName string) (string, int, error) {
@@ -414,11 +464,12 @@ Commands:
   logs        View log output
 
 Install flags:
-  --config PATH         Path to config.toml (uses its parent as work dir)
-  --log-file PATH       Log file path (default: ~/.heron-connect/logs/heron-connect.log)
-  --log-max-size N      Max log file size in MB (default: 10)
-  --work-dir DIR        Directory containing config.toml (default: current dir)
-  --force               Overwrite existing installation
+  --config PATH             Path to config.toml (uses its parent as work dir)
+  --log-file PATH           Log file path (default: ~/.heron-connect/logs/heron-connect.log)
+  --log-max-size N          Max log file size in MB (default: 10)
+  --log-retention-days N    Archived log retention in days (default: 7)
+  --work-dir DIR            Directory containing config.toml (default: current dir)
+  --force                   Overwrite existing installation
 
 Restart flags:
   --force               Kill existing process before restarting

@@ -148,6 +148,17 @@ interface PickItem {
   kind: 'image' | 'file';
 }
 
+// A persisted attachment reference loaded from session history. The bytes are
+// on disk; `path` is a slash path relative to the project workDir (e.g.
+// ".heron-connect/history-attachments/s89/foo.png") served via /files.
+interface HistoryAttachment {
+  kind: 'image' | 'file';
+  name: string;
+  mime_type: string;
+  path: string;
+  size?: number;
+}
+
 interface ChatMsg {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -160,6 +171,8 @@ interface ChatMsg {
   fileSize?: number;
   // Local media attached by the user in this message (rendered before content).
   localMedia?: PickItem[];
+  // Persisted attachments from session history (rendered on reload).
+  historyAttachments?: HistoryAttachment[];
   streaming?: boolean;
   previewHandle?: string;
   timestamp?: string;
@@ -302,6 +315,35 @@ function FileBlock({ name, size }: { name: string; size?: number }) {
 
 function ImageBlock({ url }: { url: string }) {
   return <img src={url} alt="" className="max-w-sm rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm" />;
+}
+
+// HistoryImage loads a persisted history attachment over the authenticated
+// /files endpoint and renders it as a thumbnail. Uses api.file (Bearer token)
+// rather than a bare <img src> URL, since same-origin <img> tags do not send
+// the Authorization header. Returns null silently if the file is gone (e.g.
+// the attachment was removed from disk).
+function HistoryImage({ project, att }: { project: string; att: HistoryAttachment }) {
+  const [src, setSrc] = useState('');
+  useEffect(() => {
+    let alive = true;
+    const filePath = `/files/${project}/${att.path}`;
+    api.file(filePath).then((res) => {
+      if (!alive) return;
+      if (!res.ok) {
+        setSrc('');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (alive) setSrc(typeof reader.result === 'string' ? reader.result : '');
+      };
+      reader.onerror = () => { if (alive) setSrc(''); };
+      reader.readAsDataURL(res.blob);
+    }).catch(() => { if (alive) setSrc(''); });
+    return () => { alive = false; };
+  }, [project, att.path]);
+  if (!src) return null;
+  return <img src={src} alt={att.name} className="max-w-[220px] max-h-[220px] rounded-lg border border-gray-200 dark:border-gray-700 object-cover" />;
 }
 
 // ── File preview (local agent-generated files, served over HTTP) ──
@@ -1011,6 +1053,7 @@ export default function ChatView() {
             content: h.content,
             format: 'markdown',
             timestamp: h.timestamp,
+            historyAttachments: h.attachments,
           })));
         }
       } else {
@@ -1063,6 +1106,7 @@ export default function ChatView() {
           content: h.content,
           format: 'markdown',
           timestamp: h.timestamp,
+          historyAttachments: h.attachments,
         })));
       } else {
         setMessages([]);
@@ -1601,7 +1645,7 @@ export default function ChatView() {
         )}
         {messages.map((msg) => {
           const isUser = msg.role === 'user';
-          const isEmpty = !msg.content && !msg.card && !msg.buttons && !msg.imageUrl && !msg.fileName && !msg.localMedia?.length;
+          const isEmpty = !msg.content && !msg.card && !msg.buttons && !msg.imageUrl && !msg.fileName && !msg.localMedia?.length && !msg.historyAttachments?.length;
           return (
             <div key={msg.id} className={cn('flex gap-3', isUser ? 'justify-end' : 'justify-start')}>
               {!isUser && (
@@ -1628,13 +1672,20 @@ export default function ChatView() {
                   <FileBlock name={msg.fileName} size={msg.fileSize} />
                 ) : isUser ? (
                   <div className="space-y-2">
-                    {msg.localMedia && msg.localMedia.length > 0 && (
+                    {((msg.localMedia?.length ?? 0) > 0 || (msg.historyAttachments?.length ?? 0) > 0) && (
                       <div className="flex flex-wrap gap-2">
-                        {msg.localMedia.map((m) =>
+                        {msg.localMedia?.map((m) =>
                           m.kind === 'image' ? (
                             <img key={m.id} src={m.dataUrl} alt={m.name} className="max-w-[220px] max-h-[220px] rounded-lg border border-white/20 object-cover" />
                           ) : (
                             <FileBlock key={m.id} name={m.name} size={m.size} />
+                          ),
+                        )}
+                        {msg.historyAttachments?.map((a, idx) =>
+                          a.kind === 'image' ? (
+                            <HistoryImage key={`ha-${idx}`} project={projectName || ''} att={a} />
+                          ) : (
+                            <FileBlock key={`ha-${idx}`} name={a.name} size={a.size} />
                           ),
                         )}
                       </div>

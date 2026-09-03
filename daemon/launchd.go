@@ -268,6 +268,8 @@ func buildPlist(cfg Config) string {
 		<string>%s</string>
 		<key>CC_LOG_MAX_SIZE</key>
 		<string>%d</string>
+		<key>CC_LOG_RETENTION_DAYS</key>
+		<string>%d</string>
 		<key>PATH</key>
 		<string>%s</string>
 	</dict>
@@ -277,5 +279,5 @@ func buildPlist(cfg Config) string {
 	<string>/dev/null</string>
 </dict>
 </plist>
-`, launchdLabel, cfg.BinaryPath, cfg.WorkDir, cfg.LogFile, cfg.LogMaxSize, envPATH)
+`, launchdLabel, cfg.BinaryPath, cfg.WorkDir, cfg.LogFile, cfg.LogMaxSize, cfg.LogRetentionDays, envPATH)
 }

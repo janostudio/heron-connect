@@ -30,7 +30,18 @@ export interface Session {
 
 export interface SessionDetail extends Session {
   agent_session_id: string;
-  history: { role: string; content: string; timestamp: string }[];
+  history: {
+    role: string;
+    content: string;
+    timestamp: string;
+    attachments?: {
+      kind: 'image' | 'file';
+      name: string;
+      mime_type: string;
+      path: string;
+      size?: number;
+    }[];
+  }[];
 }
 
 // sessionTitle returns the display title: the (auto-generated or user-chosen)

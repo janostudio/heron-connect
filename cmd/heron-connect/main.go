@@ -721,24 +721,22 @@ func main() {
 		}
 	}
 
-	// When started as a daemon (CC_LOG_FILE set), redirect logs to a rotating file.
-	var logWriter io.Writer
-	var logCloser io.Closer
-	if logFile := os.Getenv("CC_LOG_FILE"); logFile != "" {
-		maxSize := int64(daemon.DefaultLogMaxSize)
-		if v := os.Getenv("CC_LOG_MAX_SIZE"); v != "" {
-			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-				maxSize = n
-			}
+	// Capture daemon-injected log settings from the environment. The actual
+	// rotating writer is constructed after config.toml is loaded, so the
+	// priority is CC_* env vars > config [log] > defaults (foreground may also
+	// write to a file when [log].file is set).
+	envLogFile := os.Getenv("CC_LOG_FILE")
+	envLogMaxSize := int64(0)
+	if v := os.Getenv("CC_LOG_MAX_SIZE"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			envLogMaxSize = n
 		}
-		w, err := daemon.NewRotatingWriter(logFile, maxSize)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to open log file %s: %v\n", logFile, err)
-			os.Exit(1)
+	}
+	envLogRetentionDays := 0
+	if v := os.Getenv("CC_LOG_RETENTION_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			envLogRetentionDays = n
 		}
-		logWriter = w
-		logCloser = w
-		slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	}
 
 	configFlag := flag.String("config", "", "path to config file (default: ./config.toml or ~/.heron-connect/config.toml)")
@@ -794,7 +792,6 @@ func main() {
 	}
 
 	config.ConfigPath = configPath
-	slog.Info("config loaded", "path", configPath)
 
 	if len(cfg.Projects) == 0 {
 		fmt.Fprintf(os.Stderr, "Error: no projects configured in %s\n", configPath)
@@ -803,6 +800,37 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Determine log file + rotation params: CC_* env (daemon) > config [log] >
+	// defaults. Foreground runs also write to a file when [log].file is set.
+	logFile := envLogFile
+	if logFile == "" {
+		logFile = cfg.Log.File
+	}
+	maxSize := envLogMaxSize
+	if maxSize <= 0 && cfg.Log.MaxSizeMB > 0 {
+		maxSize = int64(cfg.Log.MaxSizeMB) * 1024 * 1024
+	}
+	if maxSize <= 0 {
+		maxSize = daemon.DefaultLogMaxSize
+	}
+	retentionDays := envLogRetentionDays
+	if retentionDays <= 0 && cfg.Log.RetentionDays > 0 {
+		retentionDays = cfg.Log.RetentionDays
+	}
+
+	var logWriter io.Writer
+	var logCloser io.Closer
+	if logFile != "" {
+		w, err := daemon.NewRotatingWriter(logFile, maxSize, retentionDays)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to open log file %s: %v\n", logFile, err)
+			os.Exit(1)
+		}
+		logWriter = w
+		logCloser = w
+	}
+
+	slog.Info("config loaded", "path", configPath)
 	setupLogger(cfg.Log.Level, logWriter)
 
 	// run_as_user preflight + isolation audit. MUST run before any engine
