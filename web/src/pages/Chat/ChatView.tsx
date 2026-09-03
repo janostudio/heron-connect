@@ -1395,6 +1395,26 @@ export default function ChatView() {
     setTimeout(() => setSending(false), 300);
   }, [input, pickedFiles, bridgeStatus, bridgeSend, isRunning, stripDataUrlPrefix, currentSession?.id]);
 
+  // Paste handler: turn clipboard images into queued attachments (sent with
+  // the message, not immediately). Plain text pastes fall through to the
+  // textarea's default behaviour.
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageFiles: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const f = item.getAsFile();
+        if (f) imageFiles.push(f);
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      addPickedFiles(imageFiles);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       // 输入法组合中（如中文拼音选词/确认字母）的回车不触发发送，
@@ -1744,6 +1764,7 @@ export default function ChatView() {
                   e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px';
                 }}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder={t('chat.inputPlaceholder')}
                 rows={1}
                 // `py-2` (8px) + text-base 16px line-height 24px + border 2px = 42px,

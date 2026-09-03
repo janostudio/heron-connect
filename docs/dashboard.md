@@ -78,6 +78,17 @@ CronJob 的 prompt 中可注入统计数据（执行时替换，未识别变量�
 
 ## 业务报告接入
 
+业务侧有两套**独立、用途不同**的产出通道，接入前先分清：
+
+| | ① 业务结构化区 | ② 报告中心 |
+|---|---|---|
+| 文件 | `dashboards/insights.json`（单个 JSON） | `reports/` 下多个 `.html`/`.md` |
+| 形态 | 结构化（session 列表 + cards） | 自由文档 |
+| 能力 | 可跳聊天/标签/指标列 | 列表 + 预览 |
+| 用途 | 「哪些会话在干什么」的结构化总览 | 「历史报告」归档浏览 |
+
+要结构化、可交互 → 写 insights.json；要存人类可读文档 → 落 reports/。两者可同时产，各走各的入口。
+
 ### 1. 结构化业务数据（dashboards/insights.json）
 
 业务 cron 把会话级分析结论写成固定 schema 的 JSON，大盘"业务结构化区"原生渲染（与引擎会话列表合并、支持标签过滤、命中会话可点击跳聊天）。
@@ -88,7 +99,7 @@ CronJob 的 prompt 中可注入统计数据（执行时替换，未识别变量�
 
 - 会话行带**两个跳转键**（`agent_session_id` CLI 会话 ID / `session_id` 引擎会话 ID）至少一个，命中即可点击直达聊天记录；
 - `metrics` 是 **`InsightMetric[]` 数组**（`{label, value, unit}`），**不是对象**；`title` **必填**，不允许 null；
-- `tags` 语义中立（`已修复/已整理` 等业务状态随便写，引擎只画徽章）；纯字符串中性色，`{text, tone}` 彩色（good/info/warn/error）；
+- `tags` 语义中立（`已完成/待处理` 等业务自定义状态随便写，引擎只画徽章）；纯字符串中性色，`{text, tone}` 彩色（good/info/warn/error）；
 - 文件存在即生效，无需注册、无需重启。
 
 ### 2. HTML 看板（dashboards/index.html）

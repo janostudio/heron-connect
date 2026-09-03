@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.32 (2026-09-03)
+
+### Added
+
+- **Web 聊天支持图片复制粘贴**：输入框新增 `onPaste` 处理，从剪贴板提取 `image/*` 项自动并入附件暂存队列（缩略图条可预览、可单独移除），与文字一起随消息发送；纯文本粘贴保持默认行为。补齐了此前只能通过「回形针」按钮上传图片的短板。
+
+### Changed
+
+- **文档**：`dashboard-contract.md` 契约泛化（去掉业务专属示例、补「报告中心 vs insights.json」边界说明），`docs/dashboard.md` 与 skill `references/dashboard.md` 同步更新。
+
 ## v1.1.31 (2026-09-02)
 
 ### Added

@@ -1,8 +1,17 @@
 # 项目大盘业务数据契约（InsightPayload）—— 权威规范
 
 > 本文档是 heron-connect 项目大盘「业务结构化区」数据格式的**唯一权威规范**。
-> 业务侧（如 auto_bugfix 的 `gen_insights.py`）产出 `dashboards/insights.json` 时，必须严格对照本文档的字段类型与必填性实现。
+> 任何业务侧（写 `dashboards/insights.json` 的脚本/agent）产出数据时，必须严格对照本文档的字段类型与必填性实现。
 > 本文档与源码 `web/src/api/dashboard.ts` 的类型定义一一对应；若两者冲突，以源码为准（本文档随源码同步维护）。
+
+## 0. 与其他机制的关系
+
+本文档只管**「业务结构化区」的 insights.json**。另有一套独立的「报告中心」（`reports/` 目录 + `/reports` 页），用于归档自由格式的 HTML/Markdown 文档，契约见 `docs/dashboard.md` §3。两者互不依赖、用途不同：
+
+- **insights.json** = 引擎读得懂的**结构化会话分析**（可跳聊天/标签/指标列）
+- **reports/** = 引擎读不懂的**文档归档**（列表 + 预览）
+
+不要混淆：要结构化、可交互 → 写 insights.json；要存人类可读文档 → 落 reports/。
 
 ## 1. 读取位置
 
@@ -16,7 +25,7 @@
 {
   "version": 1,                        // 可选，schema 版本，当前 1
   "generated_at": "2026-09-02T01:00:00+08:00",  // 可选，生成时间
-  "generated_by": "daily-workreport",  // 可选，溯源（cron id / 脚本名）
+  "generated_by": "daily-report",  // 可选，溯源（cron id / 脚本名，业务自定义）
   "period": { "start": "2026-09-01", "end": "2026-09-02" },  // 可选，覆盖窗口（展示标注用，格式 YYYY-MM-DD）
   "cards":  [ /* InsightCard[]，可选，见 §3 */ ],
   "sessions": [ /* InsightSession[]，可选，见 §4 */ ]
@@ -29,7 +38,7 @@
 
 ```jsonc
 {
-  "label": "修复PR",        // 必填，卡标题
+  "label": "完成任务",      // 必填，卡标题（业务自定义）
   "value": 3,               // 必填，number 或 string
   "unit": "个",             // 可选，展示在 value 后
   "tone": "good"            // 可选，good | info | warn | error（决定卡色；未知值忽略）
@@ -42,19 +51,19 @@
 {
   "agent_session_id": "b0d6bd33-...",   // 跳转键①（可选）：CLI 会话 UUID = jsonl 文件名
   "session_id": "conv-xxx",             // 跳转键②（可选）：heron-connect 引擎会话 ID
-  "title": "修复登录 502",              // 【必填】行标题，绝不允许 null / 空字符串
+  "title": "修复登录超时",              // 【必填】行标题，绝不允许 null / 空字符串
   "summary": "根因是网关超时未重试",     // 可选，一句话结论
   "metrics": [                          // 可选，InsightMetric[] 数组（不是对象！）
     { "label": "input",  "value": 52394789 },
     { "label": "cached", "value": 50829968, "unit": "tokens" }
   ],
-  "tags": [                             // 可选，InsightTag[]（string 或 {text,tone}）
-    "dag",
-    { "text": "已修复", "tone": "good" },
-    { "text": "已整理", "tone": "info" }
+  "tags": [                             // 可选，InsightTag[]（string 或 {text,tone}，语义业务自定义）
+    "urgent",
+    { "text": "已完成", "tone": "good" },
+    { "text": "待复核", "tone": "info" }
   ],
   "tone": "good",                       // 可选，行级状态 good | info | warn | error
-  "detail": "reports/20260901/token-daily.html"  // 可选，本行详细报告相对路径（经 files API 打开）
+  "detail": "reports/20260901/report.html"  // 可选，本行详细报告相对路径（经 files API 打开）
 }
 ```
 
@@ -87,7 +96,7 @@
 - 引擎**不理解 tag 含义**，只渲染。纯字符串 = 中性灰徽章；`{text, tone}` = 彩色徽章（tone ∈ good/info/warn/error）。
 - 点击 tag 可前端过滤列表。
 
-## 5. 反例（auto_bugfix 实际踩的坑）
+## 5. 反例（真实接入方踩过的坑）
 
 ```jsonc
 // ❌ 错误：metrics 是对象
@@ -104,10 +113,12 @@
 
 // ✅ 正确
 "metrics": [{"label":"input","value":52394789},{"label":"cached","value":50829968}],
-"title": "修复登录 502",
+"title": "修复登录超时",
 "agent_session_id": "b0d6bd33-0acf-49d3-8532-f26709824845",
 "period": {"start":"2026-09-01","end":"2026-09-02"}
 ```
+
+> 注：§5 的「subagent 假会话 / metrics 对象」等反例，来自某个实际接入方踩过的坑，作为反面教材保留——这些是**通用陷阱**，任何业务方都可能犯，与具体业务无关。
 
 ## 6. no_delivery 模式（纯产出数据、不推送）
 
@@ -115,8 +126,8 @@
 
 ```jsonc
 {
-  "id": "daily-workreport",
-  "project": "auto-bugfix",
+  "id": "daily-report",
+  "project": "my-project",
   "session_key": "",        // 留空，no_delivery 下忽略
   "no_delivery": true,      // 关键：无投递模式
   "cron_expr": "0 1 * * *",
@@ -133,7 +144,7 @@
 
 ```jsonc
 // reports/20260901/token-daily.manifest.json（可选）
-{ "title": "Token 消耗日报", "type": "token", "generated_by": "daily-workreport" }
+{ "title": "日报", "type": "report", "generated_by": "daily-report" }
 ```
 
 - manifest 可选，无 manifest 也能列出（标题=文件名，日期从 `YYYY-MM-DD`/`YYYYMMDD` 目录名推断）
