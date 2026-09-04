@@ -27,7 +27,8 @@
 - `allow_chat`（部分平台）：允许的群 chat_id。
 - `group_only`：true 则只响应群聊，忽略私聊。
 - `share_session_in_channel`：true 则群内所有用户共享一个 agent 会话。
-- `thread_isolation`：按话题/根消息隔离会话（每个 thread/root 一个会话）。
+- `thread_isolation`：按话题/根消息隔离会话（每个 thread/root 一个会话）。例如 Discord
+  论坛帖、飞书话题场景，`thread_isolation = true` 后同一频道里不同帖子各自独立会话，互不串号。
 
 ## 虚拟 `type = "web"` 平台（Web 管理后台专用）
 
@@ -176,4 +177,67 @@ Bot + `applications.commands` scope，需开 Message Content Intent。
 ```
 详见 `docs/max-webhook.md`。
 
-> 其余平台（qq/qqbot/weixin/line/weibo）见 `config.example.toml` 对应章节。
+### QQ（via NapCat / OneBot v11）
+
+```toml
+[[projects.platforms]]
+type = "qq"
+[projects.platforms.options]
+ws_url = "ws://127.0.0.1:3001"   # NapCat Forward WebSocket URL
+token = ""                        # 可选，须与 NapCat access_token 一致
+allow_from = "*"                  # 或 "12345,67890"
+```
+需先部署 NapCat（Docker/本体），开 WebUI 启用 Forward WebSocket 端口 3001。
+
+### QQ 官方机器人（qqbot）
+
+```toml
+[[projects.platforms]]
+type = "qqbot"
+[projects.platforms.options]
+# 见 config.example.toml 对应章节（app_id / secret 等）
+```
+
+### 微信个人版（weixin，ilink，免公网）
+
+```toml
+[[projects.platforms]]
+type = "weixin"
+[projects.platforms.options]
+token = "your-ilink-bot-bearer-token"
+# base_url = "https://ilinkai.weixin.qq.com"   # 可选
+# cdn_base_url = "https://novac2c.cdn.weixin.qq.com/c2c"  # 可选 CDN 根路径
+# allow_from = "*"              # 或 "user1@im.wechat,user2@im.wechat"
+# account_id = "default"        # 可选：区分多账号状态目录
+# long_poll_timeout_ms = 35000
+```
+快速配置：`heron-connect weixin setup --project <name>`（扫码登录写 token）。
+入站图片/文件/视频/语音从微信 CDN 拉取并 AES 解密。状态文件在 `<data_dir>/weixin/<project>/<account_id>/`。
+
+### LINE（HTTP Webhook，需公网）
+
+```toml
+[[projects.platforms]]
+type = "line"
+[projects.platforms.options]
+channel_secret = "your-line-channel-secret"
+channel_token = "your-line-channel-access-token"
+port = "8080"
+callback_path = "/callback"
+allow_from = "*"
+```
+需在 LINE 控制台建 Messaging API channel，webhook URL 设为 `https://<公网域名>:<port>/callback`。
+
+### 微博（weibo，WebSocket 免公网）
+
+```toml
+[[projects.platforms]]
+type = "weibo"
+[projects.platforms.options]
+app_id = "your-weibo-app-id"
+app_secret = "your-weibo-app-secret"
+allow_from = "*"
+# token_endpoint = ""   # 可选：自定义 token 接口
+# ws_endpoint = ""      # 可选：自定义 WebSocket 地址
+```
+通过微博开放平台（龙虾助手）注册应用，经 WebSocket（open-im.api.weibo.com）收发私信。

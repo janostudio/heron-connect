@@ -1,10 +1,10 @@
 ---
 name: heron-connect-config
-description: 解释并生成 heron-connect 的 TOML 配置。当用户需要配置/修改 heron-connect（config.toml / config.example.toml），或询问任何配置项怎么写时使用——project、agent、platform、provider、display、management、bridge、webhook、cron、heartbeat、commands/aliases、banned_words、speech/tts、auto_compress、multi-workspace、多 project、dashboard/项目大盘（业务数据产出 insights.json、HTML 看板、reports 归档、no_delivery 无投递 cron、{{dashboard.*}} 模板变量）等。
+description: 解释并生成 heron-connect 的 TOML 配置。当用户需要配置/修改 heron-connect（config.toml / config.example.toml），或询问任何配置项怎么写时使用——project、agent、platform、provider、display、management、bridge、webhook、cron、heartbeat、commands/aliases、banned_words、speech/tts、auto_compress、multi-workspace、多 project、dashboard/项目大盘（业务数据产出 insights.json、HTML 看板、reports 归档、no_delivery 无投递 cron、{{dashboard.*}} 模板变量）、部署/后台运行（daemon：systemd/launchd/schtasks/容器 nohup、service.sh 脚本）等。
 metadata:
   project: heron-connect
   category: config
-  version: 1.1.34
+  version: 1.1.36
 ---
 
 # Heron Connect 配置 Skill
@@ -13,7 +13,7 @@ heron-connect 把本地 AI 编码 Agent（Claude Code / CodeBuddy / Codex / Gemi
 连接到聊天平台（飞书 / Telegram / Discord / Slack / 钉钉 / 企微 / QQ / LINE 等），
 **所有配置由一个 TOML 文件描述**。
 
-本 Skill 对应 heron-connect **v1.1.34**（版本号与 heron-connect 同步，见本文件 frontmatter 的 `metadata.version`，由 `scripts/sync-version.sh` 维护）。
+本 Skill 对应 heron-connect **v1.1.36**（版本号与 heron-connect 同步，见本文件 frontmatter 的 `metadata.version`，由 `scripts/sync-version.sh` 维护）。
 
 ## 能力索引（给模型的导航）
 
@@ -27,9 +27,12 @@ heron-connect 把本地 AI 编码 Agent（Claude Code / CodeBuddy / Codex / Gemi
 | 3 | 接入 IM 平台（飞书/Telegram/Discord/Slack/钉钉/企微/QQ/LINE…）、**虚拟 `web` 平台** | `references/platforms.md` |
 | 4 | API Provider、模型切换（全局 `[[providers]]` / 项目内 / `/provider`） | `references/providers.md` |
 | 5 | 消息展示 `[display]`、thinking/tool、覆盖优先级、限流/流式预览 | `references/display.md` |
-| 6 | Web 后台、Bridge、Webhook、**日志 `[log]`（按天归档+按大小轮转）**、`[[commands]]`/`[[aliases]]`/`banned_words`、`[speech]`/`[tts]`、cron、heartbeat、多用户 ACL、admin_from、auto_compress/observe/multi-workspace/relay | `references/advanced.md` |
+| 6 | Web 后台、Bridge、Webhook、**日志 `[log]`（按天归档+按大小轮转）**、流式预览 `[stream_preview]`、即时回复 `[instant_reply]`、限流 `[rate_limit]`/`[outgoing_rate_limit]`、`[[commands]]`/`[[aliases]]`/`banned_words`、`[speech]`/`[tts]`、**cron（jobs.json 字段/CLI add-list-edit-info-del/no_delivery）**、heartbeat、多用户 ACL、admin_from、`[queue]`、auto_compress/observe/multi-workspace/relay | `references/advanced.md` |
 | 7 | 排查报错、常见坑、排错命令 | `references/gotchas.md` |
 | 8 | 项目大盘 `[dashboard]`、业务数据产出（insights.json/HTML 看板/reports 归档）、`no_delivery` 无投递 cron、`{{dashboard.*}}` 模板变量、`/dashboard` 命令 | `references/dashboard.md` |
+| 9 | **部署/后台运行**：`heron-connect daemon`（systemd/launchd/schtasks）、容器无 systemd 用 nohup/tmux、`service.sh` 脚本、日志轮转、多配置实例隔离 | `references/deployment.md` |
+| 10 | **顶层 CLI 子命令**：config/update/check-update/provider/send/sessions/agent-sid/relay/feishu/weixin/doctor/web、启动 flag（--force/--observe/--version） | `references/cli.md` |
+| 11 | **聊天斜杠命令**：`/new` `/list` `/switch` `/name` `/current` `/status` `/usage` `/history` `/mode` `/model` `/reasoning` `/quiet` `/provider` `/memory` `/cron` `/dashboard` `/heartbeat` `/compress` `/cancel` `/stop` `/help` `/version` `/commands` `/skills` `/config` `/doctor` `/upgrade` `/restart` `/alias` `/delete` `/bind` `/search` `/shell` `/diff` `/show` `/dir` `/tts` `/workspace` `/whoami` `/web` `/ps`（含别名、特权命令、admin_from） | `references/chat-commands.md` |
 
 **脚本**：
 - 后台启/停/重启某份 toml：`scripts/service.sh --config <path> <start|stop|restart|status|logs>`

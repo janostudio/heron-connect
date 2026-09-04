@@ -77,7 +77,7 @@ export function ReportsList() {
           {reports.map((r) => (
             <Link
               key={r.path}
-              to={`/reports/preview?project=${encodeURIComponent(project)}&path=${encodeURIComponent(r.path)}&format=${r.format}`}
+              to={`/reports/preview?project=${encodeURIComponent(project)}&path=${encodeURIComponent(r.path)}&url=${encodeURIComponent(r.url || '')}&format=${r.format}`}
               className="block"
             >
               <Card hover className="p-4">
@@ -107,22 +107,26 @@ export function ReportPreview() {
   const [params] = useSearchParams();
   const project = params.get('project') || '';
   const path = params.get('path') || '';
+  const url = params.get('url') || '';
   const format = params.get('format') || 'html';
   const fullscreen = params.get('fullscreen') === '1';
   const token = useAuthStore((s) => s.token);
   const [mdText, setMdText] = useState<string | null>(null);
   const [error, setError] = useState('');
 
-  const fileUrl = `/api/v1/files/${project}/${path}`;
+  // `url` (relative to the project work dir) is authoritative when present;
+  // fall back to the legacy `path` so older entries still resolve.
+  const filePath = url || path;
+  const fileUrl = `/api/v1/files/${project}/${filePath}`;
 
   useEffect(() => {
     if (format !== 'md') return;
     import('@/api/client').then(({ api }) =>
-      api.raw(`/files/${project}/${path}`)
+      api.raw(`/files/${project}/${filePath}`)
         .then(setMdText)
         .catch((e) => setError(e.message))
     );
-  }, [project, path, format]);
+  }, [project, filePath, format]);
 
   if (fullscreen) {
     return (

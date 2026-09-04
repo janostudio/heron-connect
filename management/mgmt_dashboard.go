@@ -407,10 +407,21 @@ func (m *ManagementServer) handleReports(w http.ResponseWriter, r *http.Request)
 	root := filepath.Join(workDir, ds.ReportsDir)
 	entries := scanReportFiles(root, root, 0)
 
+	// The /api/v1/files/<project>/<path> endpoint resolves <path> relative to
+	// the project work dir (not the reports dir), so the URL for a report must
+	// carry the reports subdir prefix. Populate the otherwise-unused URL field
+	// so the web client doesn't have to guess the base directory.
+	reportsPrefix := strings.Trim(filepath.ToSlash(ds.ReportsDir), "/")
+
 	out := make([]reportEntry, 0, len(entries))
 	for _, e := range entries {
 		if filterType != "" && e.Type != filterType {
 			continue
+		}
+		if reportsPrefix != "" {
+			e.URL = reportsPrefix + "/" + e.Path
+		} else {
+			e.URL = e.Path
 		}
 		out = append(out, e)
 		if len(out) >= limit {

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.37 (2026-09-04)
+
+### Fixed
+
+- **Web 报告中心打开报告报 `file not found`**：`/api/v1/reports` 返回的 `path` 是相对 `reports/` 子目录的路径，但前端用它拼 `/api/v1/files/<project>/<path>` 时基准是项目 work_dir 根，中间少了一层 `reports/`，导致去 `<work_dir>/sandbox-analyze/` 找文件而实际在 `<work_dir>/reports/sandbox-analyze/`。根因是后端 `reportEntry.URL` 字段（注释明确指向 files API）从未被赋值、返回空字符串，前端只能拿 `path` 猜基准。现在后端填充 `URL` 并带上 `reports/` 前缀，前端预览/下载优先用 `url`（回退 `path` 兼容旧数据），报告可正常打开。
+
 ## v1.1.36 (2026-09-03)
 
 ### Fixed

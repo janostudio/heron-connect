@@ -13,6 +13,41 @@
   `[[projects]]` 的数组表语义、完整示例、避免重复配置见 `references/project-agent.md`
   的「多 project 配置」。
 
+## 环境变量参考
+
+### 配置内替换
+
+任意字符串值支持 `${VAR_NAME}`，如 `token = "${TELEGRAM_BOT_TOKEN}"`。不要明文写密钥。
+
+### heron-connect 自身读取的环境变量
+
+| 变量 | 用途 |
+|------|------|
+| `CC_LOG_FILE` | 日志文件路径（**最高优先级**，覆盖 `[log].file`） |
+| `CC_LOG_MAX_SIZE` | 日志单文件大小阈值（MB），覆盖 `[log].max_size_mb` |
+| `CC_LOG_RETENTION_DAYS` | 归档保留天数，覆盖 `[log].retention_days` |
+| `CC_CONFIG_PATH` | 诊断（doctor）时用它定位 config |
+
+优先级：**`CC_*` 环境变量 > config `[log]` > 默认值**（见 advanced.md 日志段）。
+
+### 注入给 agent / CLI 自动读取的变量
+
+这些变量由 heron-connect 启动 agent 时**自动注入**（`CC_PROJECT` / `CC_SESSION_KEY` /
+`cc_data_dir` / `cc_project`），agent 内部跑 `heron-connect cron/send/relay/agent-sid`
+等命令时会自动读取它们补齐 `--project` / `--session-key`，无需手动传：
+
+| 变量 | 说明 |
+|------|------|
+| `CC_PROJECT` | 当前 project 名 |
+| `CC_SESSION_KEY` | 当前会话 key（`平台:用户:会话`） |
+| `cc_data_dir` / `cc_project` | 内部注入 agent options，一般无需关心 |
+
+### 启动相关
+
+| 变量 | 说明 |
+|------|------|
+| `CLAUDECODE` | 在 Claude Code 会话内启动子进程前需 `unset CLAUDECODE`，否则 Claude Code 拒绝作为子进程启动（见 INSTALL / gotchas） |
+
 ## 最小可运行配置（Claude Code + 飞书）
 
 ```toml
