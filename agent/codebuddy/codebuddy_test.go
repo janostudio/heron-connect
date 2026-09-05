@@ -154,7 +154,7 @@ var _ core.Agent = (*Agent)(nil)
 // ── launchArgs tests ────────────────────────────────────────
 
 func TestLaunchArgs_PlainPrompt(t *testing.T) {
-	args := launchArgs("hello world", "", "default", "")
+	args := launchArgs("hello world", "", "default", "", nil)
 	want := []string{"-p", "--output-format", "stream-json", "--", "hello world"}
 	if len(args) != len(want) {
 		t.Fatalf("launchArgs = %v, want %v", args, want)
@@ -171,7 +171,7 @@ func TestLaunchArgs_DashPrefixedPromptAfterEndOfOptions(t *testing.T) {
 	// "---". The CLI parser rejects such tokens as unknown options unless
 	// they appear after the "--" end-of-options marker.
 	prompt := "---\ndescription: \"audit\"\n---\n\n# audit body"
-	args := launchArgs(prompt, "sid-123", "yolo", "glm-5.3-ioa")
+	args := launchArgs(prompt, "sid-123", "yolo", "glm-5.3-ioa", nil)
 
 	sep := -1
 	for i, a := range args {
@@ -198,7 +198,7 @@ func TestLaunchArgs_DashPrefixedPromptAfterEndOfOptions(t *testing.T) {
 }
 
 func TestLaunchArgs_OptionalFlagsBeforeEndOfOptions(t *testing.T) {
-	args := launchArgs("hi", "sid-1", "yolo", "m1")
+	args := launchArgs("hi", "sid-1", "yolo", "m1", nil)
 	want := []string{
 		"-p", "--output-format", "stream-json",
 		"--resume", "sid-1",
@@ -212,11 +212,25 @@ func TestLaunchArgs_OptionalFlagsBeforeEndOfOptions(t *testing.T) {
 }
 
 func TestLaunchArgs_DefaultModeOmitsYoloFlag(t *testing.T) {
-	args := launchArgs("hi", "", "default", "")
+	args := launchArgs("hi", "", "default", "", nil)
 	for _, a := range args {
 		if a == "--dangerously-skip-permissions" {
 			t.Errorf("launchArgs should omit yolo flag in default mode, got %v", args)
 		}
+	}
+}
+
+func TestLaunchArgs_ExtraArgsBeforeEndOfOptions(t *testing.T) {
+	args := launchArgs("hi", "sid-1", "default", "m1", []string{"--system-prompt-file", "/tmp/sp.md"})
+	want := []string{
+		"-p", "--output-format", "stream-json",
+		"--resume", "sid-1",
+		"--model", "m1",
+		"--system-prompt-file", "/tmp/sp.md",
+		"--", "hi",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("launchArgs = %v, want %v", args, want)
 	}
 }
 

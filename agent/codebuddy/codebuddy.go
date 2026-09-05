@@ -36,6 +36,7 @@ type Agent struct {
 	workDir    string
 	model      string
 	mode       string // "default" | "yolo" (--dangerously-skip-permissions)
+	args       []string
 	sessionEnv []string
 	mu         sync.Mutex
 }
@@ -48,6 +49,7 @@ func New(opts map[string]any) (core.Agent, error) {
 	model, _ := opts["model"].(string)
 	mode, _ := opts["mode"].(string)
 	mode = normalizeMode(mode)
+	args := parseStringSlice(opts["args"])
 
 	if _, err := exec.LookPath("codebuddy"); err != nil {
 		return nil, fmt.Errorf("codebuddy: 'codebuddy' not found in PATH, install with: npm install -g @tencent-ai/codebuddy-code")
@@ -57,7 +59,33 @@ func New(opts map[string]any) (core.Agent, error) {
 		workDir: workDir,
 		model:   model,
 		mode:    mode,
+		args:    args,
 	}, nil
+}
+
+// parseStringSlice normalises an "args" config value ([]string or []any)
+// into a []string, mirroring agent/acp's helper so extra CLI arguments can
+// be passed through to the spawned codebuddy process.
+func parseStringSlice(v any) []string {
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case []string:
+		return append([]string(nil), x...)
+	case []any:
+		out := make([]string, 0, len(x))
+		for _, e := range x {
+			switch t := e.(type) {
+			case string:
+				out = append(out, t)
+			default:
+				out = append(out, fmt.Sprint(t))
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func normalizeMode(raw string) string {
@@ -134,10 +162,11 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	a.mu.Lock()
 	mode := a.mode
 	model := a.model
+	args := append([]string{}, a.args...)
 	extraEnv := append([]string{}, a.sessionEnv...)
 	a.mu.Unlock()
 
-	return newCodeBuddySession(ctx, a.workDir, model, mode, sessionID, extraEnv)
+	return newCodeBuddySession(ctx, a.workDir, model, mode, sessionID, args, extraEnv)
 }
 
 func (a *Agent) ListSessions(_ context.Context) ([]core.AgentSessionInfo, error) {

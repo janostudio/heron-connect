@@ -26,6 +26,7 @@ type codebuddySession struct {
 	workDir   string
 	model     string
 	mode      string
+	extraArgs []string
 	extraEnv  []string
 	events    chan core.Event
 	sessionID atomic.Value // stores string
@@ -48,7 +49,7 @@ type codebuddySession struct {
 // rejects tokens starting with "-" as unknown options, so without the marker
 // any prompt beginning with "-" (e.g. custom command files whose YAML
 // frontmatter starts with "---") fails with "error: unknown option".
-func launchArgs(prompt, sid, mode, model string) []string {
+func launchArgs(prompt, sid, mode, model string, extraArgs []string) []string {
 	args := []string{"-p", "--output-format", "stream-json"}
 
 	if sid != "" {
@@ -63,20 +64,25 @@ func launchArgs(prompt, sid, mode, model string) []string {
 		args = append(args, "--model", model)
 	}
 
+	// Extra args from config are appended before the end-of-options marker
+	// so they are treated as codebuddy CLI options, not prompt text.
+	args = append(args, extraArgs...)
+
 	return append(args, "--", prompt)
 }
 
-func newCodeBuddySession(ctx context.Context, workDir, model, mode, resumeID string, extraEnv []string) (*codebuddySession, error) {
+func newCodeBuddySession(ctx context.Context, workDir, model, mode, resumeID string, extraArgs, extraEnv []string) (*codebuddySession, error) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 
 	cs := &codebuddySession{
-		workDir:  workDir,
-		model:    model,
-		mode:     mode,
-		extraEnv: extraEnv,
-		events:   make(chan core.Event, 64),
-		ctx:      sessionCtx,
-		cancel:   cancel,
+		workDir:   workDir,
+		model:     model,
+		mode:      mode,
+		extraArgs: extraArgs,
+		extraEnv:  extraEnv,
+		events:    make(chan core.Event, 64),
+		ctx:       sessionCtx,
+		cancel:    cancel,
 	}
 	cs.alive.Store(true)
 
@@ -100,7 +106,7 @@ func (cs *codebuddySession) Send(prompt string, images []core.ImageAttachment, f
 	}
 
 	sid := cs.CurrentSessionID()
-	args := launchArgs(prompt, sid, cs.mode, cs.model)
+	args := launchArgs(prompt, sid, cs.mode, cs.model, cs.extraArgs)
 
 	slog.Debug("codebuddySession: launching", "resume", sid != "", "args_len", len(args))
 

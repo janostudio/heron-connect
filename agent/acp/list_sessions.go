@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,6 +72,59 @@ type acpConfigOption struct {
 	Type         string              `json:"type"`
 	CurrentValue string              `json:"currentValue"`
 	Options      []acpConfigOptValue `json:"options"`
+}
+
+// UnmarshalJSON tolerates both string and boolean encodings of the
+// currentValue field. The ACP spec types currentValue as a string, but
+// some agents (notably recent codebuddy builds) emit a bare JSON boolean
+// for type:"boolean" options such as "multitask". We normalise both to a
+// string so downstream model parsing stays string-typed.
+func (o *acpConfigOption) UnmarshalJSON(data []byte) error {
+	type plain struct {
+		ID           string              `json:"id"`
+		Name         string              `json:"name"`
+		Category     string              `json:"category"`
+		Type         string              `json:"type"`
+		CurrentValue json.RawMessage     `json:"currentValue"`
+		Options      []acpConfigOptValue `json:"options"`
+	}
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	o.ID = p.ID
+	o.Name = p.Name
+	o.Category = p.Category
+	o.Type = p.Type
+	o.Options = p.Options
+
+	if len(p.CurrentValue) == 0 {
+		o.CurrentValue = ""
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(p.CurrentValue, &s); err == nil {
+		o.CurrentValue = s
+		return nil
+	}
+	var b bool
+	if err := json.Unmarshal(p.CurrentValue, &b); err == nil {
+		o.CurrentValue = strconv.FormatBool(b)
+		return nil
+	}
+	var n float64
+	if err := json.Unmarshal(p.CurrentValue, &n); err == nil {
+		o.CurrentValue = strconv.FormatFloat(n, 'f', -1, 64)
+		return nil
+	}
+	// Anything else (null, object, array): keep the raw JSON text so we
+	// never error out, but normalise a bare null to the empty string.
+	if string(p.CurrentValue) == "null" {
+		o.CurrentValue = ""
+		return nil
+	}
+	o.CurrentValue = string(p.CurrentValue)
+	return nil
 }
 
 type acpConfigOptValue struct {

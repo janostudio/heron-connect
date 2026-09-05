@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.38 (2026-09-05)
+
+### Fixed
+
+- **`type = "acp"` 会话创建崩溃：`cannot unmarshal bool into ... currentValue of type string`**：新版 codebuddy 在 `session/new`/`config_option_update` 里返回 `type: "boolean"` 的配置项（如 `multitask`），其 `currentValue` 是 JSON 布尔而非字符串，heron-connect 的 ACP 解析器把 `currentValue` 固定当字符串解析，遇到布尔直接崩溃。现在 `acpConfigOption` 的 `currentValue` 解析兼容 string/bool/number/null/object/array 任意 JSON 形态并归一化为字符串，不再崩溃。
+
+### Added
+
+- **`type = "codebuddy"` 支持 `args` 透传**：codebuddy agent 此前只读取 `work_dir`/`model`/`mode`，配置里的 `args` 被忽略。现在 `args` 会按 `[]string`/`[]any` 解析并在 `--` 结束标记之前注入 CLI 参数（当作 codebuddy 选项而非 prompt 文本），可透传 `--system-prompt-file`、自定义 `--model` 等额外参数。
+
 ## v1.1.37 (2026-09-04)
 
 ### Fixed

@@ -590,6 +590,35 @@ func TestParseModels_mixedConfigOptions(t *testing.T) {
 	}
 }
 
+// ─── currentValue: string / boolean / object / null encodings ───────
+
+func TestConfigOptionUnmarshal_tolerantCurrentValue(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want string
+	}{
+		{"string", `{"id":"model","category":"model","currentValue":"glm-5.2-ioa"}`, "glm-5.2-ioa"},
+		{"bool true", `{"id":"multitask","type":"boolean","currentValue":true}`, "true"},
+		{"bool false", `{"id":"multitask","type":"boolean","currentValue":false}`, "false"},
+		{"number", `{"id":"x","currentValue":3}`, "3"},
+		{"null", `{"id":"x","currentValue":null}`, ""},
+		{"object", `{"id":"x","currentValue":{"k":"v"}}`, `{"k":"v"}`},
+		{"array", `{"id":"x","currentValue":[1,2]}`, `[1,2]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var o acpConfigOption
+			if err := json.Unmarshal([]byte(tc.json), &o); err != nil {
+				t.Fatalf("unmarshal failed: %v", err)
+			}
+			if o.CurrentValue != tc.want {
+				t.Fatalf("CurrentValue = %q, want %q", o.CurrentValue, tc.want)
+			}
+		})
+	}
+}
+
 // ─── Phase 3: usage_update with missing fields ──────────────────────
 
 func TestACPSession_usage_update_partialData(t *testing.T) {
