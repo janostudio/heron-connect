@@ -71,14 +71,14 @@ export function parseProgressCard(content: string): ProgressCardPayload | null {
 // blocks. The trailing index breaks ties for two blocks with identical text
 // (rare in practice but possible when the same tool is invoked twice with
 // the same input).
-function stableKey(item: ProgressCardEntry, idx: number): string {
+export function stableKey(item: ProgressCardEntry, idx: number): string {
   const snippet = (item.text || '').replace(/\s+/g, ' ').slice(0, 32);
   return `${item.kind}|${item.tool || ''}|${snippet}|${idx}`;
 }
 
 // ── tool call pairing & grouping ──
 
-interface ToolCall {
+export interface ToolCall {
   key: string;
   seq: number; // first-seen order, stable across payload updates modulo head truncation
   tool: string;
@@ -90,16 +90,16 @@ interface ToolCall {
   running: boolean; // tool_use seen, tool_result not yet
 }
 
-interface ToolGroup {
+export interface ToolGroup {
   tool: string;
   calls: ToolCall[];
 }
 
-type RenderUnit =
+export type RenderUnit =
   | { type: 'entry'; entry: ProgressCardEntry; key: string }
   | { type: 'group'; group: ToolGroup; key: string };
 
-function callKey(tool: string, input: string, result: string, idx: number): string {
+export function callKey(tool: string, input: string, result: string, idx: number): string {
   const a = input.replace(/\s+/g, ' ').slice(0, 32);
   const b = result.replace(/\s+/g, ' ').slice(0, 32);
   return `${tool}|${a}|${b}|${idx}`;
@@ -109,7 +109,7 @@ function callKey(tool: string, input: string, result: string, idx: number): stri
  * Pairs tool_use/tool_result entries by id and groups consecutive same-tool
  * calls. Non-tool entries (thinking/info/error) pass through untouched.
  */
-function buildUnits(items: ProgressCardEntry[]): RenderUnit[] {
+export function buildUnits(items: ProgressCardEntry[]): RenderUnit[] {
   // Pass 1 — pair use/result by id, keep first-seen order.
   const calls: ToolCall[] = [];
   const pending = new Map<string, ToolCall>();

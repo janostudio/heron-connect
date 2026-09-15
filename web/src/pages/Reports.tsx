@@ -2,6 +2,9 @@ import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router-dom';
 import { FileText, FileType2, ArrowLeft, ExternalLink, X } from 'lucide-react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
 import { Card, Badge, Button, EmptyState } from '@/components/ui';
 import { listReports, type ReportEntry } from '@/api/dashboard';
 import { listProjects, type ProjectSummary } from '@/api/projects';
@@ -12,8 +15,9 @@ import { formatTime } from '@/lib/utils';
 
 export function ReportsList() {
   const { t } = useTranslation();
+  const [params, setParams] = useSearchParams();
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [project, setProject] = useState('');
+  const [project, setProject] = useState(params.get('project') || '');
   const [reports, setReports] = useState<ReportEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -23,10 +27,25 @@ export function ReportsList() {
       .then((r) => {
         const projs = r.projects || [];
         setProjects(projs);
-        if (projs.length > 0) setProject((p) => p || projs[0].name);
+        if (projs.length > 0) {
+          setProject((p) => {
+            const valid = projs.some((x) => x.name === p);
+            return valid ? p : projs[0].name;
+          });
+        }
       })
       .catch((e) => setError(e.message));
   }, []);
+
+  // Keep the selected project in the URL so navigating away (e.g. into a
+  // report preview) and back restores the same project instead of resetting
+  // to the first one.
+  const selectProject = useCallback((name: string) => {
+    setProject(name);
+    const next = new URLSearchParams(params);
+    next.set('project', name);
+    setParams(next, { replace: true });
+  }, [params, setParams]);
 
   const load = useCallback(async () => {
     if (!project) return;
@@ -53,7 +72,7 @@ export function ReportsList() {
           {projects.map((p) => (
             <button
               key={p.name}
-              onClick={() => setProject(p.name)}
+              onClick={() => selectProject(p.name)}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
                 project === p.name
                   ? 'border-accent/50 bg-accent/10 text-accent'
@@ -151,7 +170,7 @@ export function ReportPreview() {
     <div className="space-y-4 animate-fade-in">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
-          <Link to="/reports"><Button variant="ghost" size="sm"><ArrowLeft size={14} /></Button></Link>
+          <Link to={`/reports?project=${encodeURIComponent(project)}`}><Button variant="ghost" size="sm"><ArrowLeft size={14} /></Button></Link>
           <h2 className="text-sm font-semibold text-gray-900 dark:text-white truncate">{path.split('/').pop()}</h2>
           <Badge className="text-[10px]">{project}</Badge>
         </div>
@@ -181,7 +200,11 @@ export function ReportPreview() {
         ) : mdText === null ? (
           <p className="text-xs text-gray-400 p-8 text-center">{t('common.loading')}</p>
         ) : (
-          <pre className="p-6 text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words max-h-[75vh] overflow-y-auto">{mdText}</pre>
+          <div className="prose prose-sm max-w-none dark:prose-invert p-6 max-h-[75vh] overflow-y-auto">
+            <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+              {mdText}
+            </Markdown>
+          </div>
         )}
       </Card>
     </div>

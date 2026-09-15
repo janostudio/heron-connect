@@ -3526,3 +3526,180 @@ func TestRemoveGlobalProvider_CleansUpProviderRefs(t *testing.T) {
 		t.Errorf("proj2 provider_refs: want [], got %v", refs2)
 	}
 }
+
+// ── Provider surgical-edit: comment/order/unknown-field preservation ─────
+
+func TestAddProviderToConfig_PreservesComments(t *testing.T) {
+	writeTestConfig(t, providerConfigWithCommentsTOML)
+
+	if err := AddProviderToConfig("demo", ProviderConfig{Name: "relay", APIKey: "sk-relay", BaseURL: "https://relay.example"}); err != nil {
+		t.Fatalf("AddProviderToConfig: %v", err)
+	}
+
+	text := readRawConfigText(t)
+	for _, want := range []string{
+		"# This is my config file",
+		"custom_top = \"keep_me\"",
+		"custom_option = \"still_here\"",
+		"keep inline comment",
+		"# inline comment",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q preserved, got:\n%s", want, text)
+		}
+	}
+	if !strings.Contains(text, `[[projects.agent.providers]]`) {
+		t.Fatalf("expected inline provider header present")
+	}
+	if !strings.Contains(text, `name = "relay"`) {
+		t.Fatalf("expected new provider 'relay' present, got:\n%s", text)
+	}
+
+	cfg := readTestConfig(t)
+	found := false
+	for _, p := range cfg.Projects[0].Agent.Providers {
+		if p.Name == "relay" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("relay provider not found in parsed config")
+	}
+}
+
+func TestRemoveProviderFromConfig_PreservesComments(t *testing.T) {
+	writeTestConfig(t, providerConfigWithCommentsTOML)
+
+	if err := RemoveProviderFromConfig("demo", "primary"); err != nil {
+		t.Fatalf("RemoveProviderFromConfig: %v", err)
+	}
+
+	text := readRawConfigText(t)
+	if !strings.Contains(text, "custom_top = \"keep_me\"") {
+		t.Fatalf("unknown top field lost, got:\n%s", text)
+	}
+	if !strings.Contains(text, `name = "backup"`) {
+		t.Fatalf("backup provider should remain, got:\n%s", text)
+	}
+	if strings.Contains(text, `name = "primary"`) {
+		t.Fatalf("primary provider should be removed, got:\n%s", text)
+	}
+	if strings.Contains(text, "sk-primary") {
+		t.Fatalf("primary api_key should be removed, got:\n%s", text)
+	}
+
+	cfg := readTestConfig(t)
+	for _, p := range cfg.Projects[0].Agent.Providers {
+		if p.Name == "primary" {
+			t.Fatalf("primary still present in parsed config")
+		}
+	}
+}
+
+func TestAddGlobalProvider_PreservesComments(t *testing.T) {
+	writeTestConfig(t, globalProviderRefConfigTOML)
+
+	if err := AddGlobalProvider(ProviderConfig{Name: "prov-c", APIKey: "key-c", BaseURL: "https://c.example"}); err != nil {
+		t.Fatalf("AddGlobalProvider: %v", err)
+	}
+
+	text := readRawConfigText(t)
+	if !strings.Contains(text, "# global provider refs") {
+		t.Fatalf("top comment lost, got:\n%s", text)
+	}
+	if !strings.Contains(text, `name = "prov-c"`) {
+		t.Fatalf("new global provider prov-c missing, got:\n%s", text)
+	}
+
+	cfg := readTestConfig(t)
+	found := false
+	for _, p := range cfg.Providers {
+		if p.Name == "prov-c" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("prov-c not found in parsed global providers")
+	}
+}
+
+func TestUpdateGlobalProvider_PreservesOtherProviders(t *testing.T) {
+	writeTestConfig(t, multiGlobalProviderTOML)
+
+	if err := UpdateGlobalProvider("prov-a", ProviderConfig{Name: "prov-a", APIKey: "key-a2", BaseURL: "https://a2.example"}); err != nil {
+		t.Fatalf("UpdateGlobalProvider: %v", err)
+	}
+
+	text := readRawConfigText(t)
+	if !strings.Contains(text, `name = "prov-b"`) {
+		t.Fatalf("prov-b should remain after updating prov-a, got:\n%s", text)
+	}
+	if !strings.Contains(text, `api_key = "key-b"`) {
+		t.Fatalf("prov-b api_key should remain, got:\n%s", text)
+	}
+	if !strings.Contains(text, `api_key = "key-a2"`) {
+		t.Fatalf("prov-a api_key should be updated, got:\n%s", text)
+	}
+
+	cfg := readTestConfig(t)
+	for _, p := range cfg.Providers {
+		if p.Name == "prov-a" && p.APIKey != "key-a2" {
+			t.Fatalf("prov-a api_key = %q, want key-a2", p.APIKey)
+		}
+	}
+}
+
+func TestSaveProviderRefs_PreservesComments(t *testing.T) {
+	writeTestConfig(t, globalProviderRefConfigTOML)
+
+	if err := SaveProviderRefs("demo", []string{"shared-openai", "extra"}); err != nil {
+		t.Fatalf("SaveProviderRefs: %v", err)
+	}
+
+	text := readRawConfigText(t)
+	if !strings.Contains(text, "# global provider refs") {
+		t.Fatalf("top comment lost, got:\n%s", text)
+	}
+	if !strings.Contains(text, `provider_refs = ["shared-openai", "extra"]`) {
+		t.Fatalf("provider_refs should be updated, got:\n%s", text)
+	}
+	if !strings.Contains(text, `api_key = "sk-shared"`) {
+		t.Fatalf("global provider definition should be untouched, got:\n%s", text)
+	}
+	cfg := readTestConfig(t)
+	if len(cfg.Projects[0].Agent.ProviderRefs) != 2 || cfg.Projects[0].Agent.ProviderRefs[1] != "extra" {
+		t.Fatalf("provider_refs = %v, want [shared-openai extra]", cfg.Projects[0].Agent.ProviderRefs)
+	}
+}
+
+const multiGlobalProviderTOML = `# multi global providers
+[[providers]]
+name = "prov-a"
+api_key = "key-a"
+
+[[providers]]
+name = "prov-b"
+api_key = "key-b"
+
+[[projects]]
+name = "demo"
+work_dir = "/tmp/demo"
+
+[projects.agent]
+type = "claudecode"
+
+[[projects.platforms]]
+type = "telegram"
+
+[projects.platforms.options]
+token = "demo-token"
+`
+
+func readRawConfigText(t *testing.T) string {
+	t.Helper()
+	content, err := os.ReadFile(ConfigPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	return string(content)
+}

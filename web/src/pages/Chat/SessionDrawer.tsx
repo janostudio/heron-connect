@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   X, MessageSquare, Circle, User, Bot, Plus, Loader2, Clock, Pin, PinOff, Pencil,
@@ -28,7 +29,10 @@ interface Props {
   onTogglePin?: (session: Session) => void;
 }
 
-export default function SessionDrawer({ open, onClose, sessions, currentSessionId, onSelect, onNewSession, onRename, onTogglePin }: Props) {
+// Memoized: the drawer is always mounted (closed state is CSS-gated via
+// translate-x-full), so without memo it re-rendered on every parent render —
+// including the 5s session poll and every streaming delta.
+function SessionDrawer({ open, onClose, sessions, currentSessionId, onSelect, onNewSession, onRename, onTogglePin }: Props) {
   const { t } = useTranslation();
 
   return (
@@ -165,3 +169,5 @@ export default function SessionDrawer({ open, onClose, sessions, currentSessionI
     </>
   );
 }
+
+export default memo(SessionDrawer);

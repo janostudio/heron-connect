@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { slashCommands } from './CommandPalette';
 import SelectList from './SelectList';
+import { parseListItemText } from './chatHelpers';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -19,15 +20,6 @@ interface Props {
   result: CommandResult | null;
   onClose: () => void;
   onCardAction?: (value: string) => void;
-}
-
-/** Parse "**command** description" into { cmd, desc }. */
-function parseListItemText(text: string): { cmd: string; desc: string } {
-  const m = text.match(/^\*\*(.+?)\*\*\s*(.*)/);
-  if (m) return { cmd: m[1], desc: m[2] };
-  const sp = text.indexOf(' ');
-  if (sp > 0) return { cmd: text.slice(0, sp), desc: text.slice(sp + 1) };
-  return { cmd: text, desc: '' };
 }
 
 /** Renders simple inline bold (**text**) without a full markdown parser. */

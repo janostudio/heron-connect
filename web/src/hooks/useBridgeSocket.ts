@@ -1,5 +1,9 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import api from '@/api/client';
+import { bridgeConfigKey, bridgeSocketUrl, type BridgeConfig } from './bridgeConfig';
+
+// Re-exported so existing importers keep working.
+export type { BridgeConfig };
 
 export type BridgeIncoming =
   | { type: 'register_ack'; ok: boolean; error?: string }
@@ -15,12 +19,6 @@ export type BridgeIncoming =
   | { type: 'error'; code: string; message: string }
   | { type: 'pong'; ts: number }
   | { type: string; [key: string]: any };
-
-export interface BridgeConfig {
-  port: number;
-  path: string;
-  token: string;
-}
 
 // Media attachments sent alongside a chat message over the bridge `message`
 // frame. `data` is the raw base64 payload (no data: URL prefix). Backend
@@ -101,13 +99,19 @@ export function useBridgeSocket({ bridgeCfg, platformName = 'web', sessionKey, p
     send({ type: 'preview_ack', ref_id: refId, preview_handle: handle });
   }, [send]);
 
-  useEffect(() => {
-    if (!bridgeCfg) return;
+  // The connect effect must not re-run just because the caller handed us a
+  // fresh (but equal) config object. fetchBridgeConfig() builds a new object
+  // on every call, and the chat page re-fetches it, which used to tear down
+  // and reopen the WebSocket mid-turn — dropping the in-flight stream.
+  // Depend on the actual routing values instead, read from a ref.
+  const bridgeCfgRef = useRef(bridgeCfg);
+  bridgeCfgRef.current = bridgeCfg;
+  const cfgKey = bridgeConfigKey(bridgeCfg);
 
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Use current page host:port so the request goes through the Vite/nginx proxy
-    // instead of directly hitting the bridge port (which may not be reachable).
-    const wsUrl = `${proto}//${window.location.host}${bridgeCfg.path}?token=${encodeURIComponent(bridgeCfg.token)}`;
+  useEffect(() => {
+    if (!cfgKey) return;
+
+    const wsUrl = bridgeSocketUrl(bridgeCfgRef.current!, window.location);
 
     let ws: WebSocket;
     let reconnectTimer: ReturnType<typeof setTimeout>;
@@ -179,7 +183,7 @@ export function useBridgeSocket({ bridgeCfg, platformName = 'web', sessionKey, p
       }
       setStatus('disconnected');
     };
-  }, [bridgeCfg, platformName, send]);
+  }, [cfgKey, platformName, send]);
 
   return { status, send, sendMessage, sendCardAction, sendPreviewAck };
 }

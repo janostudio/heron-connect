@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.1.40 (2026-09-15)
+
+> 注：v1.1.39 的 npm 发布在服务端留下了无法覆盖的 staged 记录（`E409 Cannot publish over previously staged version`），版本号跳过，内容与本版完全相同。
+
+### Fixed
+
+- **Web 后台只有当前会话能收消息（切走的会话丢消息）**：bridge 会把每个帧**多播**给该平台所有 Web 客户端（`sendToAdapter` 不按会话过滤），但前端帧处理器拿"当前显示的会话"做过滤，不匹配就直接丢弃——于是切到另一个会话时，前一个会话正在进行的 turn 输出被永久丢弃；切回来又被 `getSession()` 拉到的历史**整体覆盖**，连未落库的流式进度也一起没了。现在前端按帧自带的 `session_id`（回退 `session_key`）把帧**路由到对应会话自己的 slice**，每个会话独立累积 messages/typing/命令面板/进度句柄；历史改为**合并**（`history ++ 未落库的实时尾部`）而非覆盖。效果：后台会话持续接收并累积输出，切走再切回能看到期间的完整进度卡片与最终回答。
+  - 关键细节：`typing_start`/`typing_stop` 帧**只带 session_key、没有 session_id**（后端不为其打标），因此路由必须维护 session_key → id 索引作为回退；未落库的新会话同样只能靠 key 路由。
+  - 终止事件只结算**自己**那个会话（原来会误清其他会话在途的 streaming 标志，导致"切走再回来卡在 running"）；只有连接断开才结算全部会话。
+
+- **Web 后台长时间打开后卡顿**：根因不是内存泄漏，而是**渲染成本随会话长度线性增长**——每个流式增量都会让全部历史消息重渲染，并对每条 assistant 消息重跑 markdown 解析（react-markdown + remark-gfm + rehype-highlight）。现已：抽出 memo 化的 `MessageRow` 与全部叶子渲染器（并把每次渲染新建的函数 identity 提升为 `useCallback`，否则 memo 全部失效）；reducer 严格保持未变行的对象引用；滚动改为"仅在贴底时跟随 + 流式期间瞬时滚动 + rAF 合并"（原来每次增量都触发 smooth 滚动，动画排队导致掉帧）；5 秒会话轮询加签名比对（数据无变化不再 setState）。
+  - 顺带修复：切换会话时 `navigate()` 与 `fetchData` 双路并发同一份 `getSession`+history 加载（谁慢谁覆盖），现统一为单路并加序号守卫丢弃过期响应；拖拽预览分栏中途卸载会泄漏 document 监听器并残留 `body` 鼠标样式；历史图片改为 blob URL + 滚动到可视区才加载（原来每张都读成 base64 常驻内存）。
+  - `useBridgeSocket` 的连接 effect 原依赖配置**对象**，而配置每次重取都是新对象，会在 turn 进行中拆掉 WebSocket 重连、打断流式输出；现改为依赖 `port|path|token` 字符串键（真实变化仍会重连）。
+
+### Added
+
+- **Web 前端单元测试（189 个，本地开发用）**：`web/` 此前无任何测试。新增 vitest + 9 个测试文件，覆盖会话 reducer（帧路由、流式生命周期、工具进度卡片配对与分组、history 合并幂等性、命令面板、引用保持）、多会话并发/竞态、session_key 与后端 `MintWebSessionKey` 的格式契约、bridge 配置键与 URL、命令分类、文件类型判断、回复页脚剥离、auth/theme store。运行方式：`cd web && npm test`（未接入 CI）。
+
+- **`type = "heron"` 支持 `model` 覆盖**：heron agent 新增 `model` 选项，以 `--model` 透传给 heron-ai，用于覆盖默认模型（由 heron-ai 自行在 `.agents/models.json` 中解析）；只影响默认模型，不会扰动 flow 内各 agent 的模型分配。同时提供 `SetModel` 运行时接口，下次会话生效。
+
+### Changed
+
+- **`config.toml` 的 provider 写回改为"外科手术式"编辑**：新增/修改/删除 provider 时不再整体重写文件，而是按行定位并只替换目标 `[[providers]]` / `[[projects.agent.providers]]` 块，保留注释、字段顺序以及未被触碰的块中的未知字段；删除 provider 时同步清理各项目的 `provider_refs`。
+
+- **Web 报告中心：项目选择持久化到 URL**：所选项目写入 `?project=`，从报告预览返回或刷新后仍停留在同一项目，而不是重置为第一个；项目列表变化时也会校正失效的选择。
+
 ## v1.1.38 (2026-09-05)
 
 ### Fixed

@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1216,7 +1217,7 @@ func AddProviderToConfig(projectName string, provider ProviderConfig) error {
 		return fmt.Errorf("parse config: %w", err)
 	}
 
-	found := false
+	projectIdx := -1
 	for i := range cfg.Projects {
 		if cfg.Projects[i].Name == projectName {
 			for _, existing := range cfg.Projects[i].Agent.Providers {
@@ -1224,15 +1225,42 @@ func AddProviderToConfig(projectName string, provider ProviderConfig) error {
 					return fmt.Errorf("provider %q already exists in project %q", provider.Name, projectName)
 				}
 			}
-			cfg.Projects[i].Agent.Providers = append(cfg.Projects[i].Agent.Providers, provider)
-			found = true
+			projectIdx = i
 			break
 		}
 	}
-	if !found {
+	if projectIdx < 0 {
 		return fmt.Errorf("project %q not found in config", projectName)
 	}
-	return saveConfig(cfg)
+
+	lines, hadTrailing := splitConfigLines(string(data))
+	spans := buildRawProjectSpans(lines)
+	if projectIdx >= len(spans) {
+		return fmt.Errorf("project %q located in parsed config but not raw file", projectName)
+	}
+	projSpan := spans[projectIdx]
+
+	block := renderProviderBlock("[[projects.agent.providers]]", provider)
+	// Insert with a leading blank line. If the project already has inline
+	// providers, append after the last one; otherwise place it before the
+	// first platform block (or at the end of the project).
+	var insertAt int
+	if len(projSpan.agentProviders) > 0 {
+		insertAt = projSpan.agentProviders[len(projSpan.agentProviders)-1].end + 1
+	} else if len(projSpan.platforms) > 0 {
+		insertAt = projSpan.platforms[0].start
+	} else {
+		insertAt = projSpan.end + 1
+	}
+	if insertAt > len(lines) {
+		insertAt = len(lines)
+	}
+	// Ensure a blank line separates the new block from the preceding content.
+	if insertAt > 0 && strings.TrimSpace(lines[insertAt-1]) != "" {
+		block = append([]string{""}, block...)
+	}
+	lines = insertLines(lines, insertAt, block)
+	return writeRawConfig(joinConfigLines(lines, hadTrailing))
 }
 
 // RemoveProviderFromConfig removes a provider from a project's agent config and saves.
@@ -1253,35 +1281,111 @@ func RemoveProviderFromConfig(projectName, providerName string) error {
 		return fmt.Errorf("parse config: %w", err)
 	}
 
-	found := false
+	projectIdx := -1
+	isInline := false
+	isRef := false
 	for i := range cfg.Projects {
 		if cfg.Projects[i].Name != projectName {
 			continue
 		}
-		// Check inline providers
-		providers := cfg.Projects[i].Agent.Providers
-		for j := range providers {
-			if providers[j].Name == providerName {
-				cfg.Projects[i].Agent.Providers = append(providers[:j], providers[j+1:]...)
-				found = true
-				break
+		projectIdx = i
+		for _, p := range cfg.Projects[i].Agent.Providers {
+			if p.Name == providerName {
+				isInline = true
 			}
 		}
-		// Also remove from provider_refs if present
-		refs := cfg.Projects[i].Agent.ProviderRefs
-		for j := range refs {
-			if refs[j] == providerName {
-				cfg.Projects[i].Agent.ProviderRefs = append(refs[:j], refs[j+1:]...)
-				found = true
-				break
+		for _, r := range cfg.Projects[i].Agent.ProviderRefs {
+			if r == providerName {
+				isRef = true
 			}
 		}
 		break
 	}
-	if !found {
+	if projectIdx < 0 || (!isInline && !isRef) {
 		return fmt.Errorf("provider %q not found in project %q", providerName, projectName)
 	}
-	return saveConfig(cfg)
+
+	lines, hadTrailing := splitConfigLines(string(data))
+	spans := buildRawProjectSpans(lines)
+	if projectIdx >= len(spans) {
+		return fmt.Errorf("project %q located in parsed config but not raw file", projectName)
+	}
+	projSpan := spans[projectIdx]
+
+	changed := false
+
+	if isInline {
+		// Find the inline provider block by name and delete it (including any
+		// sub-tables like [[projects.agent.providers.models]]).
+		for _, ps := range projSpan.agentProviders {
+			if ps.nameLine >= 0 && matchTomlStringValue(lines[ps.nameLine], providerName) {
+				lines = deleteLines(lines, ps.start, ps.end)
+				changed = true
+				break
+			}
+		}
+	}
+
+	if isRef {
+		// Remove the name from the `provider_refs = [...]` line in [projects.agent].
+		start := projSpan.agentStart
+		end := projSpan.agentEnd
+		if start < 0 {
+			start = projSpan.start + 1
+		}
+		if end < start {
+			end = projSpan.end
+		}
+		idx := findInlineArrayLine(lines, start, end, "provider_refs")
+		if idx >= 0 {
+			newLine, removed := removeFromInlineArrayLine(lines[idx], providerName)
+			if removed {
+				// If no elements remain, drop the line entirely.
+				body := strings.TrimSpace(newLine)
+				eq := strings.Index(body, "=")
+				if eq >= 0 {
+					rest := strings.TrimSpace(body[eq+1:])
+					rest = strings.TrimSuffix(rest, extractLineComment(newLine))
+					rest = strings.TrimSpace(rest)
+					if rest == "[]" {
+						lines = deleteLines(lines, idx, idx)
+					} else {
+						lines[idx] = newLine
+					}
+				} else {
+					lines[idx] = newLine
+				}
+				changed = true
+			}
+		}
+	}
+
+	if !changed {
+		return fmt.Errorf("provider %q not found in project %q", providerName, projectName)
+	}
+	return writeRawConfig(joinConfigLines(lines, hadTrailing))
+}
+
+// matchTomlStringValue reports whether a `key = "value"` line's value equals
+// the given string (after unquoting).
+func matchTomlStringValue(line, value string) bool {
+	eq := strings.Index(line, "=")
+	if eq < 0 {
+		return false
+	}
+	raw := strings.TrimSpace(line[eq+1:])
+	return unquoteTomlScalar(raw) == value
+}
+
+// unquoteTomlScalar returns the unquoted form of a TOML scalar token if it is
+// a quoted string, otherwise the token verbatim.
+func unquoteTomlScalar(raw string) string {
+	if len(raw) >= 2 && raw[0] == '"' {
+		if unquoted, err := strconv.Unquote(raw); err == nil {
+			return unquoted
+		}
+	}
+	return raw
 }
 
 // ResolveProviderRefs merges global [[providers]] into each project that uses
@@ -1368,35 +1472,97 @@ func ListGlobalProviders() ([]ProviderConfig, error) {
 func AddGlobalProvider(provider ProviderConfig) error {
 	configMu.Lock()
 	defer configMu.Unlock()
-	cfg, err := loadLocked()
+	if ConfigPath == "" {
+		return fmt.Errorf("config path not set")
+	}
+	data, err := os.ReadFile(ConfigPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("read config: %w", err)
+	}
+	cfg := &Config{}
+	if err := toml.Unmarshal(data, cfg); err != nil {
+		return fmt.Errorf("parse config: %w", err)
 	}
 	for _, existing := range cfg.Providers {
 		if existing.Name == provider.Name {
 			return fmt.Errorf("global provider %q already exists", provider.Name)
 		}
 	}
-	cfg.Providers = append(cfg.Providers, provider)
-	return saveConfig(cfg)
+
+	lines, hadTrailing := splitConfigLines(string(data))
+	block := renderProviderBlock("[[providers]]", provider)
+
+	spans := buildRawGlobalProviderSpans(lines)
+	var insertAt int
+	if len(spans) > 0 {
+		// Append after the last [[providers]] block.
+		insertAt = spans[len(spans)-1].end + 1
+	} else {
+		// No existing providers: insert before the first top-level table header,
+		// or at the end if there is none.
+		insertAt = len(lines)
+		for i := range lines {
+			if isTopLevelTableHeader(lines[i]) {
+				insertAt = i
+				break
+			}
+		}
+	}
+	if insertAt > len(lines) {
+		insertAt = len(lines)
+	}
+	if insertAt > 0 && strings.TrimSpace(lines[insertAt-1]) != "" {
+		block = append([]string{""}, block...)
+	}
+	lines = insertLines(lines, insertAt, block)
+	return writeRawConfig(joinConfigLines(lines, hadTrailing))
 }
 
 // UpdateGlobalProvider replaces an existing global provider by name.
 func UpdateGlobalProvider(name string, provider ProviderConfig) error {
 	configMu.Lock()
 	defer configMu.Unlock()
-	cfg, err := loadLocked()
-	if err != nil {
-		return err
+	if ConfigPath == "" {
+		return fmt.Errorf("config path not set")
 	}
+	data, err := os.ReadFile(ConfigPath)
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+	cfg := &Config{}
+	if err := toml.Unmarshal(data, cfg); err != nil {
+		return fmt.Errorf("parse config: %w", err)
+	}
+	exists := false
 	for i := range cfg.Providers {
 		if cfg.Providers[i].Name == name {
-			provider.Name = name // name is immutable in update
-			cfg.Providers[i] = provider
-			return saveConfig(cfg)
+			exists = true
+			break
 		}
 	}
-	return fmt.Errorf("global provider %q not found", name)
+	if !exists {
+		return fmt.Errorf("global provider %q not found", name)
+	}
+	provider.Name = name // name is immutable in update
+
+	lines, hadTrailing := splitConfigLines(string(data))
+	spans := buildRawGlobalProviderSpans(lines)
+	var target *rawGlobalProviderSpan
+	for i := range spans {
+		if spans[i].nameLine >= 0 && matchTomlStringValue(lines[spans[i].nameLine], name) {
+			target = &spans[i]
+			break
+		}
+	}
+	if target == nil {
+		return fmt.Errorf("global provider %q located in parsed config but not raw file", name)
+	}
+
+	// Replace the whole block in place.
+	block := renderProviderBlock("[[providers]]", provider)
+	lines = deleteLines(lines, target.start, target.end)
+	lines = insertLines(lines, target.start, block)
+	return writeRawConfig(joinConfigLines(lines, hadTrailing))
 }
 
 // RemoveGlobalProvider removes a provider from top-level [[providers]] and
@@ -1404,14 +1570,20 @@ func UpdateGlobalProvider(name string, provider ProviderConfig) error {
 func RemoveGlobalProvider(name string) error {
 	configMu.Lock()
 	defer configMu.Unlock()
-	cfg, err := loadLocked()
+	if ConfigPath == "" {
+		return fmt.Errorf("config path not set")
+	}
+	data, err := os.ReadFile(ConfigPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("read config: %w", err)
+	}
+	cfg := &Config{}
+	if err := toml.Unmarshal(data, cfg); err != nil {
+		return fmt.Errorf("parse config: %w", err)
 	}
 	found := false
 	for i := range cfg.Providers {
 		if cfg.Providers[i].Name == name {
-			cfg.Providers = append(cfg.Providers[:i], cfg.Providers[i+1:]...)
 			found = true
 			break
 		}
@@ -1419,16 +1591,60 @@ func RemoveGlobalProvider(name string) error {
 	if !found {
 		return fmt.Errorf("global provider %q not found", name)
 	}
-	for i := range cfg.Projects {
-		refs := cfg.Projects[i].Agent.ProviderRefs
-		for j := 0; j < len(refs); j++ {
-			if refs[j] == name {
-				cfg.Projects[i].Agent.ProviderRefs = append(refs[:j], refs[j+1:]...)
-				break
-			}
+
+	lines, hadTrailing := splitConfigLines(string(data))
+
+	// 1. Delete the [[providers]] block.
+	spans := buildRawGlobalProviderSpans(lines)
+	var target *rawGlobalProviderSpan
+	for i := range spans {
+		if spans[i].nameLine >= 0 && matchTomlStringValue(lines[spans[i].nameLine], name) {
+			target = &spans[i]
+			break
 		}
 	}
-	return saveConfig(cfg)
+	if target == nil {
+		return fmt.Errorf("global provider %q located in parsed config but not raw file", name)
+	}
+	lines = deleteLines(lines, target.start, target.end)
+
+	// 2. Strip the name from every project's provider_refs.
+	projSpans := buildRawProjectSpans(lines)
+	for i := range cfg.Projects {
+		if i >= len(projSpans) {
+			continue
+		}
+		ps := projSpans[i]
+		start := ps.agentStart
+		end := ps.agentEnd
+		if start < 0 {
+			start = ps.start + 1
+		}
+		if end < start {
+			end = ps.end
+		}
+		idx := findInlineArrayLine(lines, start, end, "provider_refs")
+		if idx < 0 {
+			continue
+		}
+		newLine, removed := removeFromInlineArrayLine(lines[idx], name)
+		if !removed {
+			continue
+		}
+		body := strings.TrimSpace(newLine)
+		eq := strings.Index(body, "=")
+		rest := ""
+		if eq >= 0 {
+			rest = strings.TrimSpace(body[eq+1:])
+			rest = strings.TrimSpace(strings.TrimSuffix(rest, extractLineComment(newLine)))
+		}
+		if rest == "[]" {
+			lines = deleteLines(lines, idx, idx)
+		} else {
+			lines[idx] = newLine
+		}
+	}
+	return writeRawConfig(joinConfigLines(lines, hadTrailing))
 }
 
 func loadLocked() (*Config, error) {
@@ -2969,6 +3185,332 @@ func extractLineComment(line string) string {
 	return ""
 }
 
+// ── Provider surgical-edit helpers ─────────────────────────────────────
+//
+// These helpers render and locate provider blocks so the provider write-back
+// functions (AddProviderToConfig, RemoveGlobalProvider, etc.) can edit
+// config.toml line-by-line, preserving comments, field order, and unknown
+// fields outside the touched provider block. They complement the generic
+// primitives above (splitConfigLines / upsertTomlStringKey / writeRawConfig).
+
+// quoteTomlStringArray renders a []string as a TOML inline array, e.g.
+// `["claudecode", "codex"]`.
+func quoteTomlStringArray(ss []string) string {
+	parts := make([]string, len(ss))
+	for i, s := range ss {
+		parts[i] = quoteTomlString(s)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// sortedMapKeys returns the keys of a map[string]string in sorted order for
+// deterministic output.
+func sortedMapKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// renderProviderBlock renders a complete provider block including its table
+// header. The header must already be bracketed, e.g. "[[providers]]" or
+// "[[projects.agent.providers]]". Sub-tables (models, env, codex, …) are
+// emitted relative to the parent header path.
+func renderProviderBlock(header string, p ProviderConfig) []string {
+	// Derive the table path for sub-tables from the header, e.g.
+	// "[[providers]]" → "providers", "[[projects.agent.providers]]" → "projects.agent.providers".
+	path := strings.TrimPrefix(header, "[")
+	path = strings.TrimSuffix(path, "]")
+	path = strings.TrimSpace(path)
+
+	out := []string{header}
+	if p.Name != "" {
+		out = append(out, "name = "+quoteTomlString(p.Name))
+	}
+	if p.APIKey != "" {
+		out = append(out, "api_key = "+quoteTomlString(p.APIKey))
+	}
+	if p.BaseURL != "" {
+		out = append(out, "base_url = "+quoteTomlString(p.BaseURL))
+	}
+	if p.Model != "" {
+		out = append(out, "model = "+quoteTomlString(p.Model))
+	}
+	if p.Thinking != "" {
+		out = append(out, "thinking = "+quoteTomlString(p.Thinking))
+	}
+	if len(p.AgentTypes) > 0 {
+		out = append(out, "agent_types = "+quoteTomlStringArray(p.AgentTypes))
+	}
+	if len(p.Env) > 0 {
+		out = append(out, "")
+		out = append(out, "["+path+".env]")
+		for _, k := range sortedMapKeys(p.Env) {
+			out = append(out, k+" = "+quoteTomlString(p.Env[k]))
+		}
+	}
+	if len(p.Endpoints) > 0 {
+		out = append(out, "")
+		out = append(out, "["+path+".endpoints]")
+		for _, k := range sortedMapKeys(p.Endpoints) {
+			out = append(out, k+" = "+quoteTomlString(p.Endpoints[k]))
+		}
+	}
+	if len(p.AgentModels) > 0 {
+		out = append(out, "")
+		out = append(out, "["+path+".agent_models]")
+		for _, k := range sortedMapKeys(p.AgentModels) {
+			out = append(out, k+" = "+quoteTomlString(p.AgentModels[k]))
+		}
+	}
+	if len(p.Models) > 0 {
+		out = append(out, "")
+		for _, m := range p.Models {
+			out = append(out, "[["+path+".models]]")
+			out = append(out, "model = "+quoteTomlString(m.Model))
+			if m.Alias != "" {
+				out = append(out, "alias = "+quoteTomlString(m.Alias))
+			}
+		}
+	}
+	if p.Codex != nil {
+		out = append(out, "")
+		out = append(out, "["+path+".codex]")
+		if p.Codex.EnvKey != "" {
+			out = append(out, "env_key = "+quoteTomlString(p.Codex.EnvKey))
+		}
+		if p.Codex.WireAPI != "" {
+			out = append(out, "wire_api = "+quoteTomlString(p.Codex.WireAPI))
+		}
+		if len(p.Codex.HTTPHeaders) > 0 {
+			out = append(out, "")
+			out = append(out, "["+path+".codex.http_headers]")
+			for _, k := range sortedMapKeys(p.Codex.HTTPHeaders) {
+				out = append(out, k+" = "+quoteTomlString(p.Codex.HTTPHeaders[k]))
+			}
+		}
+	}
+	return out
+}
+
+// rawGlobalProviderSpan locates one top-level [[providers]] block.
+type rawGlobalProviderSpan struct {
+	start    int // [[providers]] header line
+	end      int // last line of the block (including sub-tables)
+	nameLine int // line with `name = "..."`, -1 if absent
+}
+
+// buildRawGlobalProviderSpans scans the file for top-level [[providers]]
+// blocks and records their line spans. Each span extends to the line before
+// the next top-level table header (any `[...]` at column 0 that is not a
+// sub-table of this provider).
+func buildRawGlobalProviderSpans(lines []string) []rawGlobalProviderSpan {
+	starts := make([]int, 0, 4)
+	for i := range lines {
+		if matchTableHeader(lines[i], "[[providers]]") {
+			starts = append(starts, i)
+		}
+	}
+	spans := make([]rawGlobalProviderSpan, 0, len(starts))
+	for i, start := range starts {
+		end := len(lines) - 1
+		if i+1 < len(starts) {
+			end = starts[i+1] - 1
+		}
+		// Sub-tables like [providers.env] / [[providers.models]] belong to this
+		// block; stop at the next top-level table header (e.g. [[projects]],
+		// [display], [log], another [[providers]] already handled above).
+		for j := start + 1; j <= end; j++ {
+			if isTopLevelTableHeader(lines[j]) {
+				end = j - 1
+				break
+			}
+		}
+		sp := rawGlobalProviderSpan{start: start, end: end, nameLine: -1}
+		for j := start + 1; j <= end; j++ {
+			if matchTomlStringKey(lines[j], "name") {
+				sp.nameLine = j
+				break
+			}
+		}
+		spans = append(spans, sp)
+	}
+	return spans
+}
+
+// isTopLevelTableHeader reports whether a line is a top-level table header
+// (single `[x]` or `[[x]]`, i.e. no dot in the table name). Used to bound a
+// top-level [[providers]] block against its sub-tables ([providers.env] has a
+// dot, so it is NOT top-level).
+func isTopLevelTableHeader(line string) bool {
+	t := strings.TrimSpace(line)
+	if !strings.HasPrefix(t, "[") {
+		return false
+	}
+	// Extract the table name between the brackets.
+	inner := strings.TrimPrefix(t, "[")
+	inner = strings.TrimPrefix(inner, "[")
+	inner = strings.TrimSuffix(inner, "]")
+	inner = strings.TrimSuffix(inner, "]")
+	inner = strings.TrimSpace(inner)
+	if inner == "" {
+		return false
+	}
+	// Top-level headers have no dot in their name.
+	return !strings.Contains(inner, ".")
+}
+
+// deleteLines removes lines[start:end+1] (inclusive) and returns a new slice.
+func deleteLines(lines []string, start, end int) []string {
+	if start < 0 || end < start || start >= len(lines) {
+		return lines
+	}
+	if end >= len(lines) {
+		end = len(lines) - 1
+	}
+	out := make([]string, 0, len(lines)-(end-start+1))
+	out = append(out, lines[:start]...)
+	out = append(out, lines[end+1:]...)
+	return out
+}
+
+// findInlineArrayLine locates the line `key = [...]` within [start,end].
+// Returns -1 if not found.
+func findInlineArrayLine(lines []string, start, end int, key string) int {
+	if start < 0 {
+		start = 0
+	}
+	if end >= len(lines) {
+		end = len(lines) - 1
+	}
+	for i := start; i <= end; i++ {
+		if matchTomlStringKey(lines[i], key) {
+			return i
+		}
+	}
+	return -1
+}
+
+// setInlineArrayLine upserts `key = ["a", "b"]` within [start,end], preserving
+// any trailing comment on an existing line. An empty values slice removes the
+// line entirely (matching omitempty semantics).
+func setInlineArrayLine(lines []string, start, end int, key string, values []string) []string {
+	idx := findInlineArrayLine(lines, start, end, key)
+	if len(values) == 0 {
+		if idx >= 0 {
+			return deleteLines(lines, idx, idx)
+		}
+		return lines
+	}
+	line := key + " = " + quoteTomlStringArray(values)
+	if idx >= 0 {
+		comment := extractLineComment(lines[idx])
+		indent := leadingWhitespace(lines[idx])
+		if comment != "" {
+			line = indent + line + " " + comment
+		} else {
+			line = indent + line
+		}
+		lines[idx] = line
+		return lines
+	}
+	insertAt := end + 1
+	if insertAt < start {
+		insertAt = start
+	}
+	return insertLines(lines, insertAt, []string{line})
+}
+
+// removeFromInlineArrayLine removes one element from an inline string array
+// line like `provider_refs = ["a", "b"]`, preserving indentation and trailing
+// comment. Returns (newLine, removed, error). If the element is the last one,
+// the caller should drop the line (handled by setInlineArrayLine on empty).
+func removeFromInlineArrayLine(line, value string) (string, bool) {
+	indent := leadingWhitespace(line)
+	comment := extractLineComment(line)
+	// Strip the trailing comment and whitespace to get `key = [...]`.
+	body := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), comment))
+	if strings.HasSuffix(body, comment) {
+		body = strings.TrimSpace(strings.TrimSuffix(body, comment))
+	}
+	eq := strings.Index(body, "=")
+	if eq < 0 {
+		return line, false
+	}
+	key := strings.TrimSpace(body[:eq])
+	rawArr := strings.TrimSpace(body[eq+1:])
+	// Expect rawArr like ["a", "b"]
+	if !strings.HasPrefix(rawArr, "[") || !strings.HasSuffix(rawArr, "]") {
+		return line, false
+	}
+	inner := strings.TrimSpace(rawArr[1 : len(rawArr)-1])
+	if inner == "" {
+		return line, false
+	}
+	// Split on commas not inside quotes.
+	elems := splitTOMLArrayElems(inner)
+	filtered := make([]string, 0, len(elems))
+	removed := false
+	for _, e := range elems {
+		trimmed := strings.TrimSpace(e)
+		// Compare unquoted form so `"prov-a"` matches `prov-a`.
+		if unquoteTomlScalar(trimmed) == value {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, trimmed)
+	}
+	if !removed {
+		return line, false
+	}
+	// Rebuild. Note: we keep original quoted elements verbatim to preserve the
+	// user's quoting style.
+	out := indent + key + " = [" + strings.Join(filtered, ", ") + "]"
+	if comment != "" {
+		out += " " + comment
+	}
+	return out, true
+}
+
+// splitTOMLArrayElems splits a TOML inline-array body (without brackets) into
+// elements, respecting quoted strings.
+func splitTOMLArrayElems(inner string) []string {
+	var elems []string
+	var cur strings.Builder
+	inQuote := false
+	escaped := false
+	for i := 0; i < len(inner); i++ {
+		ch := inner[i]
+		if escaped {
+			cur.WriteByte(ch)
+			escaped = false
+			continue
+		}
+		if ch == '\\' && inQuote {
+			cur.WriteByte(ch)
+			escaped = true
+			continue
+		}
+		if ch == '"' {
+			inQuote = !inQuote
+			cur.WriteByte(ch)
+			continue
+		}
+		if ch == ',' && !inQuote {
+			elems = append(elems, cur.String())
+			cur.Reset()
+			continue
+		}
+		cur.WriteByte(ch)
+	}
+	if cur.Len() > 0 || len(inner) > 0 {
+		elems = append(elems, cur.String())
+	}
+	return elems
+}
+
 // ProjectSettingsUpdate carries optional field updates for SaveProjectSettings.
 type ProjectSettingsUpdate struct {
 	Language             *string
@@ -3183,13 +3725,34 @@ func SaveProviderRefs(projectName string, refs []string) error {
 	if err := toml.Unmarshal(data, cfg); err != nil {
 		return fmt.Errorf("parse config: %w", err)
 	}
+	projectIdx := -1
 	for i := range cfg.Projects {
 		if cfg.Projects[i].Name == projectName {
-			cfg.Projects[i].Agent.ProviderRefs = refs
-			return saveConfig(cfg)
+			projectIdx = i
+			break
 		}
 	}
-	return fmt.Errorf("project %q not found", projectName)
+	if projectIdx < 0 {
+		return fmt.Errorf("project %q not found", projectName)
+	}
+
+	lines, hadTrailing := splitConfigLines(string(data))
+	spans := buildRawProjectSpans(lines)
+	if projectIdx >= len(spans) {
+		return fmt.Errorf("project %q located in parsed config but not raw file", projectName)
+	}
+	projSpan := spans[projectIdx]
+
+	start := projSpan.agentStart
+	end := projSpan.agentEnd
+	if start < 0 {
+		start = projSpan.start + 1
+	}
+	if end < start {
+		end = projSpan.end
+	}
+	lines = setInlineArrayLine(lines, start, end, "provider_refs", refs)
+	return writeRawConfig(joinConfigLines(lines, hadTrailing))
 }
 
 // RemoveProject removes a project from the config file.

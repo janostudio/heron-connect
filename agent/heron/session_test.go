@@ -162,3 +162,75 @@ func TestHeronSessionProgressNotificationEmitsThinking(t *testing.T) {
 		t.Fatalf("event = %+v", event)
 	}
 }
+
+func TestAgentModelSwitcher(t *testing.T) {
+	agent, err := New(map[string]any{
+		"command": "true",
+		"model":   "gpt-5.4",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sw, ok := agent.(core.ModelSwitcher)
+	if !ok {
+		t.Fatalf("agent does not implement ModelSwitcher, type = %T", agent)
+	}
+
+	if sw.GetModel() != "gpt-5.4" {
+		t.Fatalf("GetModel = %q, want gpt-5.4", sw.GetModel())
+	}
+	sw.SetModel("claude-sonnet-5")
+	if sw.GetModel() != "claude-sonnet-5" {
+		t.Fatalf("GetModel after SetModel = %q, want claude-sonnet-5", sw.GetModel())
+	}
+}
+
+func TestAgentAvailableModels_ReadsModelsJSON(t *testing.T) {
+	dir := t.TempDir()
+	agentsDir := dir + "/.agents"
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	modelsJSON := `{"model":"gpt-5.4","models":[
+		{"id":"gpt-5.4","name":"GPT-5.4"},
+		{"id":"claude-sonnet-5","name":"Claude Sonnet 5"},
+		{"id":"glm-5.2-ioa","name":"GLM 5.2 IOA"}
+	]}`
+	if err := os.WriteFile(agentsDir+"/models.json", []byte(modelsJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	agent, err := New(map[string]any{
+		"command":  "true",
+		"work_dir": dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sw := agent.(core.ModelSwitcher)
+
+	models := sw.AvailableModels(context.Background())
+	if len(models) != 3 {
+		t.Fatalf("AvailableModels len = %d, want 3", len(models))
+	}
+	if models[0].Name != "gpt-5.4" || models[1].Name != "claude-sonnet-5" || models[2].Name != "glm-5.2-ioa" {
+		t.Fatalf("model names = %#v", models)
+	}
+	if models[1].Desc != "Claude Sonnet 5" {
+		t.Fatalf("model desc = %q, want 'Claude Sonnet 5'", models[1].Desc)
+	}
+}
+
+func TestAgentAvailableModels_MissingFile(t *testing.T) {
+	agent, err := New(map[string]any{
+		"command":  "true",
+		"work_dir": t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sw := agent.(core.ModelSwitcher)
+	if models := sw.AvailableModels(context.Background()); len(models) != 0 {
+		t.Fatalf("expected empty model list for missing models.json, got %#v", models)
+	}
+}

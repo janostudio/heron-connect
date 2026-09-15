@@ -8,9 +8,12 @@ package heron
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -26,6 +29,7 @@ type Agent struct {
 	workDir    string
 	command    string
 	args       []string
+	model      string
 	extraEnv   []string
 	sessionEnv []string
 
@@ -37,6 +41,8 @@ type Agent struct {
 // Supported options:
 //   - work_dir: process working directory
 //   - command: Heron binary path/name, default "heron"
+//   - model: default model override (passed as `--model`; heron-ai resolves it
+//     against its own .agents/models.json)
 //   - args: extra arguments; --json-rpc is added when absent
 //   - env: map of environment overrides
 func New(opts map[string]any) (core.Agent, error) {
@@ -51,6 +57,9 @@ func New(opts map[string]any) (core.Agent, error) {
 	}
 	command = strings.TrimSpace(command)
 
+	model, _ := opts["model"].(string)
+	model = strings.TrimSpace(model)
+
 	args := parseStringSlice(opts["args"])
 	if !hasArg(args, "--json-rpc") {
 		args = append([]string{"--json-rpc"}, args...)
@@ -64,6 +73,7 @@ func New(opts map[string]any) (core.Agent, error) {
 		workDir:  workDir,
 		command:  command,
 		args:     args,
+		model:    model,
 		extraEnv: envPairsFromOpts(opts["env"]),
 	}, nil
 }
@@ -91,14 +101,79 @@ func (a *Agent) SetSessionEnv(env []string) {
 	a.sessionEnv = append([]string(nil), env...)
 }
 
+// SetModel sets the default-model override passed to heron-ai via --model.
+// The change takes effect on the next session. heron-ai resolves the name
+// against .agents/models.json, so this only overrides the default model and
+// never disturbs per-agent model assignments inside a flow.
+func (a *Agent) SetModel(model string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.model = strings.TrimSpace(model)
+	slog.Info("heron: model changed", "model", a.model)
+}
+
+// GetModel returns the current default-model override (empty = use heron-ai's
+// own models.json default).
+func (a *Agent) GetModel() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.model
+}
+
+// AvailableModels reads the model list from <workDir>/.agents/models.json —
+// the same source heron-ai itself uses. heron-ai owns its models.json (base_url,
+// api_key, multi-model routing), so heron-connect only surfaces the selectable
+// names here rather than managing providers.
+func (a *Agent) AvailableModels(_ context.Context) []core.ModelOption {
+	a.mu.RLock()
+	workDir := a.workDir
+	a.mu.RUnlock()
+
+	path := filepath.Join(workDir, ".agents", "models.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var cfg struct {
+		Models []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil
+	}
+
+	out := make([]core.ModelOption, 0, len(cfg.Models))
+	for _, m := range cfg.Models {
+		name := strings.TrimSpace(m.ID)
+		if name == "" {
+			name = strings.TrimSpace(m.Name)
+		}
+		if name == "" {
+			continue
+		}
+		out = append(out, core.ModelOption{Name: name, Desc: strings.TrimSpace(m.Name)})
+	}
+	return out
+}
+
 func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentSession, error) {
 	a.mu.RLock()
 	workDir := a.workDir
 	command := a.command
 	args := append([]string(nil), a.args...)
+	model := a.model
 	extraEnv := append([]string(nil), a.extraEnv...)
 	extraEnv = append(extraEnv, a.sessionEnv...)
 	a.mu.RUnlock()
+
+	// Pass the default-model override to heron-ai. heron-ai resolves the name
+	// against .agents/models.json (the "model" field), leaving multi-model
+	// flows untouched — only the default model changes.
+	if model != "" && !hasArg(args, "--model") {
+		args = append(args, "--model", model)
+	}
 
 	return newHeronSession(ctx, command, args, workDir, sessionID, extraEnv)
 }
@@ -153,3 +228,5 @@ func hasArg(args []string, wanted string) bool {
 	}
 	return false
 }
+
+var _ core.ModelSwitcher = (*Agent)(nil)
