@@ -486,8 +486,10 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 
 	// Send instant confirmation reply if enabled and no streaming card is active.
 	// Streaming cards provide their own "processing" indicator, so instant reply
-	// is only needed when the platform doesn't support cards or card creation failed.
-	if e.instantReply.Enabled && streamCard == nil {
+	// is only needed when the platform doesn't support cards or card creation
+	// failed. The web UI is skipped too: it has its own typing indicator and a
+	// persistent ack bubble would be redundant noise there.
+	if e.instantReply.Enabled && streamCard == nil && platformName != "web" {
 		replyContent := e.instantReply.Content
 		if replyContent == "" {
 			replyContent = e.i18n.T(MsgStarting)
@@ -1585,8 +1587,9 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					}
 				}
 
-				// Send instant reply for queued turn if no streaming card is active.
-				if e.instantReply.Enabled && streamCard == nil {
+				// Send instant reply for queued turn if no streaming card is
+				// active (web skipped, same as the primary turn path).
+				if e.instantReply.Enabled && streamCard == nil && platformName != "web" {
 					replyContent := e.instantReply.Content
 					if replyContent == "" {
 						replyContent = e.i18n.T(MsgStarting)

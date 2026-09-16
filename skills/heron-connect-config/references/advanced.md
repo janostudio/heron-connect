@@ -63,11 +63,12 @@ min_delta_chars = 30      # 发送更新前最少新增字符数（默认 30）
 max_chars = 4000          # 预览最大长度（默认 4000）
 
 [instant_reply]
-enabled = false           # 默认 false
+enabled = true            # 默认 true（显式设 false 关闭）
 content = "🤔 Thinking..." # 自定义文案；空 = 用 i18n 默认（"⏳ 处理中..."）
 ```
 
 - 已配置流式卡片的平台（如钉钉 AI Card）会自动跳过即时回复（卡片本身已带处理指示）。
+- Web 端自动跳过（Web 自带「正在输入」指示，常驻确认气泡反而是噪音）。
 - `instant_reply` 与 `[projects.users]` 里的每会话 `rate_limit` 是两个不同概念，见下文。
 
 ## 速率限制（[rate_limit] 与 [outgoing_rate_limit]）

@@ -271,7 +271,7 @@ type StreamPreviewConfig struct {
 // is received, before the agent starts processing. This gives users quick feedback
 // that their message was received (e.g. "🤔 Thinking...").
 type InstantReplyConfig struct {
-	Enabled *bool  `toml:"enabled"` // default false
+	Enabled *bool  `toml:"enabled"` // default true (opt out with enabled = false)
 	Content string `toml:"content"` // custom reply text; empty = use i18n default ("⏳ Processing...")
 }
 

@@ -41,8 +41,8 @@ tool_messages = false
 
 ## 其他交互相关（简要）
 
-- `[instant_reply]`：收到消息立即回「🤔 Thinking...」类确认。
-  `enabled = false`（默认），`content = "自定义文案"`。
+- `[instant_reply]`：收到消息立即回「🤔 Thinking...」类确认（默认开启，Web 端自动跳过）。
+  `enabled = false` 显式关闭，`content = "自定义文案"`（空 = i18n 默认「⏳ 处理中...」）。
 - `[stream_preview]`：实时流式预览（默认开）。
   `disabled_platforms`、`interval_ms`、`min_delta_chars`、`max_chars`。
 - `[rate_limit]`：会话级入站限流，`max_messages`/`window_secs`（默认 20/60s）。

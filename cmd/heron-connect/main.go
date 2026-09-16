@@ -344,12 +344,15 @@ func createProjectEngines(cfg *config.Config, configPath string, observeFlag *bo
 			engine.SetStreamPreviewCfg(spcfg)
 		}
 
-		// Wire instant reply
-		if cfg.InstantReply.Enabled != nil && *cfg.InstantReply.Enabled {
+		// Wire instant reply. Defaults to enabled (nil = on); an explicit
+		// enabled = false opts out.
+		if cfg.InstantReply.Enabled == nil || *cfg.InstantReply.Enabled {
 			engine.SetInstantReply(core.InstantReplyCfg{
 				Enabled: true,
 				Content: cfg.InstantReply.Content,
 			})
+		} else {
+			engine.SetInstantReply(core.InstantReplyCfg{})
 		}
 
 		// Wire rate limiting
@@ -1578,8 +1581,8 @@ func reloadConfig(configPath, projName string, engine *core.Engine) (*core.Confi
 	}
 	engine.SetReplyFooterEnabled(showFooter)
 
-	// Reload instant reply
-	if cfg.InstantReply.Enabled != nil && *cfg.InstantReply.Enabled {
+	// Reload instant reply. Defaults to enabled (nil = on).
+	if cfg.InstantReply.Enabled == nil || *cfg.InstantReply.Enabled {
 		engine.SetInstantReply(core.InstantReplyCfg{
 			Enabled: true,
 			Content: cfg.InstantReply.Content,
