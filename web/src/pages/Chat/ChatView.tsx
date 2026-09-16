@@ -1,11 +1,11 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo, memo, Fragment } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
-  ArrowLeft, Send, Bot, Circle, WifiOff,
+  ArrowLeft, Bot, Circle, WifiOff,
   FileText, Loader2, Download, FileDown,
-  Slash, ChevronDown, Square, Clock, X, Folder, FolderOpen, ChevronLeft, ChevronRight, ArrowUp,
-  Pin, PinOff, Pencil, Paperclip, RefreshCw,
+  ChevronDown, Clock, X, Folder, FolderOpen, ChevronLeft, ChevronRight, ArrowUp,
+  Pin, PinOff, Pencil, RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { listSessions, getSession, createSession, sessionTitle, updateSession, sortSessions, type Session, type SessionDetail } from '@/api/sessions';
@@ -15,11 +15,12 @@ import {
   useBridgeSocket, fetchBridgeConfig,
   type BridgeConfig, type BridgeIncoming, type BridgeStatus,
 } from '@/hooks/useBridgeSocket';
-import CommandPalette, { type SlashCommand, slashCommands } from './CommandPalette';
+import { type SlashCommand, slashCommands } from './CommandPalette';
 import SessionDrawer from './SessionDrawer';
 import CommandResultPanel, { type CommandResult } from './CommandResultPanel';
 import RenameSessionModal from './RenameSessionModal';
 import MessageRow from './MessageRow';
+import ChatComposer, { type ChatComposerHandle } from './ChatComposer';
 import { RenderMarkdown } from './markdownBlocks';
 import { useChatSessions, historyToMessages } from './useChatSessions';
 import type { ChatMsg, PickItem } from './chatMessage';
@@ -34,6 +35,86 @@ import { cn, loadLS, saveLS } from '@/lib/utils';
 // the rest are handled by their own result panel.
 const chatCommands = CHAT_COMMANDS;
 const knownCommands = new Set(slashCommands.map(c => c.cmd));
+
+// ── Transcript ───────────────────────────────────────────────
+//
+// The message list is the expensive subtree: every row renders markdown
+// (react-markdown + remark-gfm + rehype-highlight), and a long conversation
+// holds hundreds of rows.
+//
+// It is memoized at module scope so that re-renders of ChatView itself —
+// which happen for unrelated reasons (bridge status, drawers, modals, the
+// resize drag) — do not walk the whole transcript. ChatView's per-conversation
+// store keeps `messages` identity stable when a slice is untouched
+// (see useChatSessions.updateSlice), and `onOpenFile` / `onCardAction` are
+// useCallback-stabilised, so the memo actually holds.
+//
+// The scroll wiring (refs + onScroll) stays in the parent because the
+// auto-scroll effect depends on the message list and must not be trapped here.
+//
+// `flex-1 overflow-y-auto` + ancestor `min-h-0` chain (Layout wrapper has
+// `min-h-0` since v1.1.24) gives correct scrolling and lets the input area sit
+// flush at the bottom. The earlier
+// `max-h-[calc(100dvh-136px)] md:max-h-[calc(100dvh-192px)]` cap
+// overestimated header+input height on PC (the 192px shadow left
+// ~50px of dead space below the input on desktop).
+const Transcript = memo(function Transcript({
+  messages, typing, loading, projectName, onOpenFile, onCardAction,
+  scrollRef, onScroll, messagesEnd,
+}: {
+  messages: ChatMsg[];
+  typing: boolean;
+  loading: boolean;
+  projectName: string;
+  onOpenFile: (path: string, fileName: string) => void;
+  onCardAction: (value: string) => void;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  onScroll: () => void;
+  messagesEnd: React.RefObject<HTMLDivElement | null>;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className="flex-1 overflow-y-auto overflow-x-hidden py-4 md:py-6 px-2 space-y-5"
+    >
+      {messages.length === 0 && !loading && (
+        <div className="flex flex-col items-center justify-center h-full text-center py-12">
+          <div className="w-16 h-16 rounded-2xl bg-accent/10 flex items-center justify-center mb-4">
+            <Bot size={32} className="text-accent" />
+          </div>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">{t('chat.emptyHint')}</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500">{t('chat.slashHint')}</p>
+        </div>
+      )}
+      {messages.map((msg) => (
+        <MessageRow
+          key={msg.id}
+          msg={msg}
+          projectName={projectName}
+          onOpenFile={onOpenFile}
+          onCardAction={onCardAction}
+        />
+      ))}
+      {typing && !messages.some(m => m.streaming) && (
+        <div className="flex gap-3 justify-start">
+          <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center shrink-0 mt-1">
+            <Bot size={16} className="text-accent" />
+          </div>
+          <div className="rounded-2xl px-5 py-3.5 text-sm bg-white dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700/60 rounded-bl-md shadow-sm">
+            <div className="flex gap-1.5">
+              <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+              <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            </div>
+          </div>
+        </div>
+      )}
+      <div ref={messagesEnd} />
+    </div>
+  );
+});
 
 // ── File preview (local agent-generated files, served over HTTP) ──
 // fileIsPreviewable / isMarkdown / isHtmlFile live in chatHelpers.ts.
@@ -423,19 +504,50 @@ function ProjectFileBrowser({ open, projectName, onClose, onInsertFile, previewW
         />
         {/* Header: breadcrumb + nav */}
         <div className="relative flex items-center justify-between gap-2 px-4 h-14 border-b border-gray-200/80 dark:border-white/[0.12] shrink-0">
-          {/* Breadcrumb / current dir — click to open dropdown */}
-          <button
-            type="button"
-            onClick={() => setDropdownOpen((v) => !v)}
-            className="flex items-center gap-1 min-w-0 text-left"
-          >
-            <Folder size={16} className="text-gray-500 dark:text-gray-400 shrink-0" />
-            <span className="text-sm font-medium text-gray-900 dark:text-white truncate">
-              {projectName}
-              {breadcrumbSegments.length > 0 && ` / ${breadcrumbSegments.join(' / ')}`}
-            </span>
-            <ChevronDown size={14} className={cn('text-gray-500 dark:text-gray-400 shrink-0 transition-transform', dropdownOpen && 'rotate-180')} />
-          </button>
+          {/* Breadcrumb / current dir — click to open dropdown.
+              Each segment is its own button so you can jump straight to an
+              ancestor (project / auto_bugfix / docs) instead of only stepping
+              up one level at a time via "上一级". */}
+          <div className="flex items-center gap-1 min-w-0 text-sm font-medium">
+            <button
+              type="button"
+              onClick={() => openDir('')}
+              className="flex items-center gap-1 shrink-0 rounded px-1 -mx-1 py-0.5 text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors min-w-0"
+            >
+              <Folder size={16} className="text-gray-500 dark:text-gray-400 shrink-0" />
+              <span className="truncate">{projectName}</span>
+            </button>
+            {breadcrumbSegments.map((seg, i) => {
+              const isCurrent = i === breadcrumbSegments.length - 1;
+              return (
+                <Fragment key={`${i}-${seg}`}>
+                  <span className="text-gray-400 dark:text-gray-500 shrink-0">/</span>
+                  <button
+                    type="button"
+                    onClick={() => openDir(breadcrumbSegments.slice(0, i + 1).join('/'))}
+                    aria-current={isCurrent ? 'true' : undefined}
+                    className={cn(
+                      'shrink-0 rounded px-1 -mx-1 py-0.5 transition-colors truncate max-w-[12rem]',
+                      isCurrent
+                        ? 'text-accent'
+                        : 'text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-white/[0.08]',
+                    )}
+                    title={breadcrumbSegments.slice(0, i + 1).join('/')}
+                  >
+                    {seg}
+                  </button>
+                </Fragment>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => setDropdownOpen((v) => !v)}
+              aria-label="Toggle directory list"
+              className="shrink-0 p-0.5 rounded text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors"
+            >
+              <ChevronDown size={14} className={cn('transition-transform', dropdownOpen && 'rotate-180')} />
+            </button>
+          </div>
 
           {/* Left/right file navigation (files only) */}
           <div className="flex items-center gap-1 shrink-0">
@@ -556,7 +668,9 @@ export default function ChatView() {
   // Session state
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSession, setCurrentSession] = useState<SessionDetail | null>(null);
-  const [input, setInput] = useState('');
+  // The in-progress message text lives in <ChatComposer>, not here. Keeping it
+  // in this component made every keystroke re-render the whole page including
+  // the transcript — see the note on ChatComposer.
   const [pickedFiles, setPickedFiles] = useState<PickItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [bridgeCfg, setBridgeCfg] = useState<BridgeConfig | null>(null);
@@ -637,7 +751,9 @@ export default function ChatView() {
   const [renameTarget, setRenameTarget] = useState<Session | null>(null);
 
   const messagesEnd = useRef<HTMLDivElement>(null);
-  const cmdBtnRef = useRef<HTMLButtonElement>(null);
+  // Imperative handle on the composer: the project file browser needs to seed
+  // the draft with a path without lifting the draft state back up here.
+  const composerRef = useRef<ChatComposerHandle>(null);
 
   // Per-conversation live state. Each Web conversation owns a distinct
   // session_key, and the bridge broadcasts every frame to every client — so
@@ -966,8 +1082,6 @@ export default function ChatView() {
   // base64 inflates ~33%, and the WebSocket frame carries it all in memory.
   const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
   const addPickedFiles = useCallback((files: FileList | File[]) => {
     const list = Array.from(files);
     if (list.length === 0) return;
@@ -1009,7 +1123,6 @@ export default function ChatView() {
       if (tooBig.length > 0) {
         alert(`${t('chat.fileTooBig', 'File too large (>10MB)')}: ${tooBig.join(', ')}`);
       }
-      if (fileInputRef.current) fileInputRef.current.value = '';
     });
   }, [t]);
 
@@ -1022,12 +1135,13 @@ export default function ChatView() {
     return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
   }, []);
 
-  // Send message
-  const handleSend = useCallback(() => {
+  // Send message. `content` comes from the composer (which owns the draft), so
+  // this callback has no dependency on the text being typed.
+  const handleSend = useCallback((content: string) => {
     if (isRunning) return;
-    if ((!input.trim() && pickedFiles.length === 0) || bridgeStatus !== 'connected') return;
-    const content = input.trim();
-    setInput('');
+    if (!content.trim() && pickedFiles.length === 0) return;
+    if (bridgeStatus !== 'connected') return;
+    const text = content.trim();
 
     // Build media payload (only if any attachment is attached).
     const images: { mime_type: string; data: string; file_name?: string }[] = [];
@@ -1044,7 +1158,7 @@ export default function ChatView() {
     const targetId = ensureViewedId();
     ensureSlice(targetId);
 
-    const { token: cmdToken, goesToPanel } = classifyInput(content, knownCommands);
+    const { token: cmdToken, goesToPanel } = classifyInput(text, knownCommands);
     if (goesToPanel) {
       updateSlice(targetId, s => ({ ...s, pendingCmd: cmdToken }));
     } else {
@@ -1053,52 +1167,18 @@ export default function ChatView() {
         messages: [...s.messages, {
           id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           role: 'user' as const,
-          content,
+          content: text,
           localMedia: pickedFiles.length > 0 ? pickedFiles : undefined,
         }],
       }));
     }
-    bridgeSend(content, media, currentSession?.id);
+    bridgeSend(text, media, currentSession?.id);
     setPickedFiles([]);
-  }, [input, pickedFiles, bridgeStatus, bridgeSend, isRunning, stripDataUrlPrefix, currentSession?.id, ensureViewedId, ensureSlice, updateSlice]);
-
-  // Paste handler: turn clipboard images into queued attachments (sent with
-  // the message, not immediately). Plain text pastes fall through to the
-  // textarea's default behaviour.
-  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const imageFiles: File[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item.kind === 'file' && item.type.startsWith('image/')) {
-        const f = item.getAsFile();
-        if (f) imageFiles.push(f);
-      }
-    }
-    if (imageFiles.length > 0) {
-      e.preventDefault();
-      addPickedFiles(imageFiles);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      // 输入法组合中（如中文拼音选词/确认字母）的回车不触发发送，
-      // 否则会发送半成品。组合结束后的回车才真正发送。
-      if (e.nativeEvent.isComposing) return;
-      e.preventDefault();
-      handleSend();
-    }
-    if (e.key === '/' && !input) {
-      e.preventDefault();
-      setCmdOpen(true);
-    }
-  };
+  }, [pickedFiles, bridgeStatus, bridgeSend, isRunning, stripDataUrlPrefix, currentSession?.id, ensureViewedId, ensureSlice, updateSlice]);
 
   // Stable file-open handler. Must NOT be an inline arrow at the call site:
   // a new function identity on every render would defeat the React.memo on
-  // MessageRow / RenderMarkdown in the transcript.
+  // MessageRow / RenderMarkdown / Transcript.
   const handleOpenFile = useCallback((path: string, fileName: string) => {
     setPreviewFile({ path, fileName });
   }, []);
@@ -1273,187 +1353,40 @@ export default function ChatView() {
         </div>
       </div>
 
-      {/* Messages — `flex-1 overflow-y-auto` + ancestor `min-h-0` chain
-          (Layout wrapper has `min-h-0` since v1.1.24) gives correct scrolling
-          and lets the input area sit flush at the bottom. The earlier
-          `max-h-[calc(100dvh-136px)] md:max-h-[calc(100dvh-192px)]` cap
-          overestimated header+input height on PC (the 192px shadow left
-          ~50px of dead space below the input on desktop). */}
-      <div
-        ref={scrollRef}
+      {/* Messages — see the Transcript component above for the scrolling /
+          memoization notes. */}
+      <Transcript
+        messages={messages}
+        typing={typing}
+        loading={loading}
+        projectName={projectName || ''}
+        onOpenFile={handleOpenFile}
+        onCardAction={handleCardAction}
+        scrollRef={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto overflow-x-hidden py-4 md:py-6 px-2 space-y-5"
-      >
-        {messages.length === 0 && !loading && (
-          <div className="flex flex-col items-center justify-center h-full text-center py-12">
-            <div className="w-16 h-16 rounded-2xl bg-accent/10 flex items-center justify-center mb-4">
-              <Bot size={32} className="text-accent" />
-            </div>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">{t('chat.emptyHint')}</p>
-            <p className="text-xs text-gray-400 dark:text-gray-500">{t('chat.slashHint')}</p>
-          </div>
-        )}
-        {messages.map((msg) => (
-          <MessageRow
-            key={msg.id}
-            msg={msg}
-            projectName={projectName || ''}
-            onOpenFile={handleOpenFile}
-            onCardAction={handleCardAction}
-          />
-        ))}
-        {typing && !messages.some(m => m.streaming) && (
-          <div className="flex gap-3 justify-start">
-            <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center shrink-0 mt-1">
-              <Bot size={16} className="text-accent" />
-            </div>
-            <div className="rounded-2xl px-5 py-3.5 text-sm bg-white dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700/60 rounded-bl-md shadow-sm">
-              <div className="flex gap-1.5">
-                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-              </div>
-            </div>
-          </div>
-        )}
-        <div ref={messagesEnd} />
-      </div>
+        messagesEnd={messagesEnd}
+      />
 
-      {/* Input area */}
+      {/* Input area — see ChatComposer: it owns the draft text so typing does
+          not re-render this page (and therefore the transcript). */}
       <div className="border-t border-gray-200 dark:border-gray-800 pt-3 shrink-0">
-        {canSend ? (
-          <div className="relative flex items-end gap-2">
-            {/* Attachment trigger */}
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="p-3 rounded-xl text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition-colors"
-              title={t('chat.attach', 'Attach image/file')}
-            >
-              <Paperclip size={18} />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,.pdf,.txt,.md,.markdown,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.json,.yaml,.yml,.zip,.tar,.gz,.py,.js,.ts,.go,.java,.c,.h,.cpp,.sh,.sql,.log"
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files) addPickedFiles(e.target.files);
-              }}
-            />
-
-            {/* Command palette trigger */}
-            <div className="relative">
-              <button
-                ref={cmdBtnRef}
-                type="button"
-                onClick={() => setCmdOpen(!cmdOpen)}
-                className={cn(
-                  'p-3 rounded-xl transition-all duration-200',
-                  cmdOpen
-                    ? 'bg-accent/15 text-accent ring-1 ring-accent/30'
-                    : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.06]',
-                )}
-                title={t('chat.commands')}
-              >
-                <Slash size={18} />
-              </button>
-              <CommandPalette
-                open={cmdOpen}
-                onClose={() => setCmdOpen(false)}
-                onSelect={handleCmdSelect}
-                anchorRef={cmdBtnRef}
-              />
-            </div>
-
-            {/* Text input */}
-            {/* Text input — `min-w-0` lets the row shrink below the button +
-                textarea intrinsic width on narrow phones (textarea defaults to
-                ~20 cols which alone exceeds 320px). */}
-            <div className="flex-1 min-w-0 relative">
-              {pickedFiles.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mb-1.5">
-                  {pickedFiles.map((p) => (
-                    <div
-                      key={p.id}
-                      className="flex items-center gap-1.5 max-w-[220px] pl-1 pr-1.5 py-1 rounded-lg bg-gray-100 dark:bg-white/[0.06] border border-gray-200 dark:border-gray-700"
-                    >
-                      {p.kind === 'image' ? (
-                        <img src={p.dataUrl} alt={p.name} className="w-6 h-6 rounded object-cover shrink-0" />
-                      ) : (
-                        <FileText size={14} className="text-gray-400 shrink-0" />
-                      )}
-                      <span className="text-xs text-gray-600 dark:text-gray-300 truncate">{p.name}</span>
-                      <button
-                        type="button"
-                        onClick={() => removePickedFile(p.id)}
-                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 shrink-0"
-                        title={t('chat.removeAttachment', 'Remove')}
-                      >
-                        <X size={12} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <textarea
-                value={input}
-                onChange={(e) => {
-                  setInput(e.target.value);
-                  e.target.style.height = 'auto';
-                  e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px';
-                }}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                placeholder={t('chat.inputPlaceholder')}
-                rows={1}
-                // `py-2` (8px) + text-base 16px line-height 24px + border 2px = 42px,
-                // matching the `p-3` buttons (12+18+12 = 42px) so icons and
-                // textarea sit on the same baseline. `text-base` (16px) on
-                // mobile prevents iOS from auto-zooming on focus.
-                className="w-full min-w-0 px-4 py-2 text-base md:text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-colors placeholder:text-gray-400 resize-none overflow-y-auto"
-              />
-            </div>
-
-            {/* Send / Stop button */}
-            {isRunning ? (
-              <button
-                type="button"
-                onClick={handleStop}
-                title={t('chat.stop')}
-                className="p-3 rounded-xl bg-red-500 text-white hover:bg-red-600 transition-colors flex items-center shadow-sm"
-              >
-                <Square size={16} className="fill-current" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleSend}
-                disabled={!input.trim() && pickedFiles.length === 0}
-                className="p-3 rounded-xl bg-accent text-black hover:bg-accent-dim transition-colors disabled:opacity-50 flex items-center"
-              >
-                <Send size={18} />
-              </button>
-            )}
-          </div>
-        ) : !bridgeCfg ? (
-          <div className="flex items-center gap-2 px-4 py-3 text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-xl">
-            <WifiOff size={14} />
-            <span>{t('sessions.bridgeNotAvailable')}</span>
-          </div>
-        ) : bridgeStatus === 'disconnected' || bridgeStatus === 'error' ? (
-          <div className="flex items-center gap-2 px-4 py-3 text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-xl">
-            <WifiOff size={14} />
-            <span>{t('sessions.bridgeDisconnected')}</span>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 px-4 py-3 text-sm text-gray-400 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
-            <Loader2 size={14} className="animate-spin" />
-            <span>{t('sessions.bridgeConnecting')}</span>
-          </div>
-        )}
+        <ChatComposer
+          ref={composerRef}
+          onSend={handleSend}
+          pickedFiles={pickedFiles}
+          onRemoveFile={removePickedFile}
+          onAddFiles={addPickedFiles}
+          canSend={canSend}
+          bridgeCfgLoaded={!!bridgeCfg}
+          bridgeStatus={bridgeStatus}
+          isRunning={isRunning}
+          onStop={handleStop}
+          cmdOpen={cmdOpen}
+          onCmdOpenChange={setCmdOpen}
+          onCmdSelect={handleCmdSelect}
+        />
       </div>
+
       </div>{/* /left chat column */}
 
       {/* Session drawer */}
@@ -1494,7 +1427,7 @@ export default function ChatView() {
           projectName={projectName || ''}
           onClose={() => setFileBrowserOpen(false)}
           onInsertFile={(relPath) => {
-            setInput((prev) => (prev.trim() ? `${prev.trim()} ${relPath}` : relPath));
+            composerRef.current?.insert(relPath);
           }}
           previewWidth={previewWidth}
           isDesktop={isDesktop}

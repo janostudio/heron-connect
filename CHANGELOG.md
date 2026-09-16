@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.1.41 (2026-09-16)
+
+### Fixed
+
+- **Web 聊天输入框打字卡顿（每次击键 ~130ms）**：根因是**消息草稿 state 放在 ChatView 顶层**——textarea 每次 `onChange` 都 `setInput`，导致整个页面重渲染，进而让 transcript 里每一条消息的 markdown 被重新解析（react-markdown + remark-gfm + rehype-highlight）。Performance trace 显示 22 次击键全部落在 markdown 重解析上，合计 2997ms、平均 136ms/次，最长任务 625ms。现已把输入区抽为独立的 `ChatComposer`，草稿 state 由它自己持有，逐键只重渲染输入框本身；外部注入（项目文件浏览器「插入地址」）改走 `useImperativeHandle` 暴露的 `insert()`，不再把 state 抬回父级。同时把消息列表抽成模块级 `memo` 的 `Transcript`，使页面因其它 state（连接状态、抽屉、弹窗、拖拽分栏）重渲染时不再带动整个对话树。
+  - 同类问题一并修复：三处 react-markdown 调用点（会话流 `RenderMarkdown`、命令结果面板 `Prose`、报告预览）都把 `[remarkGfm]` / `[rehypeHighlight]` 作为**每次渲染新建的数组字面量**传入，会破坏 react-markdown 内部 memoization 并重跑整条 unified 流水线；现统一提升为模块级常量，且 `Prose` 补上 `memo`。
+  - 附带诊断结论：这次的 Heap 快照（63MB）**没有内存泄漏**，detached 节点仅 2.33MB 且全为 native；卡顿是纯 CPU/重渲染问题，不是内存问题。
+
+- **Web 文件浏览器面包屑只能逐级返回**：目录路径（`项目 / auto_bugfix / docs`）原先是**一整条纯文本**、只有「上一级」一个返回入口，想回到两层以上要反复点击。现每一层拆为独立按钮，点 `auto_bugfix` 直接跳到该目录；项目名（根）同样可点；当前层级用强调色高亮并加 `aria-current`；下拉箭头独立成按钮专门负责展开/收起，不再与路径点击混淆。点击后行为与原有「上一级」/子目录一致（切目录并展开下拉）。
+
+### Added
+
+- **前端组件级回归测试（jsdom）**：新增 `ChatComposer.test.tsx`，用真实 DOM 挂载断言「打字不会重渲染兄弟子树」——即本次卡顿修复的承重机制。该测试已验证具备捕获能力：把 bug 人为引回后测试如期失败。vitest 相应支持 `*.test.tsx` 与按文件启用的 jsdom 环境（其余纯逻辑测试仍在 node 环境运行）。测试总数 189 → 192。
+
 ## v1.1.40 (2026-09-15)
 
 > 注：v1.1.39 的 npm 发布在服务端留下了无法覆盖的 staged 记录（`E409 Cannot publish over previously staged version`），版本号跳过，内容与本版完全相同。

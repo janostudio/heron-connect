@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -7,6 +8,13 @@ import { parseListItemText } from './chatHelpers';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+
+// Module-level so the arrays keep one identity for the process lifetime.
+// Passing fresh `[remarkGfm]` / `[rehypeHighlight]` literals on every render
+// makes react-markdown re-run its whole unified pipeline (parse + remark +
+// rehype + serialize), which dominated main-thread time in the perf trace.
+const REMARK_PLUGINS = [remarkGfm];
+const REHYPE_PLUGINS = [rehypeHighlight];
 
 interface CommandResult {
   command: string;
@@ -36,15 +44,18 @@ function InlineMd({ text }: { text: string }) {
   );
 }
 
-function Prose({ children }: { children: string }) {
+// Memoized: the panel stays mounted while the command output is on screen, and
+// its parent (ChatView) re-renders on unrelated state changes. Without this,
+// every such re-render re-parsed the whole command output as markdown.
+const Prose = memo(function Prose({ children }: { children: string }) {
   return (
     <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1.5 prose-p:leading-relaxed prose-headings:mt-3 prose-headings:mb-1.5 prose-headings:font-semibold prose-li:my-0.5 prose-ul:my-1 prose-ol:my-1 prose-a:text-accent prose-a:no-underline hover:prose-a:underline prose-strong:font-semibold prose-code:text-[0.85em] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:bg-gray-100 prose-code:dark:bg-gray-800 prose-code:font-mono prose-blockquote:border-l-2 prose-blockquote:border-gray-300 prose-blockquote:dark:border-gray-600 prose-blockquote:pl-3 prose-blockquote:not-italic prose-blockquote:text-gray-500">
-      <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+      <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
         {children}
       </Markdown>
     </div>
   );
-}
+});
 
 function CardContent({ card, onAction }: { card: any; onAction?: (v: string) => void }) {
   if (!card) return null;

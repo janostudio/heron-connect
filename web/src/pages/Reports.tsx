@@ -11,6 +11,13 @@ import { listProjects, type ProjectSummary } from '@/api/projects';
 import { useAuthStore } from '@/store/auth';
 import { formatTime } from '@/lib/utils';
 
+// Module-level so the arrays keep one identity for the process lifetime.
+// Passing fresh `[remarkGfm]` / `[rehypeHighlight]` literals on every render
+// defeats react-markdown's internal memoization and re-runs the whole unified
+// pipeline (parse + remark + rehype + serialize) on every render.
+const REMARK_PLUGINS = [remarkGfm];
+const REHYPE_PLUGINS = [rehypeHighlight];
+
 // ── Report list ───────────────────────────────────────────────────────────
 
 export function ReportsList() {
@@ -201,7 +208,7 @@ export function ReportPreview() {
           <p className="text-xs text-gray-400 p-8 text-center">{t('common.loading')}</p>
         ) : (
           <div className="prose prose-sm max-w-none dark:prose-invert p-6 max-h-[75vh] overflow-y-auto">
-            <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+            <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
               {mdText}
             </Markdown>
           </div>

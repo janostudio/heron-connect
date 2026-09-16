@@ -1,18 +1,22 @@
 import { defineConfig } from 'vitest/config';
 import path from 'path';
 
-// Vitest config for the web dashboard. Only the pure modules are unit-tested
-// today (the chat per-conversation reducer and its race guards) — there is no
-// DOM test environment configured, so keep tests to pure logic. If component
-// tests are ever needed, add `environment: 'jsdom'` and @testing-library/react.
+// Vitest config for the web dashboard. Most modules under test are pure logic
+// (the chat per-conversation reducer, race guards, helpers) and run in the node
+// environment. `jsdom` is opted into per-file with a `@vitest-environment`
+// docblock — used by ChatComposer.test.tsx, which pins the typing-isolation
+// behaviour behind the 2026-09-16 input-lag fix.
 export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
   },
+  esbuild: {
+    jsx: 'automatic',
+  },
   test: {
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     environment: 'node',
   },
 });

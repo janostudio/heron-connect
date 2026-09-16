@@ -17,6 +17,12 @@ import { parseListItemText } from './chatHelpers';
 // reply_stream delta re-parsed the markdown of the ENTIRE transcript
 // (react-markdown + remark-gfm + rehype-highlight), which is what made long
 // conversations progressively laggy.
+//
+// The plugin arrays are module-level for the same reason: a fresh `[remarkGfm]`
+// literal per render defeats react-markdown's internal memoization and re-runs
+// the whole unified pipeline on every render.
+const REMARK_PLUGINS = [remarkGfm];
+const REHYPE_PLUGINS = [rehypeHighlight];
 
 function CopyButtonInner({ code }: { code: string }) {
   // null = idle, 'ok' = copied, 'fail' = copy attempt failed
@@ -150,7 +156,7 @@ function RenderMarkdownInner({ content, onOpenFile }: { content: string; onOpenF
   );
   return (
     <div className={MARKDOWN_CLASS}>
-      <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={components}>
+      <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={components}>
         {content}
       </Markdown>
     </div>
