@@ -34,11 +34,18 @@ func init() {
 // `codebuddy -p <prompt> --output-format stream-json --dangerously-skip-permissions`.
 type Agent struct {
 	workDir    string
-	model      string
+	model      string // user-selected model (pending until the next session starts)
 	mode       string // "default" | "yolo" (--dangerously-skip-permissions)
 	args       []string
 	sessionEnv []string
-	mu         sync.Mutex
+
+	// discoveredModel caches the account's real active model as reported by
+	// the CLI over ACP (see probe.go). Refreshed by AvailableModels;
+	// GetModel reads the cached value so the hot paths that render the
+	// footer/status card stay O(1) and never spawn a probe.
+	discoveredModel string
+
+	mu sync.Mutex
 }
 
 func New(opts map[string]any) (core.Agent, error) {
@@ -121,27 +128,89 @@ func (a *Agent) SetModel(model string) {
 	slog.Info("codebuddy: model changed", "model", model)
 }
 
+// GetModel returns the model the next session will use. A pending user
+// selection wins; otherwise we report the model the CLI says is actually
+// active for this account (captured by the last probe). Reporting the
+// discovered model keeps us in sync with reality — the CLI can serve a
+// different model than the one requested (e.g. server-side fallback), and
+// echoing config alone would hide that.
 func (a *Agent) GetModel() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.model
+	if a.model != "" {
+		return a.model
+	}
+	return a.discoveredModel
 }
 
-// AvailableModels returns the models CodeBuddy Code will accept via
-// `--model`. It prefers the user's own models.json configuration (merged
-// user-level + project-level, matching CodeBuddy Code's own precedence —
-// see core.CodeBuddyConfiguredModels) so that custom/self-hosted models the
-// user has added show up in the web admin UI and /model menu. Falls back
-// to a static built-in list when neither models.json file defines any
-// models, so the picker is never empty on a fresh install.
-func (a *Agent) AvailableModels(_ context.Context) []core.ModelOption {
+// AvailableModels returns the models this account can actually run.
+//
+// The account's real capability lives behind the login and changes as the
+// service adds or retires models, so a static list goes stale and silently
+// misreports the current model (which breaks the /model picker highlight).
+// We therefore discover it live from the CLI over ACP, then layer the
+// user's own models.json on top:
+//
+//  1. probe the CLI for the account's model list (authoritative base)
+//  2. merge custom entries from user/project models.json by id (override)
+//  3. apply the models.json availableModels allow-list, if any
+//  4. ensure the current model is present so the picker can highlight it
+//
+// Offline fallbacks, in order: models.json alone, then a small built-in
+// list, so the picker is never empty.
+func (a *Agent) AvailableModels(ctx context.Context) []core.ModelOption {
 	a.mu.Lock()
 	workDir := a.workDir
+	extraArgs := append([]string(nil), a.args...)
+	extraEnv := append([]string(nil), a.sessionEnv...)
 	a.mu.Unlock()
 
-	if models := core.CodeBuddyConfiguredModels(workDir); len(models) > 0 {
+	current, discovered := probeCodeBuddyModels(ctx, "codebuddy", workDir, extraArgs, extraEnv)
+
+	user, project, projectHasFile := core.LoadCodeBuddyModelsConfig(workDir)
+	configuredEmpty := core.CodeBuddyModelsConfigEmpty(user, project)
+
+	var models []core.ModelOption
+	switch {
+	case len(discovered) > 0:
+		// CLI is authoritative; models.json customises on top.
+		models = core.MergeCodeBuddyModels(user, project, projectHasFile, discovered)
+	case !configuredEmpty:
+		models = core.MergeCodeBuddyModels(user, project, projectHasFile)
+	default:
+		models = codeBuddyFallbackModels()
+	}
+
+	// Refresh the cached discovery so GetModel can answer without probing.
+	a.mu.Lock()
+	if current != "" {
+		a.discoveredModel = current
+	}
+	a.mu.Unlock()
+
+	return ensureModelPresent(models, a.GetModel())
+}
+
+// ensureModelPresent guarantees the effective current model appears in the
+// list, so the /model picker always has a row to highlight. A model that
+// the CLI didn't advertise (custom endpoint, or one retired from the list)
+// is prepended rather than dropped.
+func ensureModelPresent(models []core.ModelOption, current string) []core.ModelOption {
+	if current == "" {
 		return models
 	}
+	for _, m := range models {
+		if m.Name == current {
+			return models
+		}
+	}
+	return append([]core.ModelOption{{Name: current}}, models...)
+}
+
+// codeBuddyFallbackModels is used only when both the live probe and
+// models.json yield nothing (e.g. CLI offline). It is a last resort so the
+// picker is not empty, not a source of truth.
+func codeBuddyFallbackModels() []core.ModelOption {
 	return []core.ModelOption{
 		{Name: "claude-sonnet-5", Desc: "Claude Sonnet 5"},
 		{Name: "claude-sonnet-4-6", Desc: "Claude Sonnet 4.6"},

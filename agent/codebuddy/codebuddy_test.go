@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/janostudio/heron-connect/core"
 )
@@ -90,31 +91,204 @@ func TestAgent_SetMode(t *testing.T) {
 }
 
 func TestAgent_AvailableModels(t *testing.T) {
-	a := &Agent{}
+	t.Setenv("PATH", writeFakeCLI(t, `
+read -r line
+read -r line
+printf '%s\n' '`+modelUpdateLine("gpt-5.6-terra", [2]string{"gpt-5.6-terra", "GPT-5.6-Terra"})+`'
+sleep 0.3
+`))
+	a := &Agent{workDir: t.TempDir()}
 	models := a.AvailableModels(context.Background())
 	if len(models) == 0 {
 		t.Error("AvailableModels() returned empty list")
 	}
+	if models[0].Name != "gpt-5.6-terra" {
+		t.Errorf("models[0].Name = %q, want gpt-5.6-terra", models[0].Name)
+	}
 }
 
-func TestAgent_AvailableModels_UsesModelsJSONWhenPresent(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+// The probe result is the base list; a models.json entry overrides the
+// matching id and adds new ones.
+func TestAgent_AvailableModels_ModelsJSONOverridesProbe(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", writeFakeCLI(t, `
+read -r line
+read -r line
+printf '%s\n' '`+modelUpdateLine("claude-sonnet-5",
+		[2]string{"claude-sonnet-5", "Claude-Sonnet-5"},
+		[2]string{"gpt-5.6-terra", "GPT-5.6-Terra"})+`'
+sleep 0.3
+`))
 	workDir := t.TempDir()
+	writeModelsJSON(t, workDir, `{"models":[{"id":"claude-sonnet-5","name":"My Sonnet"},{"id":"self-hosted","name":"Self Hosted"}]}`)
 
-	modelsPath := filepath.Join(workDir, ".codebuddy", "models.json")
-	if err := os.MkdirAll(filepath.Dir(modelsPath), 0o755); err != nil {
-		t.Fatal(err)
+	a := &Agent{workDir: workDir}
+	models := a.AvailableModels(context.Background())
+
+	byName := map[string]string{}
+	var order []string
+	for _, m := range models {
+		byName[m.Name] = m.Desc
+		order = append(order, m.Name)
 	}
-	content := `{"models": [{"id": "my-custom-model", "name": "My Custom Model"}]}`
-	if err := os.WriteFile(modelsPath, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
+	if got := byName["claude-sonnet-5"]; got != "My Sonnet" {
+		t.Errorf("override lost: claude-sonnet-5 desc = %q, want %q", got, "My Sonnet")
 	}
+	if got := byName["gpt-5.6-terra"]; got != "GPT-5.6-Terra" {
+		t.Errorf("probe entry lost: gpt-5.6-terra desc = %q", got)
+	}
+	if got := byName["self-hosted"]; got != "Self Hosted" {
+		t.Errorf("custom entry missing: %v", models)
+	}
+	// An override must replace in place, not duplicate or reorder.
+	if len(order) != 3 {
+		t.Errorf("order = %v, want 3 entries with the override in place", order)
+	}
+	if order[0] != "claude-sonnet-5" {
+		t.Errorf("override moved: order = %v", order)
+	}
+}
+
+// A non-empty availableModels allow-list filters the discovered list.
+func TestAgent_AvailableModels_AllowListFiltersProbe(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", writeFakeCLI(t, `
+read -r line
+read -r line
+printf '%s\n' '`+modelUpdateLine("b",
+		[2]string{"a", "A"}, [2]string{"b", "B"}, [2]string{"c", "C"})+`'
+sleep 0.3
+`))
+	workDir := t.TempDir()
+	writeModelsJSON(t, workDir, `{"availableModels":["b","c"]}`)
+
+	a := &Agent{workDir: workDir}
+	models := a.AvailableModels(context.Background())
+	if len(models) != 2 || models[0].Name != "b" || models[1].Name != "c" {
+		t.Errorf("got %+v, want only b and c", models)
+	}
+}
+
+// When the probe fails but models.json defines something, models.json wins
+// over the built-in fallback.
+func TestAgent_AvailableModels_FallsBackToModelsJSONWhenProbeFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir()) // no codebuddy binary
+
+	workDir := t.TempDir()
+	writeModelsJSON(t, workDir, `{"models":[{"id":"my-custom-model","name":"My Custom Model"}]}`)
 
 	a := &Agent{workDir: workDir}
 	models := a.AvailableModels(context.Background())
 	if len(models) != 1 || models[0].Name != "my-custom-model" {
 		t.Errorf("expected only the configured custom model, got %v", models)
+	}
+}
+
+// With neither probe nor models.json available, the picker still gets a list.
+func TestAgent_AvailableModels_FallsBackToBuiltin(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir()) // no codebuddy binary
+
+	a := &Agent{workDir: t.TempDir()}
+	models := a.AvailableModels(context.Background())
+	if len(models) == 0 {
+		t.Fatal("AvailableModels() returned empty list")
+	}
+}
+
+// A pending user selection is reported as current and guaranteed to be in
+// the list, even when the CLI does not advertise it.
+func TestAgent_AvailableModels_PendingModelIsReportedAndPresent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", writeFakeCLI(t, `
+read -r line
+read -r line
+printf '%s\n' '`+modelUpdateLine("a", [2]string{"a", "A"}, [2]string{"b", "B"})+`'
+sleep 0.3
+`))
+	a := &Agent{workDir: t.TempDir()}
+	a.SetModel("not-advertised")
+
+	models := a.AvailableModels(context.Background())
+	if got := a.GetModel(); got != "not-advertised" {
+		t.Errorf("GetModel() = %q, want the pending selection", got)
+	}
+	if len(models) == 0 || models[0].Name != "not-advertised" {
+		t.Errorf("pending model not prepended: %+v", models)
+	}
+}
+
+// Without a pending selection, GetModel reports the CLI's active model.
+func TestAgent_GetModel_UsesDiscoveredModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", writeFakeCLI(t, `
+read -r line
+read -r line
+printf '%s\n' '`+modelUpdateLine("glm-5.3-ioa", [2]string{"glm-5.3-ioa", "GLM-5.3"})+`'
+sleep 0.3
+`))
+	a := &Agent{workDir: t.TempDir()}
+	a.AvailableModels(context.Background())
+
+	if got := a.GetModel(); got != "glm-5.3-ioa" {
+		t.Errorf("GetModel() = %q, want glm-5.3-ioa", got)
+	}
+}
+
+// GetModel must stay O(1): it is called while rendering the footer and
+// status card, so it must never spawn a probe.
+func TestAgent_GetModel_DoesNotProbe(t *testing.T) {
+	// A PATH with no codebuddy binary: if GetModel probed, it would log a
+	// spawn failure and take measurable time.
+	t.Setenv("PATH", t.TempDir())
+	a := &Agent{workDir: t.TempDir()}
+
+	done := make(chan string, 1)
+	go func() { done <- a.GetModel() }()
+	select {
+	case got := <-done:
+		if got != "" {
+			t.Errorf("GetModel() = %q, want empty", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("GetModel blocked — it must not run the probe")
+	}
+}
+
+func writeModelsJSON(t *testing.T, workDir, content string) {
+	t.Helper()
+	path := filepath.Join(workDir, ".codebuddy", "models.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureModelPresent(t *testing.T) {
+	base := []core.ModelOption{{Name: "a"}, {Name: "b"}}
+	tests := []struct {
+		name    string
+		current string
+		want    []string
+	}{
+		{"present leaves list untouched", "b", []string{"a", "b"}},
+		{"absent is prepended", "z", []string{"z", "a", "b"}},
+		{"empty current leaves list untouched", "", []string{"a", "b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ensureModelPresent(base, tt.current)
+			names := make([]string, len(got))
+			for i, m := range got {
+				names[i] = m.Name
+			}
+			if !reflect.DeepEqual(names, tt.want) {
+				t.Errorf("ensureModelPresent(%q) = %v, want %v", tt.current, names, tt.want)
+			}
+		})
 	}
 }
 
@@ -521,10 +695,10 @@ func TestExitFallbackEvent_ScanError(t *testing.T) {
 // FIRST init of a process run may establish the tracked top-level session id.
 func TestShouldTrackInitSessionID(t *testing.T) {
 	cases := []struct {
-		name                 string
-		sawInit              bool
-		subtype, sessionID   string
-		want                 bool
+		name               string
+		sawInit            bool
+		subtype, sessionID string
+		want               bool
 	}{
 		{"first init accepted", false, "init", "dc918b77", true},
 		{"second init rejected (subagent)", true, "init", "d492df45", false},

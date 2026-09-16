@@ -66,6 +66,33 @@ func CodeBuddyModelsJSONPaths(workDir string) (userPath, projectPath string) {
 	return userPath, projectPath
 }
 
+// LoadCodeBuddyModelsConfig reads the user-level and project-level
+// models.json for workDir and returns them plus whether a project file was
+// present. Callers that need the raw config (rather than a finished model
+// list) use this so they can layer it over a base list fetched elsewhere —
+// e.g. the model list discovered from `codebuddy --acp`.
+func LoadCodeBuddyModelsConfig(workDir string) (user, project CodeBuddyModelsFile, projectHasFile bool) {
+	userPath, projectPath := CodeBuddyModelsJSONPaths(workDir)
+	if userPath != "" {
+		user, _ = LoadCodeBuddyModelsFile(userPath)
+	}
+	if projectPath != "" {
+		project, projectHasFile = LoadCodeBuddyModelsFile(projectPath)
+	}
+	return user, project, projectHasFile
+}
+
+// CodeBuddyModelsConfigEmpty reports whether a models.json pair defines
+// nothing at all — neither custom model entries nor an allow-list.
+//
+// Note that a file carrying only `availableModels` is NOT empty: the
+// allow-list is meaningful on its own even with no custom `models` defined,
+// so callers must not short-circuit on len(Models) alone.
+func CodeBuddyModelsConfigEmpty(user, project CodeBuddyModelsFile) bool {
+	return len(user.Models) == 0 && len(project.Models) == 0 &&
+		len(user.AvailableModels) == 0 && len(project.AvailableModels) == 0
+}
+
 // MergeCodeBuddyModels combines user-level and project-level models.json
 // content following the documented precedence rules:
 //   - models: SmartMerge by id — project-level entries override user-level
@@ -73,28 +100,52 @@ func CodeBuddyModelsJSONPaths(workDir string) (userPath, projectPath string) {
 //   - availableModels: project-level fully replaces user-level (no merge)
 //     when the project file sets a non-empty list; otherwise the user-level
 //     list applies. An empty/absent list at both levels means "show all".
-func MergeCodeBuddyModels(user, project CodeBuddyModelsFile, projectHasFile bool) []ModelOption {
+//   - base: when non-empty, the caller-supplied model list (typically the
+//     account's real models discovered from the CLI) is used as the
+//     starting set, and models.json entries are merged on top by id. When
+//     empty, the result is built from models.json entries alone.
+//
+// The allow-list filters the final list in both cases.
+func MergeCodeBuddyModels(user, project CodeBuddyModelsFile, projectHasFile bool, base ...[]ModelOption) []ModelOption {
 	order := make([]string, 0, len(user.Models)+len(project.Models))
-	byID := make(map[string]CodeBuddyModelEntry, len(user.Models)+len(project.Models))
+	byID := make(map[string]ModelOption, len(user.Models)+len(project.Models))
 
-	for _, m := range user.Models {
-		if m.ID == "" {
+	var seed []ModelOption
+	if len(base) > 0 {
+		seed = base[0]
+	}
+	for _, m := range seed {
+		if m.Name == "" {
 			continue
 		}
-		if _, exists := byID[m.ID]; !exists {
-			order = append(order, m.ID)
+		if _, exists := byID[m.Name]; !exists {
+			order = append(order, m.Name)
 		}
-		byID[m.ID] = m
+		byID[m.Name] = m
 	}
-	for _, m := range project.Models {
-		if m.ID == "" {
-			continue
+
+	// models.json entries are applied user-then-project so project wins,
+	// mirroring the id-based override rule for custom model definitions.
+	applyEntries := func(entries []CodeBuddyModelEntry) {
+		for _, m := range entries {
+			if m.ID == "" {
+				continue
+			}
+			opt := ModelOption{Name: m.ID, Desc: m.Name}
+			if prev, exists := byID[m.ID]; exists {
+				// Preserve a discovered display name when the override
+				// declares only an id, so we don't blank out a good label.
+				if m.Name == "" && prev.Desc != "" {
+					opt.Desc = prev.Desc
+				}
+			} else {
+				order = append(order, m.ID)
+			}
+			byID[m.ID] = opt
 		}
-		if _, exists := byID[m.ID]; !exists {
-			order = append(order, m.ID)
-		}
-		byID[m.ID] = m
 	}
+	applyEntries(user.Models)
+	applyEntries(project.Models)
 
 	// availableModels: project-level presence (even if empty in the file,
 	// we can't distinguish "absent" from "explicitly empty" once decoded —
@@ -122,33 +173,23 @@ func MergeCodeBuddyModels(user, project CodeBuddyModelsFile, projectHasFile bool
 				continue
 			}
 		}
-		entry := byID[id]
-		options = append(options, ModelOption{Name: entry.ID, Desc: entry.Name})
+		options = append(options, byID[id])
 	}
 	return options
 }
 
 // CodeBuddyConfiguredModels reads user-level and project-level
-// models.json for workDir and returns the merged, filtered model list.
-// Returns nil if neither file exists or neither defines any models —
-// callers should fall back to a built-in default list in that case.
+// models.json for workDir and returns the merged, filtered model list
+// built from those files alone. Returns nil if neither file defines
+// anything (models or allow-list) — callers should fall back to a
+// discovered list or a built-in default in that case.
 //
 // Shared by agent/codebuddy (type = "codebuddy") and agent/acp (type =
 // "acp" with command = "codebuddy") since both ultimately drive the same
 // `codebuddy` CLI binary and its config file.
 func CodeBuddyConfiguredModels(workDir string) []ModelOption {
-	userPath, projectPath := CodeBuddyModelsJSONPaths(workDir)
-
-	var user, project CodeBuddyModelsFile
-	if userPath != "" {
-		user, _ = LoadCodeBuddyModelsFile(userPath)
-	}
-	projectHasFile := false
-	if projectPath != "" {
-		project, projectHasFile = LoadCodeBuddyModelsFile(projectPath)
-	}
-
-	if len(user.Models) == 0 && len(project.Models) == 0 {
+	user, project, projectHasFile := LoadCodeBuddyModelsConfig(workDir)
+	if CodeBuddyModelsConfigEmpty(user, project) {
 		return nil
 	}
 	return MergeCodeBuddyModels(user, project, projectHasFile)

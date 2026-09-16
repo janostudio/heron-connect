@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.1.43 (2026-09-16)
+
+### Fixed
+
+- **`type = "codebuddy"` 的 `/model` 模型列表与当前模型对不上、且无一行高亮**：根因是适配器的 `AvailableModels` 在 `models.json` 未定义任何 `models` 条目时回退到一份**写死的静态列表**（停留在 `gpt-5.4` 时代，不含 `gpt-5.6-terra` 等当前可用模型）。而 `GetModel()` 返回的是运行时真实模型，二者交集为空 → `renderModelCard` 设不出 `init_value` → Web 端 `SelectList` 匹配不到任何一行，界面表现为「当前模型: gpt-5.6-terra」下面挂着一份完全无关、无勾选的列表。现改为**从 CLI 读真实能力**：一次性 `codebuddy --acp` 握手（`initialize` + `session/new`）取 `configOptions` 里 category/model 的条目作为权威基底（实测 36 个模型，含显示名），再按 id 合并用户 `models.json` 自定义条目、应用 `availableModels` 白名单；失败时依次回退 `models.json` → 内置兜底表。`GetModel()` 同步改为优先报告 CLI 实际生效的模型（而非仅回显配置），并保证当前模型一定出现在列表里（不在则置顶），使高亮在任何情况下都能渲染。
+  - 探测带 `--no-session-persistence`：`session/new` 会在后端分配真实会话并落盘（实测不加该 flag 时每次探测都会在 `~/.codebuddy/projects/<slug>/` 新增一个 `.jsonl`，污染 `/list`），加此参数后仍返回完整模型清单且不再产生任何文件。
+  - 探测成本约 1s（15s 超时上限），每次 `/model` 实时探测；`GetModel()` 读取探测缓存的 O(1) 值，绝不触发探测（footer/状态卡片在热路径上调用它）。子进程走独立进程组、teardown 时 SIGKILL 兜底回收，空闲后 goroutine 数稳定。
+  - 顺带修复 `core.CodeBuddyConfiguredModels` 的一个次生 bug：其空值判断只看 `len(Models)`，导致 `models.json` **只配 `availableModels` 白名单时不生效**（被整体丢弃）；现改为 `models` 与 `availableModels` 皆空才算空。
+
 ## v1.1.42 (2026-09-16)
 
 ### Changed
