@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -165,16 +166,16 @@ type RateLimitCfg struct {
 
 // Engine routes messages between platforms and the agent for a single project.
 type Engine struct {
-	name                  string
-	agent                 Agent
-	platforms             []Platform
-	sessions              *SessionManager
-	ctx                   context.Context
-	cancel                context.CancelFunc
-	i18n                  *I18n
-	speech                SpeechCfg
-	tts                   *TTSCfg
-	display               DisplayCfg
+	name      string
+	agent     Agent
+	platforms []Platform
+	sessions  *SessionManager
+	ctx       context.Context
+	cancel    context.CancelFunc
+	i18n      *I18n
+	speech    SpeechCfg
+	tts       *TTSCfg
+	display   DisplayCfg
 	// platformDisplayOverrides holds per-platform-name overrides of display,
 	// keyed by lowercase platform name (e.g. "web", "feishu"). Populated once
 	// at startup/reload via SetPlatformDisplayOverrides; read per-turn via
@@ -293,6 +294,12 @@ type Engine struct {
 	interactiveMu     sync.Mutex
 	interactiveStates map[string]*interactiveState // key = sessionKey
 
+	// nextTurnEpoch mints monotonically increasing turn epochs. Agents that
+	// support epoch stamping (TurnEpochSetter) tag every event they emit with
+	// the current one, letting the event loop discard leftovers from a turn
+	// that was interrupted — see Event.TurnEpoch.
+	nextTurnEpoch atomic.Uint64
+
 	// Session reaper: periodically scans interactiveStates and kills sessions
 	// that have been idle (no agent events) for longer than resetOnIdle.
 	sessionReapCancel context.CancelFunc
@@ -367,11 +374,11 @@ type interactiveState struct {
 	// ends. nil means no turn is currently in progress. Unlike stopCh (which
 	// tears down the whole interactive state), cancelCh is scoped to a single
 	// turn so the session stays alive for the next message.
-	cancelCh               chan struct{}
-	pending                *pendingPermission
-	pendingMessages        []queuedMessage // messages queued while session was busy
-	approveAll             bool            // when true, auto-approve all permission requests for this session
-	fromVoice              bool            // true if current turn originated from voice transcription
+	cancelCh        chan struct{}
+	pending         *pendingPermission
+	pendingMessages []queuedMessage // messages queued while session was busy
+	approveAll      bool            // when true, auto-approve all permission requests for this session
+	fromVoice       bool            // true if current turn originated from voice transcription
 	// turnUserID / turnUserName capture the message sender identity at turn
 	// start, for usage-stats recording at turn completion. turnUserID "cron"
 	// marks synthetic cron-injected turns.
@@ -396,6 +403,12 @@ type interactiveState struct {
 	// the next turn (e.g. after an abnormal exit). Defaults to true (safe);
 	// cleared to false only after a clean EventResult.
 	eventsNeedResync bool
+
+	// turnEpoch is the epoch of the turn currently being consumed. Events
+	// stamped with a non-zero epoch different from this one are stale leftovers
+	// from a cancelled turn and are discarded — see Event.TurnEpoch. Zero means
+	// no epoch-stamped turn has run yet, in which case every event is accepted.
+	turnEpoch uint64
 
 	// lastEventTime records when the last agent event was received for this
 	// session. Used by the session reaper to detect and kill sessions that
@@ -465,6 +478,14 @@ func (s *interactiveState) isStopped() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.stopped
+}
+
+// currentEpoch returns the epoch of the turn currently being consumed. Zero
+// means no epoch-stamped turn has run, so no event is considered stale.
+func (s *interactiveState) currentEpoch() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.turnEpoch
 }
 
 func (s *interactiveState) markStopped() {
@@ -1197,7 +1218,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		workspace, channelName, err := e.resolveWorkspace(p, channelID)
 		if err != nil {
 			slog.Error("workspace resolution failed", "error", err,
-		"session_key", msg.SessionKey, "user", msg.UserID, "platform", msg.Platform)
+				"session_key", msg.SessionKey, "user", msg.UserID, "platform", msg.Platform)
 			e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgWsResolutionError, err))
 			return
 		}
@@ -1228,8 +1249,8 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 			wsAgent, wsSessions, _, effectiveWorkspace, err = e.workspaceContext(workspace, msg.SessionKey)
 			if err != nil {
 				slog.Error("failed to create workspace agent",
-		"workspace", workspace, "error", err,
-		"session_key", msg.SessionKey, "user", msg.UserID)
+					"workspace", workspace, "error", err,
+					"session_key", msg.SessionKey, "user", msg.UserID)
 				e.reply(p, msg.ReplyCtx, fmt.Sprintf("Failed to initialize workspace: %v", err))
 				return
 			}
@@ -1332,6 +1353,18 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPreviousProcessing))
 			return
 		}
+		// Interruptible sessions (opt-in via config): stop the running turn and
+		// let this message take the session over immediately. The message is
+		// front-inserted into the pending queue and drained by the event loop of
+		// the turn we just interrupted, so it runs before anything already
+		// waiting. Falls through to plain queueing when the adapter cannot
+		// interrupt or there was no turn left to stop.
+		if e.sessionIsInterruptible(interactiveKey) && e.interruptRunningTurn(interactiveKey) {
+			if e.queueMessageForBusySessionPrepend(p, msg, interactiveKey, true) {
+				return
+			}
+		}
+
 		// Session is busy — try to queue the message for the running turn
 		// so the agent processes it immediately after the current turn ends.
 		if e.queueMessageForBusySession(p, msg, interactiveKey) {
@@ -1440,6 +1473,14 @@ func (e *Engine) maybeAutoResetSessionOnIdle(p Platform, msg *Message, sessions 
 // the event loop sends it after the current turn's EventResult is received.
 // Returns true if the message was successfully queued, false otherwise.
 func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiveKey string) bool {
+	return e.queueMessageForBusySessionPrepend(p, msg, interactiveKey, false)
+}
+
+// queueMessageForBusySessionPrepend is queueMessageForBusySession with an
+// optional front-of-queue insertion. prepend=true is used by the interruptible
+// path: the interrupting message is the user's latest intent, so it runs before
+// anything that was already waiting. Everything else is unchanged.
+func (e *Engine) queueMessageForBusySessionPrepend(p Platform, msg *Message, interactiveKey string, prepend bool) bool {
 	e.interactiveMu.Lock()
 	state, hasState := e.interactiveStates[interactiveKey]
 	e.interactiveMu.Unlock()
@@ -1465,7 +1506,7 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 		e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgQueueFull), depth))
 		return true // handled: queue-full reply sent
 	}
-	state.pendingMessages = append(state.pendingMessages, queuedMessage{
+	entry := queuedMessage{
 		messageID:     msg.MessageID,
 		platform:      p,
 		replyCtx:      msg.ReplyCtx,
@@ -1478,7 +1519,14 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 		msgPlatform:   msg.Platform,
 		msgSessionKey: msg.SessionKey,
 		channelKey:    msg.ChannelKey,
-	})
+	}
+	if prepend {
+		// Front-insert: the interrupting message is the user's latest intent
+		// and must run before anything already waiting.
+		state.pendingMessages = append([]queuedMessage{entry}, state.pendingMessages...)
+	} else {
+		state.pendingMessages = append(state.pendingMessages, entry)
+	}
 	queueDepth := len(state.pendingMessages)
 	state.mu.Unlock()
 
@@ -1489,6 +1537,96 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 	)
 	e.reply(p, msg.ReplyCtx, e.i18n.T(MsgMessageQueued))
 	return true
+}
+
+// sessionIsInterruptible reports whether the running session for interactiveKey
+// supports mid-turn interruption with immediate prompt injection. This is a
+// capability check on the agent session only; it is safe to call while a turn
+// is in flight and does not itself interrupt anything.
+//
+// Returns false when there is no session, the session is dead, or the adapter
+// does not implement TurnInterrupter / reports false — in which case callers
+// must fall back to the pre-existing queueing behaviour.
+func (e *Engine) sessionIsInterruptible(interactiveKey string) bool {
+	e.interactiveMu.Lock()
+	state, ok := e.interactiveStates[interactiveKey]
+	e.interactiveMu.Unlock()
+	if !ok || state == nil {
+		return false
+	}
+	state.mu.Lock()
+	as := state.agentSession
+	state.mu.Unlock()
+	if as == nil || !as.Alive() {
+		return false
+	}
+	ti, ok := as.(TurnInterrupter)
+	return ok && ti.Interruptible()
+}
+
+// interruptRunningTurn stops the in-flight turn for interactiveKey so the
+// caller can take over the session immediately. It mirrors cmdCancel: claim and
+// close cancelCh (stopping local event relay), then ask the backend to abort.
+//
+// Returns true when an in-flight turn was successfully interrupted. False means
+// there was no turn to interrupt (already finished) — the caller should fall
+// back to queueing.
+//
+// The interrupted turn's in-flight output is deliberately NOT discarded: the
+// user keeps what was already streamed. Stale events the cancelled turn emits
+// afterwards are filtered by the turn-epoch check in the event loop.
+func (e *Engine) interruptRunningTurn(interactiveKey string) bool {
+	e.interactiveMu.Lock()
+	state, ok := e.interactiveStates[interactiveKey]
+	e.interactiveMu.Unlock()
+	if !ok || state == nil {
+		return false
+	}
+
+	// Claim cancelCh under the lock (set to nil) so a racing /cancel sees no
+	// turn in progress rather than double-closing the channel.
+	state.mu.Lock()
+	agentSession := state.agentSession
+	cancelCh := state.cancelCh
+	state.cancelCh = nil
+	if cancelCh != nil {
+		// The interrupted turn may still have events in flight; mark the state
+		// for a resync so the next turn drains whatever already landed.
+		state.eventsNeedResync = true
+	}
+	state.mu.Unlock()
+
+	if agentSession == nil || cancelCh == nil {
+		return false
+	}
+
+	slog.Info("interruptible: interrupting running turn", "session_key", interactiveKey)
+	// Best-effort: ask the backend to stop generating server-side.
+	agentSession.CancelTurn()
+	// Authoritative: stop the local event loop from relaying anything further.
+	close(cancelCh)
+
+	// Tell the user the partial reply they are looking at was cut short, so a
+	// truncated answer is not mistaken for a complete one. The already-streamed
+	// output is kept — only this marker is appended.
+	e.markTurnInterrupted(interactiveKey, state)
+	return true
+}
+
+// markTurnInterrupted appends the "(已中断)" marker to the turn that was just
+// interrupted. Sent through the same platform reply path as everything else, so
+// IM and Web show identical text.
+func (e *Engine) markTurnInterrupted(interactiveKey string, state *interactiveState) {
+	state.mu.Lock()
+	p := state.platform
+	replyCtx := state.replyCtx
+	state.mu.Unlock()
+
+	if p == nil {
+		slog.Debug("interruptible: no platform to notify of the interruption", "session_key", interactiveKey)
+		return
+	}
+	e.reply(p, replyCtx, e.i18n.T(MsgTurnInterrupted))
 }
 
 // takeQueuedBatchLocked pops the next batch of queued messages.
@@ -2023,6 +2161,11 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	promptContent := e.buildSenderPrompt(msg.Content, msg.UserID, msg.UserName, msg.Platform, msg.SessionKey, msg.ChannelKey)
 
 	sendStart := time.Now()
+	// Mint this turn's epoch and hand it to the agent before sending, so every
+	// event the agent emits is stamped with the turn it belongs to. Agents that
+	// don't implement TurnEpochSetter keep emitting unstamped (zero) events,
+	// which the event loop always accepts — unchanged behaviour.
+	epoch := e.nextTurnEpoch.Add(1)
 	state.mu.Lock()
 	state.currentMessageID = msg.MessageID
 	state.fromVoice = msg.FromVoice
@@ -2030,7 +2173,11 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	state.turnUserName = msg.UserName
 	state.sideText = ""
 	state.lastTurnMessageID = msg.MessageID
+	state.turnEpoch = epoch
 	state.mu.Unlock()
+	if setter, ok := state.agentSession.(TurnEpochSetter); ok {
+		setter.SetTurnEpoch(epoch)
+	}
 
 	// Run Send concurrently with processInteractiveEvents. Some agents block inside
 	// Send until the prompt turn finishes (e.g. ACP session/prompt); they may emit

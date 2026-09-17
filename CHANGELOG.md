@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.1.46 (2026-09-17)
+
+### Added
+
+- **忙时打断立即输入（`interruptible`，默认关闭）**：一轮任务执行到一半时再发消息，可中断当前轮并**立即**处理新消息，而不是排队等本轮结束。此前所有 agent 都只能在轮末消费排队消息（`queueMessageForBusySession` 明确不写 agent stdin，因为 per-turn spawn 的 CLI 会把 mid-turn 输入当成当前轮的一部分，导致事件循环永远等不到第二个 `EventResult`）。
+  - **配置**：`[projects.agent.options]` 下 `interruptible = true`。**不配置时行为与旧版完全一致**（排队到轮末），adapter 未实现该能力时静默降级回排队，不报错。
+  - **半截输出保留**：被打断轮已流式输出的内容保留在聊天记录中，末尾追加 `⏸️ (已中断)` 标记，避免用户把截断的回复误认为完整回复。
+  - **新消息插队首**：打断时新消息插到 `pendingMessages` 队首优先执行，打断前已排队的消息按原顺序随后执行。
+  - 支持范围：`claudecode`（原生 stream-json 双向通道，`CancelTurn` 发送 `control_request/interrupt`）与 `codebuddy`（新增常驻进程模式）。
+
+### Fixed
+
+- **打断后旧轮残留事件污染新轮**：`drainEvents` 只能丢弃"调用时刻已到达"的事件，而被取消轮可能在新轮开始消费**之后**才吐出收尾的 `result`/`error` —— 旧 `EventResult` 会让新轮提前结束，旧 `EventError` 会触发 `cleanupInteractiveState` 拆掉会话。现为 `Event` 增加 `TurnEpoch` 字段：引擎每轮铸造新 epoch，经新增的可选接口 `TurnEpochSetter` 在 `Send` 前告知 adapter，adapter 产出事件时打标，事件循环丢弃**非零且不匹配**当前轮的事件。**`TurnEpoch == 0` 一律放行**，因此未改造的 8 个 adapter（codex/gemini/cursor/kimi/qoder/opencode/pi/iflow 等）路径零变化。该缺口已用真实 CLI 复现验证：codebuddy 被打断轮确实在新轮开始后才发出 `result`。
+
+### Changed
+
+- **`agent/codebuddy` 新增常驻进程模式**（仅 `interruptible = true` 时启用）：加 `--input-format stream-json` 让 CLI 持续读 stdin，进程跨轮存活，prompt 改走 stdin 的 stream-json user 帧，`CancelTurn` 发送 `control_request/interrupt`。**`interruptible = false` 时旧的 per-turn spawn 路径逻辑一行未改**，`launchArgs` 的参数序列与位置参数 prompt 保持逐字节一致。同时修复 `osCmd` 字段的并发访问（新增 `cmdMu` 保护）。
+
 ## v1.1.45 (2026-09-17)
 
 ### Changed

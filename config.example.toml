@@ -856,6 +856,18 @@ mode = "default" # "default" | "acceptEdits" (edit) | "plan" | "auto" | "bypassP
 # 可选：设置推理强度等级（传递给 claude --effort）
 # reasoning_effort = "high"  # "low" | "medium" | "high" | "max"
 
+# Optional: interrupt the running turn when a new message arrives, injecting it
+# immediately instead of queueing it until the turn ends. Useful for IM where
+# you want to correct course mid-task.
+# Default false — behaviour is identical to leaving this unset (the message is
+# queued and processed after the current turn completes).
+# The interrupted turn's already-streamed output is kept and marked "(已中断)".
+# 可选：会话忙时，新消息打断当前轮并立即注入，而不是排队等本轮结束。
+# 适合在 IM 里任务执行到一半想纠正方向的场景。
+# 默认 false，与不配置此项的行为完全一致（消息排队，本轮结束后再处理）。
+# 被打断那一轮已输出的内容会保留，并标注"(已中断)"。
+# interruptible = true
+
 # In default/acceptEdits mode, you can pre-approve specific tools:
 # 在 default/acceptEdits 模式下，可预授权特定工具：
 # allowed_tools = ["Read", "Grep", "Glob", "Bash", "Edit", "Write"]
@@ -1671,6 +1683,13 @@ app_secret = "your-feishu-app-secret"
 # # Optional: model selection (defaults to CLI-configured model).
 # # 可选：模型选择（默认使用 CLI 配置的模型）
 # # model = "claude-sonnet-4-6"
+# #
+# # Optional: interrupt the running turn when a new message arrives, injecting it
+# # immediately instead of queueing it until the turn ends.
+# # Default false — behaviour is identical to leaving this unset.
+# # 可选：会话忙时，新消息打断当前轮并立即注入，而不是排队等本轮结束。
+# # 默认 false，与不配置此项的行为完全一致。
+# # interruptible = true
 
 # [[projects.platforms]]
 # type = "telegram"

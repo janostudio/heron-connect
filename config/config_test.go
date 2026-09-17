@@ -3703,3 +3703,51 @@ func readRawConfigText(t *testing.T) string {
 	}
 	return string(content)
 }
+
+// TestAgentOptions_InterruptibleParsed verifies the interruptible option is
+// parsed as a bool and survives a save/load round-trip unchanged. It gates a
+// behaviour change, so an unset value must stay absent (not default to true).
+func TestAgentOptions_InterruptibleParsed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want any // nil = absent
+	}{
+		{name: "enabled", body: "interruptible = true\n", want: true},
+		{name: "explicitly disabled", body: "interruptible = false\n", want: false},
+		{name: "absent", body: "", want: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			toml := `[[projects]]
+name = "demo"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "/tmp/demo"
+` + tc.body
+			writeTestConfig(t, toml)
+
+			cfg := readTestConfig(t)
+			got, present := cfg.Projects[0].Agent.Options["interruptible"]
+
+			if tc.want == nil {
+				if present {
+					t.Fatalf("interruptible present = %v, want absent", got)
+				}
+				return
+			}
+			if !present {
+				t.Fatal("interruptible missing from parsed options")
+			}
+			b, ok := got.(bool)
+			if !ok {
+				t.Fatalf("interruptible type = %T, want bool", got)
+			}
+			if b != tc.want.(bool) {
+				t.Errorf("interruptible = %v, want %v", b, tc.want)
+			}
+		})
+	}
+}

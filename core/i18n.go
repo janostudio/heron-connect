@@ -132,6 +132,7 @@ const (
 	MsgNoExecution               MsgKey = "no_execution"
 	MsgTurnCancelled             MsgKey = "turn_cancelled"
 	MsgNoTurnInProgress          MsgKey = "no_turn_in_progress"
+	MsgTurnInterrupted           MsgKey = "turn_interrupted"
 	MsgPreviousProcessing        MsgKey = "previous_processing"
 	MsgQueueFull                 MsgKey = "queue_full"
 	MsgMessageQueued             MsgKey = "message_queued"
@@ -683,6 +684,15 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "沒有正在進行的輪次。",
 		LangJapanese:           "進行中のターンはありません。",
 		LangSpanish:            "No hay turno en progreso.",
+	},
+	// Appended to the interrupted turn's already-streamed output so the user
+	// can tell a partial reply apart from a complete one.
+	MsgTurnInterrupted: {
+		LangEnglish:            "⏸️ (interrupted)",
+		LangChinese:            "⏸️ (已中断)",
+		LangTraditionalChinese: "⏸️ (已中斷)",
+		LangJapanese:           "⏸️ (中断されました)",
+		LangSpanish:            "⏸️ (interrumpido)",
 	},
 	MsgPreviousProcessing: {
 		LangEnglish:            "⏳ Previous request still processing. Use `/ps <message>` to send a P.S. to the running task.",

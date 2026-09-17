@@ -378,6 +378,33 @@ type SessionIDRotator interface {
 	RotatesSessionIDOnSpawn() bool
 }
 
+// TurnInterrupter is an optional interface for agent sessions that can be
+// interrupted mid-turn AND accept a new prompt right away. When implemented and
+// enabled by config, a message that arrives while a turn is running interrupts
+// that turn and is injected immediately instead of being queued until the turn
+// ends.
+//
+// Sessions that do NOT implement this (or return false) keep the pre-existing
+// behaviour: the message is queued and processed after the current turn.
+type TurnInterrupter interface {
+	// Interruptible reports whether this session supports mid-turn
+	// interruption with immediate prompt injection.
+	Interruptible() bool
+}
+
+// TurnEpochSetter is an optional interface for agent sessions that stamp their
+// events with a turn epoch. The engine mints a fresh epoch per turn and calls
+// SetTurnEpoch before sending the prompt; the session then copies that value
+// into every Event it emits, letting the engine discard leftovers from an
+// interrupted turn (see Event.TurnEpoch).
+//
+// Sessions that do NOT implement this emit unstamped (zero-epoch) events, which
+// the engine always accepts — unchanged behaviour.
+type TurnEpochSetter interface {
+	// SetTurnEpoch sets the epoch stamped onto events emitted from now on.
+	SetTurnEpoch(epoch uint64)
+}
+
 // PermissionResult represents the user's decision on a permission request.
 type PermissionResult struct {
 	Behavior     string         `json:"behavior"`               // "allow" or "deny"

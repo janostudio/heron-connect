@@ -20,8 +20,19 @@ import (
 )
 
 // codebuddySession manages a multi-turn CodeBuddy Code conversation.
-// Each Send() spawns `codebuddy -p --output-format stream-json ... -- <prompt>`.
-// Subsequent turns use `--resume <sessionID>` to continue the conversation.
+//
+// Two modes, selected by the project's `interruptible` option:
+//
+//   - Default (interruptible=false): per-turn spawn. Each Send() runs
+//     `codebuddy -p --output-format stream-json ... -- <prompt>` and the process
+//     exits when the turn ends. Subsequent turns use `--resume <sessionID>`.
+//     This is the historical behaviour, kept byte-for-byte.
+//
+//   - interruptible=true: one resident process started with
+//     `--input-format stream-json`, which makes the CLI read prompts from stdin
+//     as stream-json lines and stay alive across turns. That opens a control
+//     channel: CancelTurn can send control_request/interrupt to abort the
+//     running turn, and a new prompt can be injected immediately.
 type codebuddySession struct {
 	workDir   string
 	model     string
@@ -34,7 +45,12 @@ type codebuddySession struct {
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	alive     atomic.Bool
-	osCmd     *exec.Cmd // for force-kill on Close timeout
+
+	// cmdMu guards osCmd, which is written by the spawning path (or resident
+	// startup) and read by Close for force-kill.
+	cmdMu sync.Mutex
+	osCmd *exec.Cmd // for force-kill on Close timeout
+
 	// toolNameByID caches tool_use_id → readable tool name across the
 	// assistant→user turn boundary. The CLI's user-message stream emits
 	// tool_result blocks with only tool_use_id (no name), so the adapter
@@ -42,14 +58,26 @@ type codebuddySession struct {
 	// Uses sync.Map so handleAssistant (write) and handleUser (read) can
 	// run concurrently if events arrive out-of-order on different goroutines.
 	toolNameByID sync.Map // string → string
+
+	// interruptible enables the resident-process mode (see the type comment).
+	interruptible bool
+
+	// stdin is the resident process's stdin, used to write prompts and control
+	// frames. nil in per-turn mode.
+	stdinMu sync.Mutex
+	stdin   io.WriteCloser
+
+	// turnEpoch is the epoch the engine stamped for the current turn; every
+	// event this session emits carries it so the engine can discard leftovers
+	// from an interrupted turn. Zero means "unstamped" (engine accepts all).
+	turnEpoch atomic.Uint64
+
+	// nextRequestID mints unique request_id values for control_request frames.
+	nextRequestID atomic.Int64
 }
 
-// launchArgs builds the codebuddy CLI argument list. The prompt is passed as
-// the positional argument after the "--" end-of-options marker: the CLI
-// rejects tokens starting with "-" as unknown options, so without the marker
-// any prompt beginning with "-" (e.g. custom command files whose YAML
-// frontmatter starts with "---") fails with "error: unknown option".
-func launchArgs(prompt, sid, mode, model string, extraArgs []string) []string {
+// baseArgs builds the codebuddy CLI flags shared by both modes.
+func baseArgs(sid, mode, model string, extraArgs []string) []string {
 	args := []string{"-p", "--output-format", "stream-json"}
 
 	if sid != "" {
@@ -64,25 +92,41 @@ func launchArgs(prompt, sid, mode, model string, extraArgs []string) []string {
 		args = append(args, "--model", model)
 	}
 
-	// Extra args from config are appended before the end-of-options marker
-	// so they are treated as codebuddy CLI options, not prompt text.
-	args = append(args, extraArgs...)
-
-	return append(args, "--", prompt)
+	return append(args, extraArgs...)
 }
 
-func newCodeBuddySession(ctx context.Context, workDir, model, mode, resumeID string, extraArgs, extraEnv []string) (*codebuddySession, error) {
+// launchArgs builds the per-turn codebuddy CLI argument list. The prompt is
+// passed as the positional argument after the "--" end-of-options marker: the
+// CLI rejects tokens starting with "-" as unknown options, so without the
+// marker any prompt beginning with "-" (e.g. custom command files whose YAML
+// frontmatter starts with "---") fails with "error: unknown option".
+func launchArgs(prompt, sid, mode, model string, extraArgs []string) []string {
+	return append(baseArgs(sid, mode, model, extraArgs), "--", prompt)
+}
+
+// residentArgs builds the resident-process argument list. The prompt is NOT a
+// positional argument here: --input-format stream-json makes the CLI read
+// prompts from stdin as JSON lines, and a trailing positional prompt would
+// conflict with that stream. Also no end-of-options marker is needed, since no
+// prompt text reaches the command line.
+func residentArgs(sid, mode, model string, extraArgs []string) []string {
+	return append([]string{"--input-format", "stream-json"},
+		baseArgs(sid, mode, model, extraArgs)...)
+}
+
+func newCodeBuddySession(ctx context.Context, workDir, model, mode, resumeID string, extraArgs, extraEnv []string, interruptible bool) (*codebuddySession, error) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 
 	cs := &codebuddySession{
-		workDir:   workDir,
-		model:     model,
-		mode:      mode,
-		extraArgs: extraArgs,
-		extraEnv:  extraEnv,
-		events:    make(chan core.Event, 64),
-		ctx:       sessionCtx,
-		cancel:    cancel,
+		workDir:       workDir,
+		model:         model,
+		mode:          mode,
+		extraArgs:     extraArgs,
+		extraEnv:      extraEnv,
+		events:        make(chan core.Event, 64),
+		ctx:           sessionCtx,
+		cancel:        cancel,
+		interruptible: interruptible,
 	}
 	cs.alive.Store(true)
 
@@ -90,7 +134,85 @@ func newCodeBuddySession(ctx context.Context, workDir, model, mode, resumeID str
 		cs.sessionID.Store(resumeID)
 	}
 
+	if interruptible {
+		if err := cs.startResident(); err != nil {
+			cancel()
+			return nil, err
+		}
+	}
+
 	return cs, nil
+}
+
+// startResident launches the long-lived process whose stdin carries prompts and
+// control frames. Only used when interruptible is on; the per-turn path keeps
+// spawning inside Send.
+func (cs *codebuddySession) startResident() error {
+	sid := cs.CurrentSessionID()
+	args := residentArgs(sid, cs.mode, cs.model, cs.extraArgs)
+
+	slog.Debug("codebuddySession: starting resident process", "resume", sid != "", "args_len", len(args))
+
+	cmd := exec.CommandContext(cs.ctx, "codebuddy", args...)
+	cmd.Dir = cs.workDir
+	core.PrepareCmdForKill(cmd)
+	if len(cs.extraEnv) > 0 {
+		cmd.Env = core.MergeEnv(os.Environ(), cs.extraEnv)
+	}
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("codebuddySession: stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("codebuddySession: stdout pipe: %w", err)
+	}
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("codebuddySession: start resident: %w", err)
+	}
+
+	cs.cmdMu.Lock()
+	cs.osCmd = cmd
+	cs.cmdMu.Unlock()
+	cs.stdinMu.Lock()
+	cs.stdin = stdin
+	cs.stdinMu.Unlock()
+
+	cs.wg.Add(1)
+	go cs.readLoop(cmd, stdout, &stderrBuf)
+	return nil
+}
+
+// writeJSON writes one newline-delimited JSON frame to the resident process
+// stdin. Only valid in interruptible mode.
+func (cs *codebuddySession) writeJSON(v any) error {
+	cs.stdinMu.Lock()
+	defer cs.stdinMu.Unlock()
+	if cs.stdin == nil {
+		return fmt.Errorf("codebuddySession: resident stdin is not available")
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	if _, err := cs.stdin.Write(append(data, '\n')); err != nil {
+		return fmt.Errorf("write stdin: %w", err)
+	}
+	return nil
+}
+
+// emit tags an event with the current turn epoch and sends it to the event
+// channel. Every event this session produces goes through here.
+func (cs *codebuddySession) emit(ev core.Event) {
+	ev.TurnEpoch = cs.turnEpoch.Load()
+	select {
+	case cs.events <- ev:
+	case <-cs.ctx.Done():
+	}
 }
 
 func (cs *codebuddySession) Send(prompt string, images []core.ImageAttachment, files []core.FileAttachment) error {
@@ -103,6 +225,19 @@ func (cs *codebuddySession) Send(prompt string, images []core.ImageAttachment, f
 	}
 	if !cs.alive.Load() {
 		return fmt.Errorf("session is closed")
+	}
+
+	// Resident mode: the process is already running and reads prompts from
+	// stdin as stream-json lines. No spawn, no positional argument.
+	if cs.interruptible {
+		slog.Debug("codebuddySession: sending prompt to resident process")
+		return cs.writeJSON(map[string]any{
+			"type": "user",
+			"message": map[string]any{
+				"role":    "user",
+				"content": prompt,
+			},
+		})
 	}
 
 	sid := cs.CurrentSessionID()
@@ -128,7 +263,9 @@ func (cs *codebuddySession) Send(prompt string, images []core.ImageAttachment, f
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("codebuddySession: start: %w", err)
 	}
+	cs.cmdMu.Lock()
 	cs.osCmd = cmd
+	cs.cmdMu.Unlock()
 
 	cs.wg.Add(1)
 	go cs.readLoop(cmd, stdout, &stderrBuf)
@@ -197,6 +334,15 @@ func (cs *codebuddySession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderr
 				gotResult = true
 			}
 			pendingText = ""
+			if cs.interruptible {
+				// Resident mode: the process outlives the turn, so the scanner
+				// must keep reading for the next prompt. Reset the per-turn
+				// bookkeeping and carry on instead of breaking out to the
+				// exit path.
+				gotResult = false
+				nonJSONLines = nil
+				sawInit = true // only the very first init of the process counts
+			}
 
 		case "file-history-snapshot":
 			// internal housekeeping — skip
@@ -212,6 +358,20 @@ func (cs *codebuddySession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderr
 	}
 
 	exitErr := cmd.Wait()
+
+	// In resident mode, stdout closing means the process is gone: the session
+	// is dead regardless of whether the last turn produced a result.
+	if cs.interruptible {
+		cs.alive.Store(false)
+		if exitErr != nil {
+			stderrMsg := strings.TrimSpace(stderrBuf.String())
+			if stderrMsg != "" {
+				slog.Error("codebuddySession: resident process failed", "error", exitErr, "stderr", truncStr(stderrMsg, 200))
+				cs.emit(core.Event{Type: core.EventError, Error: fmt.Errorf("%s", stderrMsg)})
+			}
+		}
+		return
+	}
 
 	if gotResult {
 		if exitErr != nil {
@@ -235,10 +395,7 @@ func (cs *codebuddySession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderr
 		// (next message then starts a fresh agent session).
 		cs.alive.Store(false)
 	}
-	select {
-	case cs.events <- evt:
-	case <-cs.ctx.Done():
-	}
+	cs.emit(evt)
 }
 
 // exitFallbackEvent builds the terminal event when the CLI process exits
@@ -279,13 +436,13 @@ func exitFallbackEvent(nonJSONLines []string, exitErr, scanErr error, stderrMsg,
 // ── stream-json event structures ─────────────────────────────
 
 type streamEvent struct {
-	Type      string          `json:"type"`
-	Subtype   string          `json:"subtype"`
-	UUID      string          `json:"uuid"`
-	SessionID string          `json:"session_id"`
-	Result    string          `json:"result"`
-	IsError   bool            `json:"is_error"`
-	Message   *streamMessage  `json:"message"`
+	Type      string         `json:"type"`
+	Subtype   string         `json:"subtype"`
+	UUID      string         `json:"uuid"`
+	SessionID string         `json:"session_id"`
+	Result    string         `json:"result"`
+	IsError   bool           `json:"is_error"`
+	Message   *streamMessage `json:"message"`
 }
 
 type streamMessage struct {
@@ -296,13 +453,13 @@ type streamMessage struct {
 }
 
 type contentItem struct {
-	Type       string          `json:"type"`
-	Text       string          `json:"text"`
-	ID         string          `json:"id"`
-	Name       string          `json:"name"`
-	Input      json.RawMessage `json:"input"`
-	ToolUseID  string          `json:"tool_use_id"`
-	Content    json.RawMessage `json:"content"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Input     json.RawMessage `json:"input"`
+	ToolUseID string          `json:"tool_use_id"`
+	Content   json.RawMessage `json:"content"`
 	// Thinking is a defensive fallback for codebuddy protocol variants that
 	// emit the thinking block under a "thinking" key instead of "text".
 	// Anthropic-style protocols use "thinking"; codebuddy CLI may use either
@@ -334,12 +491,7 @@ func (cs *codebuddySession) handleAssistant(ev *streamEvent, pendingText string)
 		switch item.Type {
 		case "text":
 			if item.Text != "" {
-				evt := core.Event{Type: core.EventText, Content: item.Text}
-				select {
-				case cs.events <- evt:
-				case <-cs.ctx.Done():
-					return ""
-				}
+				cs.emit(core.Event{Type: core.EventText, Content: item.Text})
 			}
 
 		case "tool_use":
@@ -350,12 +502,7 @@ func (cs *codebuddySession) handleAssistant(ev *streamEvent, pendingText string)
 			if item.ID != "" && item.Name != "" {
 				cs.toolNameByID.Store(item.ID, item.Name)
 			}
-			evt := core.Event{Type: core.EventToolUse, ToolName: item.Name, ToolID: item.ID, ToolInput: inputPreview}
-			select {
-			case cs.events <- evt:
-			case <-cs.ctx.Done():
-				return ""
-			}
+			cs.emit(core.Event{Type: core.EventToolUse, ToolName: item.Name, ToolID: item.ID, ToolInput: inputPreview})
 
 		case "thinking":
 			// Accept either the Anthropic-style "thinking" field or a "text"
@@ -366,12 +513,7 @@ func (cs *codebuddySession) handleAssistant(ev *streamEvent, pendingText string)
 				thinking = item.Text
 			}
 			if thinking != "" {
-				evt := core.Event{Type: core.EventThinking, Content: thinking}
-				select {
-				case cs.events <- evt:
-				case <-cs.ctx.Done():
-					return ""
-				}
+				cs.emit(core.Event{Type: core.EventThinking, Content: thinking})
 			}
 		}
 	}
@@ -407,18 +549,13 @@ func (cs *codebuddySession) handleUser(ev *streamEvent) {
 				toolName = name
 			}
 		}
-		evt := core.Event{
+		cs.emit(core.Event{
 			Type:      core.EventToolResult,
 			ToolName:  toolName,
 			ToolID:    item.ToolUseID,
 			Content:   resultText,
 			SessionID: cs.CurrentSessionID(),
-		}
-		select {
-		case cs.events <- evt:
-		case <-cs.ctx.Done():
-			return
-		}
+		})
 	}
 }
 
@@ -437,16 +574,12 @@ func (cs *codebuddySession) handleResult(ev *streamEvent, pendingText string) bo
 		return false
 	}
 
-	evt := core.Event{
+	cs.emit(core.Event{
 		Type:      core.EventResult,
 		Content:   finalText,
 		SessionID: cs.CurrentSessionID(),
 		Done:      true,
-	}
-	select {
-	case cs.events <- evt:
-	case <-cs.ctx.Done():
-	}
+	})
 	return true
 }
 
@@ -470,6 +603,18 @@ func (cs *codebuddySession) Alive() bool {
 func (cs *codebuddySession) Close() error {
 	cs.alive.Store(false)
 	cs.cancel()
+
+	// Resident mode: closing stdin first lets the CLI exit on its own, which
+	// keeps the transcript write-out clean. Mirrors the claudecode shutdown.
+	if cs.interruptible {
+		cs.stdinMu.Lock()
+		if cs.stdin != nil {
+			_ = cs.stdin.Close()
+			cs.stdin = nil
+		}
+		cs.stdinMu.Unlock()
+	}
+
 	done := make(chan struct{})
 	go func() {
 		cs.wg.Wait()
@@ -478,15 +623,55 @@ func (cs *codebuddySession) Close() error {
 	select {
 	case <-done:
 	case <-time.After(8 * time.Second):
-		_ = core.ForceKillProcessGroup(cs.osCmd)
+		cs.cmdMu.Lock()
+		cmd := cs.osCmd
+		cs.cmdMu.Unlock()
+		if cmd != nil {
+			_ = core.ForceKillProcessGroup(cmd)
+		}
 	}
 	close(cs.events)
 	return nil
 }
 
+// CancelTurn asks the CodeBuddy process to abort the in-flight turn via a
+// control_request/interrupt frame. Only meaningful in resident mode (the
+// per-turn process has no stdin channel and exits with its turn anyway).
+//
+// The process stays alive and can accept the next prompt, so the engine can
+// inject a new message right away.
 func (cs *codebuddySession) CancelTurn() {
-	slog.Debug("codebuddySession: CancelTurn not supported")
+	if !cs.interruptible {
+		slog.Debug("codebuddySession: CancelTurn not supported in per-turn mode")
+		return
+	}
+	if !cs.alive.Load() {
+		slog.Debug("codebuddySession: CancelTurn on a dead session, ignoring")
+		return
+	}
+
+	reqID := fmt.Sprintf("interrupt-%d", cs.nextRequestID.Add(1))
+	controlRequest := map[string]any{
+		"type":       "control_request",
+		"request_id": reqID,
+		"request": map[string]any{
+			"subtype": "interrupt",
+		},
+	}
+	if err := cs.writeJSON(controlRequest); err != nil {
+		slog.Warn("codebuddySession: interrupt request failed", "request_id", reqID, "error", err)
+		return
+	}
+	slog.Debug("codebuddySession: interrupt requested", "request_id", reqID)
 }
+
+// Interruptible reports whether this session supports mid-turn interruption
+// with immediate prompt injection.
+func (cs *codebuddySession) Interruptible() bool { return cs.interruptible }
+
+// SetTurnEpoch records the epoch the engine stamped for the current turn.
+// Every event emitted afterwards carries it (see emit).
+func (cs *codebuddySession) SetTurnEpoch(epoch uint64) { cs.turnEpoch.Store(epoch) }
 
 // ── helpers ──────────────────────────────────────────────────
 

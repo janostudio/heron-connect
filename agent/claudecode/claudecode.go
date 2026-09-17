@@ -52,6 +52,7 @@ type Agent struct {
 	routerURL        string // Claude Code Router URL (e.g., "http://127.0.0.1:3456")
 	routerAPIKey     string // Claude Code Router API key (optional)
 	systemPrompt     string // Custom system prompt to pass to Claude CLI
+	interruptible    bool   // mid-turn interruption with immediate prompt injection (opt-in)
 
 	providerProxy  *proxy.ProviderProxy // local proxy for third-party providers
 	proxyLocalURL  string              // local URL of the proxy
@@ -128,6 +129,10 @@ func New(opts map[string]any) (core.Agent, error) {
 	mode, _ := opts["mode"].(string)
 	mode = normalizePermissionMode(mode)
 	systemPrompt, _ := opts["system_prompt"].(string)
+
+	// interruptible: opt-in mid-turn interruption. Absent/false keeps the
+	// historical queue-until-turn-ends behaviour exactly.
+	interruptible, _ := opts["interruptible"].(bool)
 
 	var allowedTools []string
 	if tools, ok := opts["allowed_tools"].([]any); ok {
@@ -222,6 +227,7 @@ func New(opts map[string]any) (core.Agent, error) {
 		routerURL:        routerURL,
 		routerAPIKey:     routerAPIKey,
 		spawnOpts:        spawnOpts,
+		interruptible:    interruptible,
 	}, nil
 }
 
@@ -431,9 +437,10 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	// When router_url is set, --verbose conflicts with --output-format stream-json
 	// (verbose emits non-JSON text to stdout that corrupts the JSON stream).
 	disableVerbose := a.routerURL != ""
+	interruptible := a.interruptible
 	a.mu.Unlock()
 
-	return newClaudeSession(ctx, a.workDir, a.cliBin, a.cliExtraArgs, a.cliArgsFlag, model, effort, sessionID, a.mode, systemPrompt, tools, disTools, extraEnv, platformPrompt, disableVerbose, a.spawnOpts, maxTok)
+	return newClaudeSession(ctx, a.workDir, a.cliBin, a.cliExtraArgs, a.cliArgsFlag, model, effort, sessionID, a.mode, systemPrompt, tools, disTools, extraEnv, platformPrompt, disableVerbose, a.spawnOpts, maxTok, interruptible)
 }
 
 func (a *Agent) ListSessions(ctx context.Context) ([]core.AgentSessionInfo, error) {

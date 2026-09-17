@@ -575,6 +575,22 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			if !ok {
 				goto channelClosed
 			}
+			// Drop leftovers from a turn that was interrupted. A cancelled turn
+			// can emit its trailing result/error AFTER the next turn has started
+			// consuming, and drainEvents only clears what had already arrived —
+			// without this check the new turn would end early on the old
+			// EventResult or tear down on the old EventError.
+			//
+			// Epoch 0 means "unstamped" and is always accepted, so agents that
+			// don't implement TurnEpochSetter behave exactly as before.
+			if curEpoch := state.currentEpoch(); event.TurnEpoch != 0 && event.TurnEpoch != curEpoch {
+				slog.Debug("dropping stale event from a previous turn",
+					"event_epoch", event.TurnEpoch,
+					"current_epoch", curEpoch,
+					"type", event.Type,
+					"session_key", sessionKey)
+				continue
+			}
 		case err := <-pendingSend:
 			pendingSend = nil
 			if err != nil {

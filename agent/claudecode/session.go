@@ -49,9 +49,24 @@ type claudeSession struct {
 	// Stop hook timeout. The wait ends as soon as the process exits,
 	// so typical shutdowns take seconds, not the full timeout.
 	gracefulStopTimeout time.Duration
+
+	// interruptible mirrors the project's [projects.agent.options.interruptible]
+	// setting. When true the engine may interrupt a running turn and inject a
+	// new prompt immediately; when false the engine keeps the historical
+	// queue-until-turn-ends behaviour and never calls CancelTurn.
+	interruptible bool
+
+	// turnEpoch is the epoch the engine stamped for the current turn; every
+	// event this session emits carries it so the engine can discard leftovers
+	// from an interrupted turn. Zero means "unstamped" (engine accepts all).
+	turnEpoch atomic.Uint64
+
+	// nextRequestID mints unique request_id values for control_request frames
+	// (currently only interrupt) so responses can be correlated.
+	nextRequestID atomic.Int64
 }
 
-func newClaudeSession(ctx context.Context, workDir, cliBin string, cliExtraArgs []string, cliArgsFlag string, model, effort, sessionID, mode, systemPrompt string, allowedTools, disallowedTools []string, extraEnv []string, platformPrompt string, disableVerbose bool, spawnOpts core.SpawnOptions, maxContextTokens int) (*claudeSession, error) {
+func newClaudeSession(ctx context.Context, workDir, cliBin string, cliExtraArgs []string, cliArgsFlag string, model, effort, sessionID, mode, systemPrompt string, allowedTools, disallowedTools []string, extraEnv []string, platformPrompt string, disableVerbose bool, spawnOpts core.SpawnOptions, maxContextTokens int, interruptible bool) (*claudeSession, error) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 
 	// innerArgs are Claude Code CLI flags — when a wrapper is used with
@@ -205,6 +220,7 @@ func newClaudeSession(ctx context.Context, workDir, cliBin string, cliExtraArgs 
 		cancel:              cancel,
 		done:                make(chan struct{}),
 		gracefulStopTimeout: 120 * time.Second,
+		interruptible:       interruptible,
 	}
 	cs.setPermissionMode(mode)
 	cs.sessionID.Store(sessionID)
@@ -271,14 +287,10 @@ func (cs *claudeSession) finishReadLoop(waitErrCh <-chan error, stderrBuf *bytes
 		}
 		if stderrMsg != "" {
 			slog.Error("claudeSession: process failed", "error", err, "stderr", stderrMsg)
-			evt := core.Event{Type: core.EventError, Error: fmt.Errorf("%s", stderrMsg)}
-			select {
-			case cs.events <- evt:
-			case <-cs.ctx.Done():
-				// INVARIANT: readLoop must close cs.events and cs.done exactly once
-				// on every termination path. Callers (engine event loop) rely on
-				// these closures to observe session end.
-			}
+			// INVARIANT: readLoop must close cs.events and cs.done exactly once
+			// on every termination path. Callers (engine event loop) rely on
+			// these closures to observe session end.
+			cs.emit(core.Event{Type: core.EventError, Error: fmt.Errorf("%s", stderrMsg)})
 		}
 	}
 	close(cs.events)
@@ -300,11 +312,7 @@ func (cs *claudeSession) handleReadLoopScanErr(err error, waitDone <-chan struct
 
 	slog.Error("claudeSession: scanner error", "error", err)
 	evt := core.Event{Type: core.EventError, Error: fmt.Errorf("read stdout: %w", err)}
-	select {
-	case cs.events <- evt:
-	case <-cs.ctx.Done():
-		return
-	}
+	cs.emit(evt)
 }
 
 func (cs *claudeSession) handleReadLoopLine(line string) {
@@ -341,12 +349,7 @@ func (cs *claudeSession) handleReadLoopLine(line string) {
 func (cs *claudeSession) handleSystem(raw map[string]any) {
 	if sid, ok := raw["session_id"].(string); ok && sid != "" {
 		cs.sessionID.Store(sid)
-		evt := core.Event{Type: core.EventText, SessionID: sid}
-		select {
-		case cs.events <- evt:
-		case <-cs.ctx.Done():
-			return
-		}
+		cs.emit(core.Event{Type: core.EventText, SessionID: sid})
 	}
 }
 
@@ -374,28 +377,14 @@ func (cs *claudeSession) handleAssistant(raw map[string]any) {
 			toolID, _ := item["id"].(string)
 			inputSummary := summarizeInput(toolName, item["input"])
 			evt := core.Event{Type: core.EventToolUse, ToolName: toolName, ToolID: toolID, ToolInput: inputSummary}
-			select {
-			case cs.events <- evt:
-			case <-cs.ctx.Done():
-				return
-			}
+			cs.emit(evt)
 		case "thinking":
 			if thinking, ok := item["thinking"].(string); ok && thinking != "" {
-				evt := core.Event{Type: core.EventThinking, Content: thinking}
-				select {
-				case cs.events <- evt:
-				case <-cs.ctx.Done():
-					return
-				}
+				cs.emit(core.Event{Type: core.EventThinking, Content: thinking})
 			}
 		case "text":
 			if text, ok := item["text"].(string); ok && text != "" {
-				evt := core.Event{Type: core.EventText, Content: text}
-				select {
-				case cs.events <- evt:
-				case <-cs.ctx.Done():
-					return
-				}
+				cs.emit(core.Event{Type: core.EventText, Content: text})
 			}
 		}
 	}
@@ -456,10 +445,7 @@ func (cs *claudeSession) handleResult(raw map[string]any) {
 			SessionID: cs.CurrentSessionID(),
 			Done:      true,
 		}
-		select {
-		case cs.events <- evt:
-		case <-cs.ctx.Done():
-		}
+		cs.emit(evt)
 		return
 	}
 
@@ -471,11 +457,7 @@ func (cs *claudeSession) handleResult(raw map[string]any) {
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
 	}
-	select {
-	case cs.events <- evt:
-	case <-cs.ctx.Done():
-		return
-	}
+	cs.emit(evt)
 }
 
 func (cs *claudeSession) handleControlRequest(raw map[string]any) {
@@ -531,11 +513,7 @@ func (cs *claudeSession) handleControlRequest(raw map[string]any) {
 		evt.Questions = parseUserQuestions(input)
 	}
 
-	select {
-	case cs.events <- evt:
-	case <-cs.ctx.Done():
-		return
-	}
+	cs.emit(evt)
 }
 
 // Send writes a user message (with optional images and files) to the Claude process stdin.
@@ -763,8 +741,55 @@ func (cs *claudeSession) Close() error {
 	return nil
 }
 
+// CancelTurn asks the Claude process to abort the in-flight turn via a
+// control_request/interrupt frame. The process stays alive and can accept the
+// next prompt, so the engine can inject a new message right away.
+//
+// Best-effort: a session that is not running (or whose stdin write fails) is
+// left for the engine to handle — it falls back to the queueing path.
 func (cs *claudeSession) CancelTurn() {
-	slog.Debug("agent: CancelTurn not supported for this session type")
+	if !cs.alive.Load() {
+		slog.Debug("claudeSession: CancelTurn on a dead session, ignoring")
+		return
+	}
+
+	reqID := fmt.Sprintf("interrupt-%d", cs.nextRequestID.Add(1))
+	controlRequest := map[string]any{
+		"type":       "control_request",
+		"request_id": reqID,
+		"request": map[string]any{
+			"subtype": "interrupt",
+		},
+	}
+
+	if err := cs.writeJSON(controlRequest); err != nil {
+		slog.Warn("claudeSession: interrupt request failed", "request_id", reqID, "error", err)
+		return
+	}
+	slog.Debug("claudeSession: interrupt requested", "request_id", reqID)
+}
+
+// Interruptible reports whether this session supports mid-turn interruption
+// with immediate prompt injection.
+func (cs *claudeSession) Interruptible() bool { return cs.interruptible }
+
+// SetTurnEpoch records the epoch the engine stamped for the current turn.
+// Every event emitted afterwards carries it (see stampEpoch).
+func (cs *claudeSession) SetTurnEpoch(epoch uint64) { cs.turnEpoch.Store(epoch) }
+
+// emit tags an event with the current turn epoch and sends it to the event
+// channel. Every event this session produces goes through here, so the engine
+// can tell current-turn output apart from leftovers of an interrupted turn.
+//
+// Returns false when the session context is done and the event was dropped.
+func (cs *claudeSession) emit(ev core.Event) bool {
+	ev.TurnEpoch = cs.turnEpoch.Load()
+	select {
+	case cs.events <- ev:
+		return true
+	case <-cs.ctx.Done():
+		return false
+	}
 }
 
 // shellJoinArgs joins args into a single string, quoting any arg that

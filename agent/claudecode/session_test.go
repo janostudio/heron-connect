@@ -3,9 +3,12 @@ package claudecode
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -281,5 +284,171 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(0)
 	default:
 		os.Exit(2)
+	}
+}
+
+// ──────────────────────────────────────────────────────────────
+// CancelTurn / interrupt tests
+// ──────────────────────────────────────────────────────────────
+
+// capturingStdin collects everything written to stdin so tests can assert on the
+// exact JSON frames CancelTurn produces.
+type capturingStdin struct {
+	mu   sync.Mutex
+	data []byte
+}
+
+func (c *capturingStdin) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.data = append(c.data, p...)
+	return len(p), nil
+}
+
+func (c *capturingStdin) Close() error { return nil }
+
+func (c *capturingStdin) frames(t *testing.T) []map[string]any {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(string(c.data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("stdin line is not valid JSON: %q: %v", line, err)
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+func newCancelTestSession(stdin io.WriteCloser) *claudeSession {
+	cs := &claudeSession{
+		stdin:   stdin,
+		events:  make(chan core.Event, 8),
+		ctx:     context.Background(),
+		cancel:  func() {},
+		done:    make(chan struct{}),
+		workDir: ".",
+	}
+	cs.alive.Store(true)
+	return cs
+}
+
+// TestCancelTurn_SendsInterruptControlRequest is the core contract: CancelTurn
+// must emit a well-formed control_request/interrupt frame on stdin.
+func TestCancelTurn_SendsInterruptControlRequest(t *testing.T) {
+	stdin := &capturingStdin{}
+	cs := newCancelTestSession(stdin)
+
+	cs.CancelTurn()
+
+	frames := stdin.frames(t)
+	if len(frames) != 1 {
+		t.Fatalf("expected exactly 1 frame, got %d: %v", len(frames), frames)
+	}
+	f := frames[0]
+
+	if got := f["type"]; got != "control_request" {
+		t.Errorf("type = %v, want control_request", got)
+	}
+	if got, _ := f["request_id"].(string); got == "" {
+		t.Error("request_id must be non-empty")
+	}
+	req, ok := f["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("request is not an object: %v", f["request"])
+	}
+	if got := req["subtype"]; got != "interrupt" {
+		t.Errorf("request.subtype = %v, want interrupt", got)
+	}
+}
+
+// TestCancelTurn_RequestIDsAreUnique verifies repeated interrupts are
+// distinguishable, which the response correlation depends on.
+func TestCancelTurn_RequestIDsAreUnique(t *testing.T) {
+	stdin := &capturingStdin{}
+	cs := newCancelTestSession(stdin)
+
+	cs.CancelTurn()
+	cs.CancelTurn()
+	cs.CancelTurn()
+
+	frames := stdin.frames(t)
+	if len(frames) != 3 {
+		t.Fatalf("expected 3 frames, got %d", len(frames))
+	}
+	seen := map[string]bool{}
+	for _, f := range frames {
+		id, _ := f["request_id"].(string)
+		if seen[id] {
+			t.Errorf("duplicate request_id %q", id)
+		}
+		seen[id] = true
+	}
+}
+
+// TestCancelTurn_DeadSession_Noop verifies a dead session does not write
+// anything — the engine falls back to its queueing path.
+func TestCancelTurn_DeadSession_Noop(t *testing.T) {
+	stdin := &capturingStdin{}
+	cs := newCancelTestSession(stdin)
+	cs.alive.Store(false)
+
+	cs.CancelTurn()
+
+	if frames := stdin.frames(t); len(frames) != 0 {
+		t.Errorf("dead session wrote %d frames, want 0", len(frames))
+	}
+}
+
+// TestInterruptible_ReflectsConfig verifies the capability flag is reported
+// verbatim so the engine can gate the interrupt path.
+func TestInterruptible_ReflectsConfig(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		cs := newCancelTestSession(&capturingStdin{})
+		cs.interruptible = want
+		if got := cs.Interruptible(); got != want {
+			t.Errorf("Interruptible() = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestEmit_StampsTurnEpoch verifies every emitted event carries the epoch the
+// engine set, so leftovers of an interrupted turn can be filtered out.
+func TestEmit_StampsTurnEpoch(t *testing.T) {
+	cs := newCancelTestSession(&capturingStdin{})
+
+	cs.SetTurnEpoch(99)
+	cs.emit(core.Event{Type: core.EventText, Content: "hi"})
+
+	select {
+	case ev := <-cs.events:
+		if ev.TurnEpoch != 99 {
+			t.Errorf("TurnEpoch = %d, want 99", ev.TurnEpoch)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("emit did not deliver the event")
+	}
+}
+
+// TestEmit_UnstampedBeforeSetTurnEpoch is the compatibility guard: before the
+// engine stamps an epoch, events carry 0 (accepted unconditionally).
+func TestEmit_UnstampedBeforeSetTurnEpoch(t *testing.T) {
+	cs := newCancelTestSession(&capturingStdin{})
+
+	cs.emit(core.Event{Type: core.EventText, Content: "hi"})
+
+	select {
+	case ev := <-cs.events:
+		if ev.TurnEpoch != 0 {
+			t.Errorf("TurnEpoch = %d, want 0 for an unstamped session", ev.TurnEpoch)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("emit did not deliver the event")
 	}
 }

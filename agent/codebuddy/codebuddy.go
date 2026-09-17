@@ -38,6 +38,10 @@ type Agent struct {
 	mode       string // "default" | "yolo" (--dangerously-skip-permissions)
 	args       []string
 	sessionEnv []string
+	// interruptible switches the session to a resident process driven over
+	// stream-json stdin, enabling mid-turn interruption. Absent/false keeps
+	// the historical per-turn spawn behaviour exactly.
+	interruptible bool
 
 	// discoveredModel caches the account's real active model as reported by
 	// the CLI over ACP (see probe.go). Refreshed by AvailableModels;
@@ -57,16 +61,18 @@ func New(opts map[string]any) (core.Agent, error) {
 	mode, _ := opts["mode"].(string)
 	mode = normalizeMode(mode)
 	args := parseStringSlice(opts["args"])
+	interruptible, _ := opts["interruptible"].(bool)
 
 	if _, err := exec.LookPath("codebuddy"); err != nil {
 		return nil, fmt.Errorf("codebuddy: 'codebuddy' not found in PATH, install with: npm install -g @tencent-ai/codebuddy-code")
 	}
 
 	return &Agent{
-		workDir: workDir,
-		model:   model,
-		mode:    mode,
-		args:    args,
+		workDir:       workDir,
+		model:         model,
+		mode:          mode,
+		args:          args,
+		interruptible: interruptible,
 	}, nil
 }
 
@@ -233,9 +239,10 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	model := a.model
 	args := append([]string{}, a.args...)
 	extraEnv := append([]string{}, a.sessionEnv...)
+	interruptible := a.interruptible
 	a.mu.Unlock()
 
-	return newCodeBuddySession(ctx, a.workDir, model, mode, sessionID, args, extraEnv)
+	return newCodeBuddySession(ctx, a.workDir, model, mode, sessionID, args, extraEnv, interruptible)
 }
 
 func (a *Agent) ListSessions(_ context.Context) ([]core.AgentSessionInfo, error) {

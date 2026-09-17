@@ -14659,3 +14659,619 @@ func TestProcessInteractiveEvents_OrdinaryErrorKeepsAgentSession(t *testing.T) {
 		t.Fatalf("agent_session_id = %q, want binding preserved for ordinary error", got)
 	}
 }
+
+// ──────────────────────────────────────────────────────────────
+// Turn epoch tests (interruptible groundwork)
+// ──────────────────────────────────────────────────────────────
+
+// epochAgentSession is a controllableAgentSession that also implements
+// TurnEpochSetter, stamping every event handed to emit() with the epoch the
+// engine last set.
+type epochAgentSession struct {
+	*controllableAgentSession
+	epochMu sync.Mutex
+	epoch   uint64
+}
+
+func newEpochSession(id string) *epochAgentSession {
+	return &epochAgentSession{controllableAgentSession: newControllableSession(id)}
+}
+
+func (s *epochAgentSession) SetTurnEpoch(epoch uint64) {
+	s.epochMu.Lock()
+	s.epoch = epoch
+	s.epochMu.Unlock()
+}
+
+func (s *epochAgentSession) currentEpoch() uint64 {
+	s.epochMu.Lock()
+	defer s.epochMu.Unlock()
+	return s.epoch
+}
+
+// emitStamped pushes an event stamped with the CURRENT epoch, mimicking what a
+// real adapter does: it copies whatever SetTurnEpoch last stored.
+func (s *epochAgentSession) emitStamped(ev Event) {
+	ev.TurnEpoch = s.currentEpoch()
+	s.events <- ev
+}
+
+// TestTurnEpoch_ZeroEpochAlwaysAccepted is the compatibility guard: agents that
+// never call SetTurnEpoch emit TurnEpoch==0, and those events must NEVER be
+// filtered — otherwise every unstamped adapter would break.
+func TestTurnEpoch_ZeroEpochAlwaysAccepted(t *testing.T) {
+	e := newTestEngine()
+	key := "test:user1"
+	sess := newEpochSession("epoch-zero")
+	e.interactiveStates[key] = &interactiveState{agentSession: sess, turnEpoch: 42}
+
+	got := make(chan Event, 4)
+	go func() {
+		for ev := range sess.Events() {
+			got <- ev
+		}
+	}()
+
+	// Unstamped events (epoch 0) must pass through even though the state's
+	// current epoch is 42.
+	sess.events <- Event{Type: EventText, Content: "hello", TurnEpoch: 0}
+	sess.events <- Event{Type: EventResult, Content: "done", Done: true, TurnEpoch: 0}
+
+	select {
+	case ev := <-got:
+		if ev.Content != "hello" {
+			t.Fatalf("first event content = %q, want hello", ev.Content)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("unstamped EventText was dropped; zero epoch must always be accepted")
+	}
+}
+
+// TestTurnEpoch_StaleEventDropped verifies the core fix: an event stamped with
+// a DIFFERENT epoch than the state's current one is discarded by the event loop
+// instead of being consumed by the new turn.
+func TestTurnEpoch_StaleEventDropped(t *testing.T) {
+	state := &interactiveState{agentSession: newControllableSession("s"), turnEpoch: 7}
+
+	// Stale: stamped with the previous turn's epoch.
+	if stale := (Event{Type: EventResult, Content: "old", Done: true, TurnEpoch: 6}); stale.TurnEpoch == state.currentEpoch() {
+		t.Fatal("precondition: stale event should carry a different epoch")
+	}
+	// Fresh: matches the current epoch and must be accepted.
+	fresh := Event{Type: EventResult, Content: "new", Done: true, TurnEpoch: 7}
+	if fresh.TurnEpoch != state.currentEpoch() {
+		t.Fatal("precondition: fresh event should match current epoch")
+	}
+
+	// Both zero-epoch and matching-epoch are accepted; only a mismatched
+	// non-zero epoch is dropped. This mirrors the filter in engine_turn.go.
+	shouldDrop := func(ev Event) bool {
+		cur := state.currentEpoch()
+		return ev.TurnEpoch != 0 && ev.TurnEpoch != cur
+	}
+
+	if !shouldDrop(Event{Type: EventResult, Done: true, TurnEpoch: 6}) {
+		t.Error("event from previous epoch must be dropped")
+	}
+	if shouldDrop(Event{Type: EventResult, Done: true, TurnEpoch: 0}) {
+		t.Error("unstamped event must not be dropped")
+	}
+	if shouldDrop(fresh) {
+		t.Error("event matching current epoch must not be dropped")
+	}
+}
+
+// TestTurnEpoch_MintedPerTurn verifies the engine mints a fresh, monotonically
+// increasing epoch for each turn it starts.
+func TestTurnEpoch_MintedPerTurn(t *testing.T) {
+	e := newTestEngine()
+	first := e.nextTurnEpoch.Add(1)
+	second := e.nextTurnEpoch.Add(1)
+	if second <= first {
+		t.Fatalf("epochs must increase: first=%d second=%d", first, second)
+	}
+	if first == 0 || second == 0 {
+		t.Fatalf("minted epochs must be non-zero (zero means unstamped): first=%d second=%d", first, second)
+	}
+}
+
+// ──────────────────────────────────────────────────────────────
+// Interruptible (忙时打断立即输入) tests
+// ──────────────────────────────────────────────────────────────
+
+// interruptibleAgentSession implements TurnInterrupter and TurnEpochSetter on
+// top of queuingAgentSession, so tests can assert both the interrupt call and
+// the order in which prompts reach the agent.
+type interruptibleAgentSession struct {
+	queuingAgentSession
+	interruptible bool
+	interruptMu   sync.Mutex
+	interrupts    int
+	epochMu       sync.Mutex
+	epoch         uint64
+}
+
+func newInterruptibleSession(id string, interruptible bool) *interruptibleAgentSession {
+	s := &interruptibleAgentSession{interruptible: interruptible}
+	s.sessionID = id
+	s.alive = true
+	s.events = make(chan Event, 16)
+	s.closed = make(chan struct{})
+	return s
+}
+
+func (s *interruptibleAgentSession) Interruptible() bool { return s.interruptible }
+
+func (s *interruptibleAgentSession) SetTurnEpoch(epoch uint64) {
+	s.epochMu.Lock()
+	s.epoch = epoch
+	s.epochMu.Unlock()
+}
+
+func (s *interruptibleAgentSession) CancelTurn() {
+	s.interruptMu.Lock()
+	s.interrupts++
+	s.interruptMu.Unlock()
+	s.controllableAgentSession.CancelTurn()
+}
+
+func (s *interruptibleAgentSession) interruptCalls() int {
+	s.interruptMu.Lock()
+	defer s.interruptMu.Unlock()
+	return s.interrupts
+}
+
+func (s *interruptibleAgentSession) sentPrompts() []string {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	return append([]string(nil), s.sendCalls...)
+}
+
+// TestSessionIsInterruptible_CapabilityMatrix covers the capability check that
+// gates the interrupt path. A false result at any point must fall back to the
+// pre-existing queueing behaviour.
+func TestSessionIsInterruptible_CapabilityMatrix(t *testing.T) {
+	cases := []struct {
+		name string
+		// session built for the state; nil means no session at all
+		session  AgentSession
+		hasState bool
+		want     bool
+	}{
+		{name: "no state", hasState: false, want: false},
+		{name: "nil session", hasState: true, session: nil, want: false},
+		{name: "non-interruptible adapter", hasState: true,
+			session: newInterruptibleSession("a", false), want: false},
+		{name: "interruptible adapter", hasState: true,
+			session: newInterruptibleSession("b", true), want: true},
+		{name: "adapter without the interface", hasState: true,
+			session: newControllableSession("c"), want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestEngine()
+			key := "test:u"
+			if tc.hasState {
+				e.interactiveStates[key] = &interactiveState{agentSession: tc.session}
+			}
+			if got := e.sessionIsInterruptible(key); got != tc.want {
+				t.Errorf("sessionIsInterruptible = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSessionIsInterruptible_DeadSession verifies a dead session is never
+// reported as interruptible, so a crashed adapter falls back to queueing.
+func TestSessionIsInterruptible_DeadSession(t *testing.T) {
+	e := newTestEngine()
+	key := "test:u"
+	sess := newInterruptibleSession("dead", true)
+	sess.alive = false
+	e.interactiveStates[key] = &interactiveState{agentSession: sess}
+
+	if e.sessionIsInterruptible(key) {
+		t.Error("dead session must not report interruptible")
+	}
+}
+
+// TestInterruptRunningTurn_NoTurnInProgress verifies that when no turn's event
+// loop is running (cancelCh nil) we do NOT claim success — the caller must fall
+// back to queueing rather than lose the message.
+func TestInterruptRunningTurn_NoTurnInProgress(t *testing.T) {
+	e := newTestEngine()
+	key := "test:u"
+	sess := newInterruptibleSession("s", true)
+	e.interactiveStates[key] = &interactiveState{agentSession: sess}
+
+	if e.interruptRunningTurn(key) {
+		t.Error("interruptRunningTurn must return false when no turn is in progress")
+	}
+	if got := sess.interruptCalls(); got != 0 {
+		t.Errorf("CancelTurn calls = %d, want 0", got)
+	}
+}
+
+// TestInterruptRunningTurn_InterruptsAndMarksResync verifies the happy path:
+// the backend is asked to cancel, the local event loop is stopped, and the
+// state is marked for resync so leftovers are drained before the next turn.
+func TestInterruptRunningTurn_InterruptsAndMarksResync(t *testing.T) {
+	e := newTestEngine()
+	key := "test:u"
+	sess := newInterruptibleSession("s", true)
+	cancelCh := make(chan struct{})
+	state := &interactiveState{agentSession: sess, cancelCh: cancelCh, eventsNeedResync: false}
+	e.interactiveStates[key] = state
+
+	if !e.interruptRunningTurn(key) {
+		t.Fatal("interruptRunningTurn = false, want true")
+	}
+	if got := sess.interruptCalls(); got != 1 {
+		t.Errorf("CancelTurn calls = %d, want 1", got)
+	}
+	select {
+	case <-cancelCh:
+	default:
+		t.Error("cancelCh must be closed to stop the local event loop")
+	}
+	state.mu.Lock()
+	needResync := state.eventsNeedResync
+	cleared := state.cancelCh == nil
+	state.mu.Unlock()
+	if !needResync {
+		t.Error("eventsNeedResync must be set so leftover events are drained")
+	}
+	if !cleared {
+		t.Error("cancelCh must be claimed (set to nil) to prevent a double close")
+	}
+}
+
+// TestInterruptRunningTurn_DoubleInterruptSafe verifies a second interrupt of
+// the same turn is a no-op instead of a double close (panic).
+func TestInterruptRunningTurn_DoubleInterruptSafe(t *testing.T) {
+	e := newTestEngine()
+	key := "test:u"
+	sess := newInterruptibleSession("s", true)
+	state := &interactiveState{agentSession: sess, cancelCh: make(chan struct{})}
+	e.interactiveStates[key] = state
+
+	if !e.interruptRunningTurn(key) {
+		t.Fatal("first interrupt = false, want true")
+	}
+	if e.interruptRunningTurn(key) {
+		t.Error("second interrupt = true, want false (no turn left)")
+	}
+	if got := sess.interruptCalls(); got != 1 {
+		t.Errorf("CancelTurn calls = %d, want 1", got)
+	}
+}
+
+// TestQueueMessageForBusySession_PrependGoesToFront is the ordering contract for
+// the interruptible path: the interrupting message must run before messages
+// that were already queued.
+func TestQueueMessageForBusySession_PrependGoesToFront(t *testing.T) {
+	e := newTestEngine()
+	key := "test:u"
+	sess := newInterruptibleSession("s", true)
+	state := &interactiveState{agentSession: sess}
+	e.interactiveStates[key] = state
+	p := &stubPlatformEngine{n: "test"}
+
+	// Two messages queued the normal way (append at the tail).
+	e.queueMessageForBusySessionPrepend(p, &Message{MessageID: "m1", Content: "first", SessionKey: key}, key, false)
+	e.queueMessageForBusySessionPrepend(p, &Message{MessageID: "m2", Content: "second", SessionKey: key}, key, false)
+	// The interrupting message jumps the queue.
+	e.queueMessageForBusySessionPrepend(p, &Message{MessageID: "m3", Content: "urgent", SessionKey: key}, key, true)
+
+	state.mu.Lock()
+	var order []string
+	for _, m := range state.pendingMessages {
+		order = append(order, m.content)
+	}
+	state.mu.Unlock()
+
+	want := []string{"urgent", "first", "second"}
+	if len(order) != len(want) {
+		t.Fatalf("queue = %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("queue order = %v, want %v", order, want)
+		}
+	}
+}
+
+// TestQueueMessageForBusySession_DefaultAppends is the regression guard for the
+// untouched path: the plain (non-prepend) helper must keep appending at the
+// tail, preserving the historical FIFO contract.
+func TestQueueMessageForBusySession_DefaultAppends(t *testing.T) {
+	e := newTestEngine()
+	key := "test:u"
+	sess := newInterruptibleSession("s", true)
+	state := &interactiveState{agentSession: sess}
+	e.interactiveStates[key] = state
+	p := &stubPlatformEngine{n: "test"}
+
+	for _, c := range []string{"a", "b", "c"} {
+		if !e.queueMessageForBusySession(p, &Message{MessageID: c, Content: c, SessionKey: key}, key) {
+			t.Fatalf("queueMessageForBusySession(%q) = false, want true", c)
+		}
+	}
+
+	state.mu.Lock()
+	var order []string
+	for _, m := range state.pendingMessages {
+		order = append(order, m.content)
+	}
+	state.mu.Unlock()
+
+	want := []string{"a", "b", "c"}
+	for i := range want {
+		if i >= len(order) || order[i] != want[i] {
+			t.Fatalf("queue order = %v, want %v", order, want)
+		}
+	}
+}
+
+// TestInterruptible_EndToEnd_BusyMessageInterruptsAndPreempts exercises the
+// full path: a turn is in flight, a second message arrives, and because the
+// session is interruptible the engine interrupts the turn and front-inserts the
+// new message rather than waiting for the turn to finish.
+func TestInterruptible_EndToEnd_BusyMessageInterruptsAndPreempts(t *testing.T) {
+	e := newTestEngine()
+	key := e.interactiveKeyForSessionKey("test:user1")
+
+	sess := newInterruptibleSession("s-int", true)
+	// cancelCh non-nil == a turn's event loop is running.
+	state := &interactiveState{agentSession: sess, cancelCh: make(chan struct{})}
+	e.interactiveStates[key] = state
+	p := &stubPlatformEngine{n: "test"}
+
+	// Pre-existing queued message: the interrupting one must land ahead of it.
+	e.queueMessageForBusySessionPrepend(p, &Message{
+		MessageID: "old", Content: "earlier", SessionKey: "test:user1",
+	}, key, false)
+
+	// A new message arrives while the session is busy.
+	msg := &Message{MessageID: "new", Content: "urgent", SessionKey: "test:user1"}
+
+	if !e.sessionIsInterruptible(key) {
+		t.Fatal("precondition: session should be interruptible")
+	}
+	if !e.interruptRunningTurn(key) {
+		t.Fatal("interruptRunningTurn = false, want true")
+	}
+	if !e.queueMessageForBusySessionPrepend(p, msg, key, true) {
+		t.Fatal("failed to queue the interrupting message")
+	}
+
+	if got := sess.interruptCalls(); got != 1 {
+		t.Errorf("CancelTurn calls = %d, want 1", got)
+	}
+
+	state.mu.Lock()
+	var order []string
+	for _, m := range state.pendingMessages {
+		order = append(order, m.content)
+	}
+	state.mu.Unlock()
+
+	if len(order) != 2 || order[0] != "urgent" || order[1] != "earlier" {
+		t.Fatalf("queue order = %v, want [urgent earlier]", order)
+	}
+}
+
+// TestInterruptible_Unset_QueuesAsBefore is the regression guard for the user's
+// hard requirement: with the option off, a busy message is queued at the TAIL
+// and the agent is never interrupted — exactly the pre-existing behaviour.
+func TestInterruptible_Unset_QueuesAsBefore(t *testing.T) {
+	e := newTestEngine()
+	key := e.interactiveKeyForSessionKey("test:user1")
+
+	// A session that reports NOT interruptible (option off).
+	sess := newInterruptibleSession("s-off", false)
+	state := &interactiveState{agentSession: sess, cancelCh: make(chan struct{})}
+	e.interactiveStates[key] = state
+	p := &stubPlatformEngine{n: "test"}
+
+	e.queueMessageForBusySessionPrepend(p, &Message{
+		MessageID: "a", Content: "first", SessionKey: "test:user1",
+	}, key, false)
+	e.queueMessageForBusySessionPrepend(p, &Message{
+		MessageID: "b", Content: "second", SessionKey: "test:user1",
+	}, key, false)
+
+	if e.sessionIsInterruptible(key) {
+		t.Error("session with interruptible=false must not be reported interruptible")
+	}
+	if got := sess.interruptCalls(); got != 0 {
+		t.Errorf("CancelTurn calls = %d, want 0 when the option is off", got)
+	}
+
+	state.mu.Lock()
+	var order []string
+	for _, m := range state.pendingMessages {
+		order = append(order, m.content)
+	}
+	state.mu.Unlock()
+
+	if len(order) != 2 || order[0] != "first" || order[1] != "second" {
+		t.Fatalf("queue order = %v, want FIFO [first second]", order)
+	}
+}
+
+// TestProcessInteractiveEvents_DropsStaleTurnEvents is the end-to-end proof of
+// the epoch filter: a leftover EventResult from an INTERRUPTED turn (stamped
+// with the old epoch) arrives while the new turn is consuming, and must be
+// ignored — otherwise the new turn would end prematurely on the old result.
+func TestProcessInteractiveEvents_DropsStaleTurnEvents(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	sess := newEpochSession("epoch-e2e")
+	agent := &controllableAgent{nextSession: sess}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+	key := "test:user1"
+	session := e.sessions.GetOrCreateActive(key)
+
+	// The new turn is epoch 2; the interrupted one was epoch 1.
+	state := &interactiveState{
+		agentSession: sess,
+		platform:     p,
+		replyCtx:     "ctx",
+		turnEpoch:    2,
+	}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = state
+	e.interactiveMu.Unlock()
+
+	go func() {
+		// Stale leftover from the interrupted turn: must be dropped.
+		sess.events <- Event{Type: EventResult, Content: "STALE", Done: true, TurnEpoch: 1}
+		// Current turn's real output.
+		sess.events <- Event{Type: EventText, Content: "fresh", TurnEpoch: 2}
+		sess.events <- Event{Type: EventResult, Content: "fresh-done", Done: true, TurnEpoch: 2}
+	}()
+
+	sendDone := make(chan error, 1)
+	sendDone <- nil
+
+	done := make(chan struct{})
+	go func() {
+		e.processInteractiveEvents(state, session, e.sessions, key, "msg1", time.Now(), nil, sendDone, nil)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("processInteractiveEvents did not complete — stale event may have ended the turn")
+	}
+
+	// The stale result must not have been relayed to the platform.
+	for _, s := range p.getSent() {
+		if strings.Contains(s, "STALE") {
+			t.Errorf("stale event from the interrupted turn was relayed to the platform: %q", s)
+		}
+	}
+}
+
+// TestProcessInteractiveEvents_AcceptsUnstampedEvents is the compatibility
+// guard at the loop level: events with epoch 0 (adapters that never stamp) must
+// pass through even when the state carries a real epoch.
+func TestProcessInteractiveEvents_AcceptsUnstampedEvents(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	sess := newControllableSession("unstamped") // no TurnEpochSetter
+	agent := &controllableAgent{nextSession: sess}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+	key := "test:user1"
+	session := e.sessions.GetOrCreateActive(key)
+
+	state := &interactiveState{
+		agentSession: sess,
+		platform:     p,
+		replyCtx:     "ctx",
+		turnEpoch:    5, // a stamped turn ran before; unstamped events must still pass
+	}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = state
+	e.interactiveMu.Unlock()
+
+	go func() {
+		sess.events <- Event{Type: EventText, Content: "hello-unstamped"}
+		sess.events <- Event{Type: EventResult, Content: "done-unstamped", Done: true}
+	}()
+
+	sendDone := make(chan error, 1)
+	sendDone <- nil
+
+	done := make(chan struct{})
+	go func() {
+		e.processInteractiveEvents(state, session, e.sessions, key, "msg1", time.Now(), nil, sendDone, nil)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("processInteractiveEvents did not complete")
+	}
+
+	found := false
+	for _, s := range p.getSent() {
+		if strings.Contains(s, "unstamped") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("unstamped events were dropped; platform received: %v", p.getSent())
+	}
+}
+
+// TestMarkTurnInterrupted_SendsMarker verifies the "(已中断)" marker reaches the
+// platform so a truncated reply is not mistaken for a complete one.
+func TestMarkTurnInterrupted_SendsMarker(t *testing.T) {
+	e := newTestEngine()
+	p := &stubPlatformEngine{n: "test"}
+	state := &interactiveState{platform: p, replyCtx: "ctx"}
+
+	e.markTurnInterrupted("test:u", state)
+
+	want := e.i18n.T(MsgTurnInterrupted)
+	found := false
+	for _, s := range p.getSent() {
+		if strings.Contains(s, want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("interruption marker %q not sent; platform received %v", want, p.getSent())
+	}
+}
+
+// TestMarkTurnInterrupted_NoPlatform_NoPanic guards the degenerate case where the
+// state has no platform attached.
+func TestMarkTurnInterrupted_NoPlatform_NoPanic(t *testing.T) {
+	e := newTestEngine()
+	state := &interactiveState{}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("markTurnInterrupted panicked without a platform: %v", r)
+		}
+	}()
+	e.markTurnInterrupted("test:u", state)
+}
+
+// TestInterruptRunningTurn_SendsInterruptedMarker ties the marker to the
+// interrupt path itself: interrupting must both cancel the backend and notify
+// the user.
+func TestInterruptRunningTurn_SendsInterruptedMarker(t *testing.T) {
+	e := newTestEngine()
+	key := "test:u"
+	p := &stubPlatformEngine{n: "test"}
+	sess := newInterruptibleSession("s", true)
+	state := &interactiveState{
+		agentSession: sess,
+		platform:     p,
+		replyCtx:     "ctx",
+		cancelCh:     make(chan struct{}),
+	}
+	e.interactiveStates[key] = state
+
+	if !e.interruptRunningTurn(key) {
+		t.Fatal("interruptRunningTurn = false, want true")
+	}
+
+	want := e.i18n.T(MsgTurnInterrupted)
+	found := false
+	for _, s := range p.getSent() {
+		if strings.Contains(s, want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("interruption marker %q not sent; platform received %v", want, p.getSent())
+	}
+}

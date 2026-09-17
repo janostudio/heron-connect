@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -887,4 +889,204 @@ func TestHandleAssistant_Thinking(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ──────────────────────────────────────────────────────────────
+// Interruptible / resident-mode tests
+// ──────────────────────────────────────────────────────────────
+
+// TestLaunchArgs_UnchangedInPerTurnMode is the regression guard: the default
+// (non-interruptible) argument list must stay byte-identical, positional prompt
+// and end-of-options marker included.
+func TestLaunchArgs_UnchangedInPerTurnMode(t *testing.T) {
+	args := launchArgs("hello", "sid-1", "default", "m1", nil)
+	want := []string{"-p", "--output-format", "stream-json", "--resume", "sid-1", "--model", "m1", "--", "hello"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("launchArgs = %v, want %v", args, want)
+	}
+}
+
+// TestResidentArgs_AddsInputFormatAndDropsPrompt verifies the resident argument
+// list opens the stdin channel and carries NO positional prompt (a positional
+// prompt would conflict with the stream-json input).
+func TestResidentArgs_AddsInputFormatAndDropsPrompt(t *testing.T) {
+	args := residentArgs("sid-1", "default", "m1", []string{"--foo"})
+
+	want := []string{
+		"--input-format", "stream-json",
+		"-p", "--output-format", "stream-json",
+		"--resume", "sid-1",
+		"--model", "m1",
+		"--foo",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("residentArgs = %v, want %v", args, want)
+	}
+	for _, a := range args {
+		if a == "--" {
+			t.Error("resident args must not contain the end-of-options marker")
+		}
+	}
+}
+
+// TestNewCodeBuddySession_PerTurnDoesNotSpawn verifies the default mode stays
+// lazy: no process is started until Send, preserving the historical lifecycle.
+func TestNewCodeBuddySession_PerTurnDoesNotSpawn(t *testing.T) {
+	cs, err := newCodeBuddySession(context.Background(), ".", "", "default", "", nil, nil, false)
+	if err != nil {
+		t.Fatalf("newCodeBuddySession: %v", err)
+	}
+	defer cs.Close()
+
+	if cs.Interruptible() {
+		t.Error("session created without interruptible must report false")
+	}
+	cs.cmdMu.Lock()
+	cmd := cs.osCmd
+	cs.cmdMu.Unlock()
+	if cmd != nil {
+		t.Error("per-turn mode must not start a process at construction time")
+	}
+}
+
+// TestCancelTurn_NoopInPerTurnMode verifies CancelTurn does nothing when the
+// adapter is not in resident mode (there is no stdin to send an interrupt on),
+// so the engine's capability gate is the only thing that matters.
+func TestCancelTurn_NoopInPerTurnMode(t *testing.T) {
+	cs, err := newCodeBuddySession(context.Background(), ".", "", "default", "", nil, nil, false)
+	if err != nil {
+		t.Fatalf("newCodeBuddySession: %v", err)
+	}
+	defer cs.Close()
+
+	cs.CancelTurn() // must not panic or write anywhere
+}
+
+// TestWriteJSON_RequiresResidentStdin verifies writeJSON fails loudly instead of
+// silently discarding a prompt when no resident stdin exists.
+func TestWriteJSON_RequiresResidentStdin(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	if err := cs.writeJSON(map[string]any{"type": "user"}); err == nil {
+		t.Error("writeJSON without resident stdin must return an error")
+	}
+}
+
+// TestCancelTurn_WritesInterruptFrame verifies the interrupt frame shape in
+// resident mode.
+func TestCancelTurn_WritesInterruptFrame(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+	cs.interruptible = true
+
+	stdin := &captureStdin{}
+	cs.stdin = stdin
+
+	cs.CancelTurn()
+
+	frames := stdin.frames(t)
+	if len(frames) != 1 {
+		t.Fatalf("expected 1 frame, got %d: %v", len(frames), frames)
+	}
+	f := frames[0]
+	if got := f["type"]; got != "control_request" {
+		t.Errorf("type = %v, want control_request", got)
+	}
+	req, ok := f["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("request is not an object: %v", f["request"])
+	}
+	if got := req["subtype"]; got != "interrupt" {
+		t.Errorf("request.subtype = %v, want interrupt", got)
+	}
+	if id, _ := f["request_id"].(string); id == "" {
+		t.Error("request_id must be non-empty")
+	}
+}
+
+// TestCancelTurn_DeadResidentSession_Noop verifies a dead resident session
+// writes nothing, so the engine falls back to queueing.
+func TestCancelTurn_DeadResidentSession_Noop(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+	cs.interruptible = true
+	stdin := &captureStdin{}
+	cs.stdin = stdin
+	cs.alive.Store(false)
+
+	cs.CancelTurn()
+
+	if frames := stdin.frames(t); len(frames) != 0 {
+		t.Errorf("dead session wrote %d frames, want 0", len(frames))
+	}
+}
+
+// TestEmit_StampsTurnEpoch verifies emitted events carry the engine's epoch.
+func TestEmit_StampsTurnEpoch(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	cs.SetTurnEpoch(7)
+	cs.emit(core.Event{Type: core.EventText, Content: "hi"})
+
+	select {
+	case ev := <-cs.events:
+		if ev.TurnEpoch != 7 {
+			t.Errorf("TurnEpoch = %d, want 7", ev.TurnEpoch)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("emit did not deliver the event")
+	}
+}
+
+// TestEmit_UnstampedByDefault is the compatibility guard for the per-turn path.
+func TestEmit_UnstampedByDefault(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	cs.emit(core.Event{Type: core.EventText, Content: "hi"})
+
+	select {
+	case ev := <-cs.events:
+		if ev.TurnEpoch != 0 {
+			t.Errorf("TurnEpoch = %d, want 0 by default", ev.TurnEpoch)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("emit did not deliver the event")
+	}
+}
+
+// captureStdin records writes so tests can assert on emitted frames.
+type captureStdin struct {
+	mu   sync.Mutex
+	data []byte
+}
+
+func (c *captureStdin) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.data = append(c.data, p...)
+	return len(p), nil
+}
+
+func (c *captureStdin) Close() error { return nil }
+
+func (c *captureStdin) frames(t *testing.T) []map[string]any {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(string(c.data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("stdin line is not valid JSON: %q: %v", line, err)
+		}
+		out = append(out, m)
+	}
+	return out
 }

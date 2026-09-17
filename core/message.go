@@ -310,6 +310,18 @@ type Event struct {
 	Metadata     map[string]any // optional metadata from agent (e.g. compaction_continue)
 	Synthetic    bool           // true if this is a synthetic/generated message (not from real user)
 	IsSubagent   bool           // true if this event originates from a child-agent stream
+
+	// TurnEpoch identifies which turn produced this event. The engine stamps a
+	// fresh epoch on each turn and drops events stamped with a DIFFERENT epoch,
+	// which closes the stale-event window left by drainEvents: a turn cancelled
+	// via interrupt may emit its trailing result/error AFTER the next turn has
+	// already started draining, and without this the new turn would consume that
+	// leftover (an old EventResult ends it early, an old EventError tears the
+	// state down).
+	//
+	// Zero means "unstamped" and is ALWAYS accepted: adapters that never call
+	// SetTurnEpoch keep their exact pre-existing behaviour.
+	TurnEpoch uint64
 }
 
 // EventMetadataSessionUnrecoverable marks an EventError as fatal for the
