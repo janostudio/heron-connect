@@ -707,14 +707,14 @@ func TestLoad_DefaultsDataDir(t *testing.T) {
 func TestLoad_ResolvesEnvPlaceholders(t *testing.T) {
 
 	root := t.TempDir()
-	t.Setenv("CC_ROOT", root)
+	t.Setenv("HERON_ROOT", root)
 	t.Setenv("TG_TOKEN", "tg-secret")
 	t.Setenv("HOOK_TOKEN", "hook-secret")
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("HTTP_PROXY", "http://127.0.0.1:7890")
 
 	configPath := writeConfigFixture(t, `
- data_dir = "${CC_ROOT}/state"
+ data_dir = "${HERON_ROOT}/state"
 
  [webhook]
  token = "${HOOK_TOKEN}"
@@ -726,7 +726,7 @@ func TestLoad_ResolvesEnvPlaceholders(t *testing.T) {
  type = "codex"
 
  [projects.agent.options]
- work_dir = "${CC_ROOT}/repo"
+ work_dir = "${HERON_ROOT}/repo"
  note = "prefix-${HOOK_TOKEN}-suffix"
  retries = 3
 

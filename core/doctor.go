@@ -379,7 +379,7 @@ func checkNetwork(ctx context.Context) []DoctorCheckResult {
 	}
 
 	// Check config file
-	if cfgPath := os.Getenv("CC_CONFIG_PATH"); cfgPath != "" {
+	if cfgPath := os.Getenv("HERON_CONFIG_PATH"); cfgPath != "" {
 		if _, err := os.Stat(cfgPath); err != nil {
 			results = append(results, DoctorCheckResult{
 				Name:   "Config File",

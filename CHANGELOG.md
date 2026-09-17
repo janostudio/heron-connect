@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.1.45 (2026-09-17)
+
+### Changed
+
+- **环境变量全量统一改名 `CC_*` → `HERON_*`**：v1.1.44 只改了会话注入的两个变量，其余仍沿用前身项目 cc-connect 的 `CC_` 前缀。现一次改到位，代码与文档同步，**无兼容层**。涉及：
+  - **日志与诊断**：`CC_LOG_FILE` / `CC_LOG_MAX_SIZE` / `CC_LOG_RETENTION_DAYS` → `HERON_*`，并同步改写 launchd / systemd / Windows 三平台 daemon 生成的 service 定义；`CC_CONFIG_PATH` → `HERON_CONFIG_PATH`。
+  - **hook 事件上下文**：`CC_HOOK_EVENT` / `_PROJECT` / `_TIMESTAMP` / `_SESSION_KEY` / `_PLATFORM` / `_USER_ID` / `_USER_NAME` / `_CONTENT` / `_ERROR` → `HERON_HOOK_*`（注入给 `type = "command"` 的 hook shell）。
+  - **隔离探测**：`CC_PROBE_WORKDIR` / `_OTHER_USERS` / `_SUPERVISOR` → `HERON_PROBE_*`（`doctor user-isolation` 的探测脚本入参）。
+  - **测试开关**：`CC_SKIP_INTEGRATION` / `CC_RUN_PROVIDER_INTEGRATION` / `CC_TEST_CONFIG` → `HERON_*`。
+
+  ⚠️ 升级注意：**已执行过 `daemon install` 的服务需重新安装**，否则 service 定义里仍是旧的 `CC_LOG_*`，新进程读不到会导致日志参数静默回退到 config `[log]` 或默认值；hook 配置里引用 `$CC_HOOK_*` 的 shell 命令需同步改名。
+
 ## v1.1.44 (2026-09-17)
 
 ### Fixed
@@ -9,7 +21,7 @@
 
 ### Changed
 
-- **会话环境变量改名 `CC_PROJECT` / `CC_SESSION_KEY` → `HERON_PROJECT` / `HERON_SESSION_KEY`**：heron-connect 启动 agent 子进程时注入的这两个变量，是 Agent 反向调用 `heron-connect send` / `cron` / `relay` / `agent-sid` 以定位"发给谁"的唯一依据。原名沿用了前身项目 cc-connect 的 `CC_` 前缀，与其承载的语义（heron-connect 会话上下文）不符，现统一到 `HERON_` 前缀。**无兼容层**（旧名不再读取），升级后已有的 agent 会话需重启才会拿到新变量名；运行中进程若非通过 heron-connect 启动、或手动 export 过旧变量，需同步改名。运维类变量（`CC_LOG_*` / `CC_CONFIG_PATH` / `CC_HOOK_*`）保持原样不动。
+- **会话注入的环境变量改名 `CC_PROJECT` / `CC_SESSION_KEY` → `HERON_PROJECT` / `HERON_SESSION_KEY`**：这两个变量是 Agent 反向调用 `heron-connect send` / `cron` / `relay` / `agent-sid` 以定位"发给谁"的唯一依据。原名沿用了前身项目 cc-connect 的 `CC_` 前缀，与它如今的语义不符。**无兼容层**（旧名不再读取），升级后已有的 agent 会话需重启才会拿到新变量名。其余 `CC_*` 变量（日志 / hook / 探测 / 测试开关）在本版保持原样，随后由 v1.1.45 一并改名。
 
 ### Added
 

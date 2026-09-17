@@ -34,7 +34,7 @@ level = "info"
 
 - 启动时通过 `setupLogger(cfg.Log.Level, logWriter)` 初始化
 - Management API 支持 `log_level` 热更新
-- daemon 模式额外支持环境变量：`CC_LOG_FILE`、`CC_LOG_MAX_SIZE`
+- daemon 模式额外支持环境变量：`HERON_LOG_FILE`、`HERON_LOG_MAX_SIZE`
 
 ### 1.5 日志格式示例
 

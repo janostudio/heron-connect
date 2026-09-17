@@ -32,7 +32,7 @@ level = "info"               # debug | info | warn | error
 ### 优先级（覆盖顺序）
 
 ```
-CC_LOG_FILE / CC_LOG_MAX_SIZE / CC_LOG_RETENTION_DAYS  环境变量（最高）
+HERON_LOG_FILE / HERON_LOG_MAX_SIZE / HERON_LOG_RETENTION_DAYS  环境变量（最高）
         ↓ 覆盖
 [log] 段的 file / max_size_mb / retention_days
         ↓ 覆盖
@@ -40,7 +40,7 @@ CC_LOG_FILE / CC_LOG_MAX_SIZE / CC_LOG_RETENTION_DAYS  环境变量（最高）
 ```
 
 > 命令行 `--log-file` 等参数**只在 `heron-connect daemon install` 时可选传入**，属于
-> 安装期覆盖（CLI > TOML > 默认）；运行时改日志一律走 toml 或 `CC_*` 环境变量。
+> 安装期覆盖（CLI > TOML > 默认）；运行时改日志一律走 toml 或 `HERON_*` 环境变量。
 
 ### 轮转与归档
 
@@ -347,7 +347,7 @@ provider_presets_url = "https://..."   # 远程推荐 provider 列表 JSON URL
 # [[hooks]]
 # event = "message.received"  # 事件名（见下方清单）或 "*"
 # type = "command"            # command | http
-# command = "echo $CC_HOOK_USER_NAME >> /tmp/cc.log"   # type=command 用
+# command = "echo $HERON_HOOK_USER_NAME >> /tmp/cc.log"   # type=command 用
 # # url = "https://example.com/hook"                    # type=http 用
 # # async = true              # 默认 true；false = 阻塞到完成
 # # timeout = 10              # 秒；command 默认 10，http 默认 5
@@ -366,10 +366,10 @@ provider_presets_url = "https://..."   # 远程推荐 provider 列表 JSON URL
 | `error` | 发生错误 |
 | `*` | 匹配所有事件 |
 
-`type = "command"` 时，事件上下文通过 `CC_HOOK_*` 环境变量传给 shell 命令：
-`CC_HOOK_EVENT` / `CC_HOOK_PROJECT` / `CC_HOOK_TIMESTAMP` / `CC_HOOK_SESSION_KEY` /
-`CC_HOOK_PLATFORM` / `CC_HOOK_USER_ID` / `CC_HOOK_USER_NAME` / `CC_HOOK_CONTENT` /
-`CC_HOOK_ERROR`（按事件类型只填充相关字段）。`type = "http"` 时 POST JSON 载荷到 `url`。
+`type = "command"` 时，事件上下文通过 `HERON_HOOK_*` 环境变量传给 shell 命令：
+`HERON_HOOK_EVENT` / `HERON_HOOK_PROJECT` / `HERON_HOOK_TIMESTAMP` / `HERON_HOOK_SESSION_KEY` /
+`HERON_HOOK_PLATFORM` / `HERON_HOOK_USER_ID` / `HERON_HOOK_USER_NAME` / `HERON_HOOK_CONTENT` /
+`HERON_HOOK_ERROR`（按事件类型只填充相关字段）。`type = "http"` 时 POST JSON 载荷到 `url`。
 
 ## 自定义斜杠命令（[[commands]]）与别名（[[aliases]]）
 

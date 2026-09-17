@@ -32,8 +32,8 @@ func TestBuildWindowsTaskScript(t *testing.T) {
 
 	script := buildWindowsTaskScript(cfg)
 	for _, want := range []string{
-		`$env:CC_LOG_FILE = 'C:\Users\me\.heron-connect\logs\heron-connect.log'`,
-		`$env:CC_LOG_MAX_SIZE = '10485760'`,
+		`$env:HERON_LOG_FILE = 'C:\Users\me\.heron-connect\logs\heron-connect.log'`,
+		`$env:HERON_LOG_MAX_SIZE = '10485760'`,
 		`$env:PATH = 'C:\Program Files\nodejs;C:\Users\me\AppData\Local\Programs'`,
 		`$env:HTTPS_PROXY = 'http://127.0.0.1:7890'`,
 		`$env:http_proxy = 'http://127.0.0.1:7890'`,

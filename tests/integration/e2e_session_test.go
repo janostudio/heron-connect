@@ -16,10 +16,10 @@ import (
 )
 
 // testConfigPath returns the path to config.test.toml co-located with this
-// test file. Override via CC_TEST_CONFIG env var.
+// test file. Override via HERON_TEST_CONFIG env var.
 func testConfigPath(t *testing.T) string {
 	t.Helper()
-	if p := os.Getenv("CC_TEST_CONFIG"); p != "" {
+	if p := os.Getenv("HERON_TEST_CONFIG"); p != "" {
 		return p
 	}
 	_, thisFile, _, _ := runtime.Caller(0)

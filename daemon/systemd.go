@@ -172,9 +172,9 @@ func (m *systemdManager) buildUnit(cfg Config) string {
 	fmt.Fprintf(&sb, "WorkingDirectory=%s\n", cfg.WorkDir)
 	sb.WriteString("Restart=on-failure\n")
 	sb.WriteString("RestartSec=10\n")
-	fmt.Fprintf(&sb, "Environment=\"CC_LOG_FILE=%s\"\n", cfg.LogFile)
-	fmt.Fprintf(&sb, "Environment=\"CC_LOG_MAX_SIZE=%d\"\n", cfg.LogMaxSize)
-	fmt.Fprintf(&sb, "Environment=\"CC_LOG_RETENTION_DAYS=%d\"\n", cfg.LogRetentionDays)
+	fmt.Fprintf(&sb, "Environment=\"HERON_LOG_FILE=%s\"\n", cfg.LogFile)
+	fmt.Fprintf(&sb, "Environment=\"HERON_LOG_MAX_SIZE=%d\"\n", cfg.LogMaxSize)
+	fmt.Fprintf(&sb, "Environment=\"HERON_LOG_RETENTION_DAYS=%d\"\n", cfg.LogRetentionDays)
 	if cfg.EnvPATH != "" {
 		fmt.Fprintf(&sb, "Environment=\"PATH=%s\"\n", cfg.EnvPATH)
 	}

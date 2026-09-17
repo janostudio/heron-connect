@@ -23,12 +23,12 @@
 
 | 变量 | 用途 |
 |------|------|
-| `CC_LOG_FILE` | 日志文件路径（**最高优先级**，覆盖 `[log].file`） |
-| `CC_LOG_MAX_SIZE` | 日志单文件大小阈值（MB），覆盖 `[log].max_size_mb` |
-| `CC_LOG_RETENTION_DAYS` | 归档保留天数，覆盖 `[log].retention_days` |
-| `CC_CONFIG_PATH` | 诊断（doctor）时用它定位 config |
+| `HERON_LOG_FILE` | 日志文件路径（**最高优先级**，覆盖 `[log].file`） |
+| `HERON_LOG_MAX_SIZE` | 日志单文件大小阈值（MB），覆盖 `[log].max_size_mb` |
+| `HERON_LOG_RETENTION_DAYS` | 归档保留天数，覆盖 `[log].retention_days` |
+| `HERON_CONFIG_PATH` | 诊断（doctor）时用它定位 config |
 
-优先级：**`CC_*` 环境变量 > config `[log]` > 默认值**（见 advanced.md 日志段）。
+优先级：**`HERON_*` 环境变量 > config `[log]` > 默认值**（见 advanced.md 日志段）。
 
 ### 注入给 agent / CLI 自动读取的变量
 

@@ -264,11 +264,11 @@ func buildPlist(cfg Config) string {
 	</dict>
 	<key>EnvironmentVariables</key>
 	<dict>
-		<key>CC_LOG_FILE</key>
+		<key>HERON_LOG_FILE</key>
 		<string>%s</string>
-		<key>CC_LOG_MAX_SIZE</key>
+		<key>HERON_LOG_MAX_SIZE</key>
 		<string>%d</string>
-		<key>CC_LOG_RETENTION_DAYS</key>
+		<key>HERON_LOG_RETENTION_DAYS</key>
 		<string>%d</string>
 		<key>PATH</key>
 		<string>%s</string>

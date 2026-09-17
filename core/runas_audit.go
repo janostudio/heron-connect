@@ -186,7 +186,7 @@ func RunIsolationProbe(ctx context.Context, cfg AuditConfig) (IsolationReport, e
 	// script body. Values are pre-validated at config parse time so
 	// shell-quoting concerns are limited, but we still quote everything.
 	header := fmt.Sprintf(
-		"export CC_PROBE_WORKDIR=%s\nexport CC_PROBE_OTHER_USERS=%s\nexport CC_PROBE_SUPERVISOR=%s\n",
+		"export HERON_PROBE_WORKDIR=%s\nexport HERON_PROBE_OTHER_USERS=%s\nexport HERON_PROBE_SUPERVISOR=%s\n",
 		shellQuote(cfg.WorkDir),
 		shellQuote(strings.Join(filterOtherUsers(cfg.OtherUsers, cfg.RunAsUser), " ")),
 		shellQuote(cfg.Supervisor),

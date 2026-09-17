@@ -726,17 +726,17 @@ func main() {
 
 	// Capture daemon-injected log settings from the environment. The actual
 	// rotating writer is constructed after config.toml is loaded, so the
-	// priority is CC_* env vars > config [log] > defaults (foreground may also
+	// priority is HERON_* env vars > config [log] > defaults (foreground may also
 	// write to a file when [log].file is set).
-	envLogFile := os.Getenv("CC_LOG_FILE")
+	envLogFile := os.Getenv("HERON_LOG_FILE")
 	envLogMaxSize := int64(0)
-	if v := os.Getenv("CC_LOG_MAX_SIZE"); v != "" {
+	if v := os.Getenv("HERON_LOG_MAX_SIZE"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			envLogMaxSize = n
 		}
 	}
 	envLogRetentionDays := 0
-	if v := os.Getenv("CC_LOG_RETENTION_DAYS"); v != "" {
+	if v := os.Getenv("HERON_LOG_RETENTION_DAYS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			envLogRetentionDays = n
 		}
@@ -803,7 +803,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Determine log file + rotation params: CC_* env (daemon) > config [log] >
+	// Determine log file + rotation params: HERON_* env (daemon) > config [log] >
 	// defaults. Foreground runs also write to a file when [log].file is set.
 	logFile := envLogFile
 	if logFile == "" {

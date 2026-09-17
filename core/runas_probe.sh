@@ -14,11 +14,11 @@
 # on macOS and BusyBox-based systems without relying on bashisms.
 #
 # Environment inputs (set by the Go caller via the shell invocation):
-#   CC_PROBE_WORKDIR        — project work_dir (required)
-#   CC_PROBE_OTHER_USERS    — space-separated list of other run_as_user
+#   HERON_PROBE_WORKDIR        — project work_dir (required)
+#   HERON_PROBE_OTHER_USERS    — space-separated list of other run_as_user
 #                             values configured in the same heron-connect
 #                             instance, for cross-user denial tests
-#   CC_PROBE_SUPERVISOR     — the supervisor Unix username (for denial test)
+#   HERON_PROBE_SUPERVISOR     — the supervisor Unix username (for denial test)
 
 set -u
 
@@ -39,19 +39,19 @@ emit "HOME ${HOME:-unknown}"
 emit "SHELL ${SHELL:-unknown}"
 
 # ---------------------------------------------------------------- work_dir
-if [ -n "${CC_PROBE_WORKDIR:-}" ]; then
-    emit "WORKDIR_PATH ${CC_PROBE_WORKDIR}"
-    if [ -d "${CC_PROBE_WORKDIR}" ]; then
+if [ -n "${HERON_PROBE_WORKDIR:-}" ]; then
+    emit "WORKDIR_PATH ${HERON_PROBE_WORKDIR}"
+    if [ -d "${HERON_PROBE_WORKDIR}" ]; then
         emit "WORKDIR_EXISTS yes"
     else
         emit "WORKDIR_EXISTS no"
     fi
-    if [ -r "${CC_PROBE_WORKDIR}" ]; then
+    if [ -r "${HERON_PROBE_WORKDIR}" ]; then
         emit "WORKDIR_READABLE yes"
     else
         emit "WORKDIR_READABLE no"
     fi
-    if [ -w "${CC_PROBE_WORKDIR}" ]; then
+    if [ -w "${HERON_PROBE_WORKDIR}" ]; then
         emit "WORKDIR_WRITABLE yes"
     else
         emit "WORKDIR_WRITABLE no"
@@ -80,8 +80,8 @@ done
 # ------------------------------------------- cross-user denial tests
 # For each OTHER configured run_as_user, try to READ a file inside their
 # home. Expected outcome: denied. We report DENIED or LEAKED per path.
-if [ -n "${CC_PROBE_OTHER_USERS:-}" ]; then
-    for other in ${CC_PROBE_OTHER_USERS}; do
+if [ -n "${HERON_PROBE_OTHER_USERS:-}" ]; then
+    for other in ${HERON_PROBE_OTHER_USERS}; do
         if [ "$other" = "$(whoami)" ]; then
             continue
         fi
@@ -112,8 +112,8 @@ if [ -n "${CC_PROBE_OTHER_USERS:-}" ]; then
 fi
 
 # ---------------------------------------------------- supervisor denial
-if [ -n "${CC_PROBE_SUPERVISOR:-}" ]; then
-    sup=${CC_PROBE_SUPERVISOR}
+if [ -n "${HERON_PROBE_SUPERVISOR:-}" ]; then
+    sup=${HERON_PROBE_SUPERVISOR}
     if [ "$sup" != "$(whoami)" ]; then
         sup_home=$(getent passwd "$sup" 2>/dev/null | cut -d: -f6)
         if [ -n "$sup_home" ]; then

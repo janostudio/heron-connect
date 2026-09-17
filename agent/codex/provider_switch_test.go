@@ -16,11 +16,11 @@ import (
 
 func skipIfNoConfig(t *testing.T) *config.Config {
 	t.Helper()
-	if os.Getenv("CC_SKIP_INTEGRATION") == "1" {
-		t.Skip("CC_SKIP_INTEGRATION=1")
+	if os.Getenv("HERON_SKIP_INTEGRATION") == "1" {
+		t.Skip("HERON_SKIP_INTEGRATION=1")
 	}
-	if os.Getenv("CC_RUN_PROVIDER_INTEGRATION") != "1" {
-		t.Skip("set CC_RUN_PROVIDER_INTEGRATION=1 to run provider integration tests")
+	if os.Getenv("HERON_RUN_PROVIDER_INTEGRATION") != "1" {
+		t.Skip("set HERON_RUN_PROVIDER_INTEGRATION=1 to run provider integration tests")
 	}
 	cfgPath := os.ExpandEnv("$HOME/.heron-connect/config.toml")
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {

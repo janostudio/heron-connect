@@ -51,11 +51,16 @@ heron-connect 用它反查「该把消息发给谁」——无需 `--project` / 
 
 > ⚠️ **不要硬编码 session key**。它随会话变化，永远从环境变量读或省略让 CLI 自取。
 
-### 不属于本类的变量
+### 其他 `HERON_*` 变量
 
-以下是 heron-connect **自身**读的运维变量，不是注入给 agent 的，Agent 一般不需要关心：
+以下变量**不由本机制注入**，但同属 `HERON_` 命名空间，供了解：
 
-`CC_LOG_FILE` / `CC_LOG_MAX_SIZE` / `CC_LOG_RETENTION_DAYS`（日志）、`CC_CONFIG_PATH`（doctor）、`CC_HOOK_*`（hook 事件上下文）。
+| 变量 | 用途 | 谁读取 |
+|------|------|--------|
+| `HERON_LOG_FILE` / `HERON_LOG_MAX_SIZE` / `HERON_LOG_RETENTION_DAYS` | 日志路径与轮转，优先级高于 config `[log]` | heron-connect 进程（daemon 安装时写入 service 定义） |
+| `HERON_CONFIG_PATH` | 诊断（doctor）时定位配置文件 | heron-connect 进程 |
+| `HERON_HOOK_*` | hook 事件上下文，**反向**注入给 `type = "command"` 的 hook shell | hook 子进程 |
+| `HERON_PROBE_*` | `doctor user-isolation` 的隔离探测脚本入参 | 探测脚本 |
 
 ---
 

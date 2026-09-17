@@ -237,27 +237,27 @@ func (hm *HookManager) executeHTTP(h *HookConfig, event HookEvent) {
 // eventToEnv converts a HookEvent to environment variables for shell hooks.
 func eventToEnv(e HookEvent) []string {
 	env := []string{
-		"CC_HOOK_EVENT=" + string(e.Event),
-		"CC_HOOK_PROJECT=" + e.Project,
-		"CC_HOOK_TIMESTAMP=" + e.Timestamp.Format(time.RFC3339),
+		"HERON_HOOK_EVENT=" + string(e.Event),
+		"HERON_HOOK_PROJECT=" + e.Project,
+		"HERON_HOOK_TIMESTAMP=" + e.Timestamp.Format(time.RFC3339),
 	}
 	if e.SessionKey != "" {
-		env = append(env, "CC_HOOK_SESSION_KEY="+e.SessionKey)
+		env = append(env, "HERON_HOOK_SESSION_KEY="+e.SessionKey)
 	}
 	if e.Platform != "" {
-		env = append(env, "CC_HOOK_PLATFORM="+e.Platform)
+		env = append(env, "HERON_HOOK_PLATFORM="+e.Platform)
 	}
 	if e.UserID != "" {
-		env = append(env, "CC_HOOK_USER_ID="+e.UserID)
+		env = append(env, "HERON_HOOK_USER_ID="+e.UserID)
 	}
 	if e.UserName != "" {
-		env = append(env, "CC_HOOK_USER_NAME="+e.UserName)
+		env = append(env, "HERON_HOOK_USER_NAME="+e.UserName)
 	}
 	if e.Content != "" {
-		env = append(env, "CC_HOOK_CONTENT="+e.Content)
+		env = append(env, "HERON_HOOK_CONTENT="+e.Content)
 	}
 	if e.Error != "" {
-		env = append(env, "CC_HOOK_ERROR="+e.Error)
+		env = append(env, "HERON_HOOK_ERROR="+e.Error)
 	}
 	return env
 }
