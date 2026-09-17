@@ -55,8 +55,8 @@ func TestParseSendArgs_RequiresMessageOrAttachment(t *testing.T) {
 }
 
 func TestParseSendArgs_UsesSessionEnvFallback(t *testing.T) {
-	t.Setenv("CC_PROJECT", "demo")
-	t.Setenv("CC_SESSION_KEY", "telegram:123:456")
+	t.Setenv("HERON_PROJECT", "demo")
+	t.Setenv("HERON_SESSION_KEY", "telegram:123:456")
 
 	dir := t.TempDir()
 	imgPath := filepath.Join(dir, "chart.png")

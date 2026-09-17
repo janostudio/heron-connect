@@ -221,7 +221,7 @@ heron-connect cron del <任务ID>
 | `--session-mode` | 否 | 会话模式：`reuse`（复用）或 `new_per_run`（每次新建） |
 | `--timeout-mins` | 否 | 超时时间（分钟），默认 30，设为 0 表示不限制 |
 
-> **提示**：如果通过 AI Agent 内部调用（如 Claude Code 中的 `heron-connect cron add`），`--project` 和 `--session-key` 可以通过环境变量 `CC_PROJECT` 和 `CC_SESSION_KEY` 自动填充。
+> **提示**：如果通过 AI Agent 内部调用（如 Claude Code 中的 `heron-connect cron add`），`--project` 和 `--session-key` 可以通过环境变量 `HERON_PROJECT` 和 `HERON_SESSION_KEY` 自动填充。
 
 ### 方式三：管理 API（REST）
 

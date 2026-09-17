@@ -66,10 +66,10 @@ func runRelaySend(args []string) {
 	}
 
 	if from == "" {
-		from = os.Getenv("CC_PROJECT")
+		from = os.Getenv("HERON_PROJECT")
 	}
 	if sessionKey == "" {
-		sessionKey = os.Getenv("CC_SESSION_KEY")
+		sessionKey = os.Getenv("HERON_SESSION_KEY")
 	}
 	if message == "" && len(positional) > 0 {
 		if to == "" && len(positional) >= 2 {
@@ -86,7 +86,7 @@ func runRelaySend(args []string) {
 		os.Exit(1)
 	}
 	if sessionKey == "" {
-		fmt.Fprintln(os.Stderr, "Error: session key is required (set CC_SESSION_KEY or use --session-key)")
+		fmt.Fprintln(os.Stderr, "Error: session key is required (set HERON_SESSION_KEY or use --session-key)")
 		os.Exit(1)
 	}
 
@@ -141,9 +141,9 @@ func printRelaySendUsage() {
 Send a message to another bot and wait for the response.
 
 Options:
-  -f, --from <project>       Source project (auto-detected from CC_PROJECT env)
+  -f, --from <project>       Source project (auto-detected from HERON_PROJECT env)
   -t, --to <project>         Target bot project name
-  -s, --session-key <key>    Session key (auto-detected from CC_SESSION_KEY env)
+  -s, --session-key <key>    Session key (auto-detected from HERON_SESSION_KEY env)
   -m, --message <text>       Message to send
       --data-dir <path>      Data directory (default: ~/.heron-connect)
   -h, --help                 Show this help

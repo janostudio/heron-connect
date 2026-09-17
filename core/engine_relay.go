@@ -31,8 +31,8 @@ func (e *Engine) HandleRelay(ctx context.Context, fromProject, chatID, message s
 
 	if inj, ok := e.agent.(SessionEnvInjector); ok {
 		envVars := []string{
-			"CC_PROJECT=" + e.name,
-			"CC_SESSION_KEY=" + relaySessionKey,
+			"HERON_PROJECT=" + e.name,
+			"HERON_SESSION_KEY=" + relaySessionKey,
 		}
 		if exePath, err := os.Executable(); err == nil {
 			binDir := filepath.Dir(exePath)

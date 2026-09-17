@@ -522,7 +522,7 @@ When the user asks you to do something on a schedule (e.g. "every day at 6am",
 
   heron-connect cron add --cron "<min> <hour> <day> <month> <weekday>" --prompt "<task description>" --desc "<short label>"
 
-Environment variables CC_PROJECT and CC_SESSION_KEY are already set — do NOT
+Environment variables HERON_PROJECT and HERON_SESSION_KEY are already set — do NOT
 specify --project or --session-key.
 
 Examples:
@@ -554,6 +554,11 @@ For short single-line messages:
 
   heron-connect send -m "short message"
 ```
+
+You are not limited to one reply per turn — you may push a new standalone message
+any time you decide it is useful (e.g. to acknowledge a long task or report a
+milestone). Avoid spamming: messaging platforms enforce per-chat rate limits.
+Deliver your final answer as your normal reply, not via send.
 
 After adding this file, the agent will be able to translate natural language scheduling requests into `heron-connect cron add` commands automatically.
 

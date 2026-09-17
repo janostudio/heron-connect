@@ -35,19 +35,19 @@ func runAgentSID(args []string) {
 	}
 
 	if project == "" {
-		project = os.Getenv("CC_PROJECT")
+		project = os.Getenv("HERON_PROJECT")
 	}
 	if sessionKey == "" {
-		sessionKey = os.Getenv("CC_SESSION_KEY")
+		sessionKey = os.Getenv("HERON_SESSION_KEY")
 	}
 	dataDir = resolveDataDir(dataDir)
 
 	if project == "" {
-		fmt.Fprintln(os.Stderr, "Error: project is required (set CC_PROJECT env or use --project)")
+		fmt.Fprintln(os.Stderr, "Error: project is required (set HERON_PROJECT env or use --project)")
 		os.Exit(1)
 	}
 	if sessionKey == "" {
-		fmt.Fprintln(os.Stderr, "Error: session key is required (set CC_SESSION_KEY env or use --session-key)")
+		fmt.Fprintln(os.Stderr, "Error: session key is required (set HERON_SESSION_KEY env or use --session-key)")
 		os.Exit(1)
 	}
 
@@ -242,8 +242,8 @@ The command reads from the persisted session file; no running heron-connect
 instance is required.
 
 Options:
-  -p, --project <name>       Project name (auto-detected from CC_PROJECT env)
-  -s, --session-key <key>    Session key  (auto-detected from CC_SESSION_KEY env)
+  -p, --project <name>       Project name (auto-detected from HERON_PROJECT env)
+  -s, --session-key <key>    Session key  (auto-detected from HERON_SESSION_KEY env)
       --data-dir <path>      Data directory (default: ~/.heron-connect)
   -h, --help                 Show this help
 

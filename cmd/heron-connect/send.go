@@ -131,10 +131,10 @@ func parseSendArgs(args []string) (api.SendRequest, string, error) {
 		req.Message = strings.TrimSpace(string(data))
 	}
 	if req.Project == "" {
-		req.Project = strings.TrimSpace(os.Getenv("CC_PROJECT"))
+		req.Project = strings.TrimSpace(os.Getenv("HERON_PROJECT"))
 	}
 	if req.SessionKey == "" {
-		req.SessionKey = strings.TrimSpace(os.Getenv("CC_SESSION_KEY"))
+		req.SessionKey = strings.TrimSpace(os.Getenv("HERON_SESSION_KEY"))
 	}
 	if req.Message == "" {
 		req.Message = strings.Join(positional, " ")

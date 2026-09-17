@@ -3103,19 +3103,19 @@ func TestHandleMessage_MultiWorkspacePreservesCCSessionKey(t *testing.T) {
 
 	deadline := time.After(2 * time.Second)
 	for {
-		if got := wsAgent.EnvValue("CC_SESSION_KEY"); got != "" {
+		if got := wsAgent.EnvValue("HERON_SESSION_KEY"); got != "" {
 			if got != msg.SessionKey {
-				t.Fatalf("CC_SESSION_KEY = %q, want %q", got, msg.SessionKey)
+				t.Fatalf("HERON_SESSION_KEY = %q, want %q", got, msg.SessionKey)
 			}
 			if strings.Contains(got, normalizedWsDir) {
-				t.Fatalf("CC_SESSION_KEY leaked workspace path: %q", got)
+				t.Fatalf("HERON_SESSION_KEY leaked workspace path: %q", got)
 			}
 			return
 		}
 
 		select {
 		case <-deadline:
-			t.Fatal("timed out waiting for CC_SESSION_KEY to be injected")
+			t.Fatal("timed out waiting for HERON_SESSION_KEY to be injected")
 		default:
 			time.Sleep(10 * time.Millisecond)
 		}

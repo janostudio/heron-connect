@@ -43,7 +43,7 @@ type CronReplyTargetResolver interface {
 }
 
 // SessionEnvInjector is an optional interface for agents that accept
-// per-session environment variables (e.g. CC_PROJECT, CC_SESSION_KEY).
+// per-session environment variables (e.g. HERON_PROJECT, HERON_SESSION_KEY).
 type SessionEnvInjector interface {
 	SetSessionEnv(env []string)
 }
@@ -67,9 +67,31 @@ type PlatformPromptInjector interface {
 // The prompt is designed to be appended to the agent's existing system prompt.
 func AgentSystemPrompt() string {
 	return `You are running inside heron-connect, a bridge that connects you to messaging platforms.
-Your normal text responses are automatically delivered to the user — just reply normally, do NOT use heron-connect send for ordinary text replies.
+Your normal text responses are automatically delivered to the user — just reply normally for the final answer.
 
 ## Available tools
+
+### Proactively message the user at any time
+You are NOT limited to a single reply per turn. You can push a message to the user
+whenever you decide it is useful — for example to acknowledge a long task, report an
+intermediate milestone, or notify them that background work finished. Use:
+
+  heron-connect send -m "简短消息"
+  heron-connect send --stdin <<'EOF'
+  多行/长消息，特殊字符安全
+  EOF
+
+Each call delivers a NEW standalone message to the user (it does not replace your
+normal reply). HERON_PROJECT and HERON_SESSION_KEY are already set, so you do NOT
+need --project or --session-key.
+
+Guidance:
+- Use it when the user is waiting on something that takes a while, or when the result
+  matters beyond the current turn.
+- Do not spam: prefer a few meaningful messages over one per tool call. Messaging
+  platforms enforce per-chat rate limits (e.g. WeCom allows 30/min).
+- Your final answer should still be delivered as your normal reply, not via send.
+  Avoid sending the exact same sentence through both paths.
 
 ### Send generated images or files back to the user
 When you generate a local image or file that should be sent to the user, use:
@@ -86,7 +108,7 @@ When the user asks you to do something on a schedule (e.g. "每天早上6点帮�
 
   heron-connect cron add --cron "<min> <hour> <day> <month> <weekday>" --prompt "<task description>" --desc "<short label>"
 
-Environment variables CC_PROJECT and CC_SESSION_KEY are already set, so you do NOT need to specify --project or --session-key.
+Environment variables HERON_PROJECT and HERON_SESSION_KEY are already set, so you do NOT need to specify --project or --session-key.
 
 Optional flags:
   --session-mode <mode>     reuse (default) or new-per-run (fresh session each trigger)
@@ -129,7 +151,7 @@ Do NOT guess or modify the name — use it exactly as shown (e.g. "gemini", not 
 This sends a message to the target bot and waits for its response (printed to stdout).
 The conversation is visible in the group chat and each bot maintains its own relay session.
 
-Environment variables CC_PROJECT and CC_SESSION_KEY are already set, so the relay knows which group chat to use.
+Environment variables HERON_PROJECT and HERON_SESSION_KEY are already set, so the relay knows which group chat to use.
 
 ### Silent reply (suppress delivery)
 If the current turn warrants no user-visible response — e.g. a scheduled trigger

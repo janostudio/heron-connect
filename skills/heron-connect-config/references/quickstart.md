@@ -32,15 +32,18 @@
 
 ### 注入给 agent / CLI 自动读取的变量
 
-这些变量由 heron-connect 启动 agent 时**自动注入**（`CC_PROJECT` / `CC_SESSION_KEY` /
-`cc_data_dir` / `cc_project`），agent 内部跑 `heron-connect cron/send/relay/agent-sid`
-等命令时会自动读取它们补齐 `--project` / `--session-key`，无需手动传：
+heron-connect 启动 agent 时**自动注入**以下环境变量，agent 内部跑
+`heron-connect send/cron/relay/agent-sid` 等命令时会自动读取它们补齐
+`--project` / `--session-key`，无需手动传：
 
 | 变量 | 说明 |
 |------|------|
-| `CC_PROJECT` | 当前 project 名 |
-| `CC_SESSION_KEY` | 当前会话 key（`平台:用户:会话`） |
+| `HERON_PROJECT` | 当前 project 名 |
+| `HERON_SESSION_KEY` | 当前会话 key，格式 `<platform>:<chatID>:<userID>` |
+| `PATH` | 追加了 heron-connect 二进制目录，可直接敲 `heron-connect` |
 | `cc_data_dir` / `cc_project` | 内部注入 agent options，一般无需关心 |
+
+> 完整说明（含如何让 Agent 中途主动给用户发消息）见 `agent-runtime.md`。
 
 ### 启动相关
 

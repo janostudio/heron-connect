@@ -110,9 +110,93 @@ func writePersistentModelCacheWithSnapshot(t *testing.T, cachePath string, snaps
 	return cachePath
 }
 
+// modelCacheWaitTimeout bounds the polling helpers below. It must be generous:
+// these tests run under `go test -race` alongside the rest of the repo, where a
+// fake CLI round trip can take well over a second. A tight bound makes the
+// suite flaky rather than fast (v1.1.44: 2s was too tight).
+const modelCacheWaitTimeout = 20 * time.Second
+
+// waitForModelRefreshIdle blocks until the agent's background model-refresh
+// goroutine has finished. Tests must call this (via armGateRelease) before
+// returning, otherwise the goroutine may still be running its fake CLI when
+// t.TempDir() tears down the temp directories — the surviving child process
+// then recreates files inside them and cleanup fails with "directory not
+// empty".
+func waitForModelRefreshIdle(t *testing.T, a *Agent) {
+	t.Helper()
+	if a == nil {
+		return
+	}
+	deadline := time.Now().Add(modelCacheWaitTimeout)
+	for time.Now().Before(deadline) {
+		a.mu.Lock()
+		busy := a.refreshingModelCache
+		a.mu.Unlock()
+		if !busy {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// armGateRelease makes sure a gated fake CLI eventually exits and that the
+// background refresh goroutine has drained before the test returns. Without
+// this, a test that finishes while the fake CLI is still blocked leaves a
+// spinning shell behind, and t.TempDir() cleanup fails with "directory not
+// empty" — turning a passing test into a spurious failure (observed v1.1.44).
+//
+// Call it immediately after constructing the agent; dirs holds every temp dir
+// whose fake CLI is gate-blocked (the gate's own dir plus the CLI's own).
+func armGateRelease(t *testing.T, gatePath string, a *Agent, dirs ...string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if gatePath != "" {
+			if err := os.WriteFile(gatePath, []byte("released"), 0o644); err != nil {
+				t.Logf("armGateRelease: could not release gate %q: %v", gatePath, err)
+			}
+		}
+		waitForModelRefreshIdle(t, a)
+		// The released child needs a moment to exit and stop touching its dirs.
+		for _, dir := range dirs {
+			waitForDirStable(t, dir)
+		}
+	})
+}
+
+// waitForDirStable waits until dir stops changing, giving a just-released fake
+// CLI time to exit before t.TempDir() tries to remove it.
+func waitForDirStable(t *testing.T, dir string) {
+	t.Helper()
+	if dir == "" {
+		return
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		before := dirEntryCount(dir)
+		time.Sleep(50 * time.Millisecond)
+		if dirEntryCount(dir) == before {
+			return
+		}
+	}
+}
+
+func dirEntryCount(dir string) int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return -1
+	}
+	return len(entries)
+}
+
 func writeBlockingModelsBin(t *testing.T, gatePath string, lines []string) string {
 	t.Helper()
-	tmpDir := t.TempDir()
+	return writeBlockingModelsBinIn(t, t.TempDir(), gatePath, lines)
+}
+
+// writeBlockingModelsBinIn is writeBlockingModelsBin with an explicit output
+// dir, so callers can register it with armGateRelease.
+func writeBlockingModelsBinIn(t *testing.T, tmpDir, gatePath string, lines []string) string {
+	t.Helper()
 	name := filepath.Join(tmpDir, "fake-opencode")
 
 	var body strings.Builder
@@ -120,7 +204,7 @@ func writeBlockingModelsBin(t *testing.T, gatePath string, lines []string) strin
 	body.WriteString("if [ \"$1\" = \"models\" ]; then\n")
 	if gatePath != "" {
 		fmt.Fprintf(&body, "  while [ ! -f '%s' ]; do\n", gatePath)
-		body.WriteString("    sleep 0.01\n")
+		body.WriteString("    sleep 0.05\n")
 		body.WriteString("  done\n")
 	}
 	for _, line := range lines {
@@ -148,7 +232,7 @@ func writeCountingModelsBin(t *testing.T, countPath, gatePath string, lines []st
 	}
 	if gatePath != "" {
 		fmt.Fprintf(&body, "  while [ ! -f '%s' ]; do\n", gatePath)
-		body.WriteString("    sleep 0.01\n")
+		body.WriteString("    sleep 0.05\n")
 		body.WriteString("  done\n")
 	}
 	if requireEnvKey != "" {
@@ -171,7 +255,7 @@ func writeCountingModelsBin(t *testing.T, countPath, gatePath string, lines []st
 
 func waitForModelsInPersistentCache(t *testing.T, cachePath string, want []string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(modelCacheWaitTimeout)
 	for time.Now().Before(deadline) {
 		cache, err := loadOpencodePersistentModelCache(cachePath)
 		if err == nil && cache != nil && len(cache.Models) == len(want) {
@@ -198,7 +282,7 @@ func waitForModelsInPersistentCache(t *testing.T, cachePath string, want []strin
 
 func waitForFileContent(t *testing.T, path, want string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(modelCacheWaitTimeout)
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(path)
 		if err == nil && strings.TrimSpace(string(data)) == want {
@@ -737,8 +821,10 @@ func TestAvailableModels_BackgroundRefreshUpdatesDiskCache(t *testing.T) {
 	dataDir := t.TempDir()
 	cachePath := opencodeProjectModelCachePath(dataDir, "demo")
 	writePersistentModelCache(t, cachePath, []core.ModelOption{{Name: "cached/model"}}, time.Now())
-	gatePath := filepath.Join(t.TempDir(), "refresh-ready")
-	bin := writeBlockingModelsBin(t, gatePath, []string{"fresh/model", "second/model"})
+	gateDir := t.TempDir()
+	gatePath := filepath.Join(gateDir, "refresh-ready")
+	binDir := t.TempDir()
+	bin := writeBlockingModelsBinIn(t, binDir, gatePath, []string{"fresh/model", "second/model"})
 
 	agent, err := New(map[string]any{
 		"cmd":         bin,
@@ -748,6 +834,7 @@ func TestAvailableModels_BackgroundRefreshUpdatesDiskCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	armGateRelease(t, gatePath, agent.(*Agent), binDir)
 	switcher, ok := agent.(core.ModelSwitcher)
 	if !ok {
 		t.Fatalf("New() agent does not implement core.ModelSwitcher")

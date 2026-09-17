@@ -33,6 +33,7 @@ heron-connect 把本地 AI 编码 Agent（Claude Code / CodeBuddy / Codex / Gemi
 | 9 | **部署/后台运行**：`heron-connect daemon`（systemd/launchd/schtasks）、容器无 systemd 用 nohup/tmux、`service.sh` 脚本、日志轮转、多配置实例隔离 | `references/deployment.md` |
 | 10 | **顶层 CLI 子命令**：config/update/check-update/provider/send/sessions/agent-sid/relay/feishu/weixin/doctor/web、启动 flag（--force/--observe/--version） | `references/cli.md` |
 | 11 | **聊天斜杠命令**：`/new` `/list` `/switch` `/name` `/current` `/status` `/usage` `/history` `/mode` `/model` `/reasoning` `/quiet` `/provider` `/memory` `/cron` `/dashboard` `/heartbeat` `/compress` `/cancel` `/stop` `/help` `/version` `/commands` `/skills` `/config` `/doctor` `/upgrade` `/restart` `/alias` `/delete` `/bind` `/search` `/shell` `/diff` `/show` `/dir` `/tts` `/workspace` `/whoami` `/web` `/ps`（含别名、特权命令、admin_from） | `references/chat-commands.md` |
+| 12 | **Agent 运行时反向调用**：注入给会话内 Agent 的环境变量（`HERON_PROJECT` / `HERON_SESSION_KEY`）及含义、如何中途主动给用户发消息（`heron-connect send`）、何时该发/不该发、`sideText` 去重注意 | `references/agent-runtime.md` |
 
 **脚本**：
 - 后台启/停/重启某份 toml：`scripts/service.sh --config <path> <start|stop|restart|status|logs>`

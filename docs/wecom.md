@@ -425,11 +425,47 @@ proxy = "http://vps-ip:8888"
 
 ---
 
+## 关于 @ 成员
+
+### 收到消息里的 @
+
+两种模式都会把消息中的 `@机器人`（`@<BotID>` 或全角 `＠<BotID>`，大小写不敏感）**自动剥离**后再交给 Agent，所以「@机器人 帮我看下」会以「帮我看下」进入对话，不会干扰指令解析。
+
+群聊中 @ 其他成员时，@ 的对象**不会**被剥离，而是原样留在消息里 —— 因此 Agent 能直接知道你在问谁。要让它稳定识别，建议在项目规则里约定格式，例如：
+
+```markdown
+# AGENTS.md
+群聊消息中若出现 `@<userid>`，其中的 userid 在回复时需要保持一致。
+```
+
+### 回复时 @ 其他人（通知某人查阅）
+
+**当前不支持**，原因是企业微信智能机器人协议本身没有这项能力：
+
+- 被动/主动回复走 `aibot_respond_msg` / `aibot_send_msg`，`stream` 与 `markdown` 结构体里都**没有** `mentioned_list` / `mentioned_mobile_list` 之类的字段（官方 Node SDK 全文亦无 mention API）；
+- 官方明确说明「暂不支持通过『消息推送』@成员」；
+- 因此无论配置怎样，都**无法触发对方的消息提醒**，最多只能在正文里渲染出一个 `@名字` 的纯文本 —— 但机器人又拿不到群成员的显示名，写出来只是没有含义的字符串。
+
+可行的替代方案：
+
+| 方案 | 效果 | 需要额外条件 |
+|------|------|--------------|
+| **群 Webhook（消息推送）** | `text` / `markdown` 消息支持 `<@userid>` 扩展语法，**能真正 @ 到成员并触发提醒** | 需在群内添加「消息推送」，拿到 webhook URL（注意：官方 FAQ 称「消息推送」@成员不提醒，实际行为与接口文档存在不一致，需自测） |
+| **自建应用 `message/send`** | `text` 消息支持 `mentioned_list` / `mentioned_mobile_list` | 需要 `corp_id` / `corp_secret` / `agent_id`，并配置企业可信 IP |
+| **正文写明** | 在回复里直接写 `@张三 请查阅` 或附上手机号，靠人眼看 | 无 |
+
+> 说明：`stripWeComAtMentions`（`platform/wecom/mention_strip.go`）只清理**机器人自己**被 @ 的部分，不会处理 `@其他成员`；也就是说「自动拼接 @ 某人」这一步目前在协议层没有对应字段可供落地。
+
+---
+
 ## 参考链接
 
 - [企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame)
 - [企业微信开发文档](https://developer.work.weixin.qq.com/document/)
 - [消息加解密说明](https://developer.work.weixin.qq.com/document/path/90307)
+- [智能机器人接收消息](https://developer.work.weixin.qq.com/document/path/100719)
+- [主动回复消息](https://developer.work.weixin.qq.com/document/path/101138)
+- [群机器人（消息推送）配置说明](https://developer.work.weixin.qq.com/document/path/91770)
 - [Cloudflare Tunnel 文档](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/)
 
 ---

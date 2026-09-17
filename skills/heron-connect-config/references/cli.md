@@ -50,10 +50,17 @@ heron-connect send --stdin <<'EOF'                  # 多行/长消息（特殊�
 EOF
 heron-connect send -m "看图" --image /path/x.png     # 回传图片
 heron-connect send -m "附件" --file /path/x.pdf      # 回传文件
-# 选项：-p/--project、-s/--session-key（缺省读 CC_PROJECT / CC_SESSION_KEY 环境变量）
+# 选项：-p/--project、-s/--session-key（缺省读 HERON_PROJECT / HERON_SESSION_KEY 环境变量）
 ```
 
 > 图片/文件回传受 `attachment_send` 全局开关控制（off 则禁）。
+
+每次 `send` 都会投递一条**独立的新消息**（不替换会话内容）。命令通过 Unix socket
+`<data_dir>/run/api.sock` 与运行中的 heron-connect 通信，因此实例必须在运行。
+
+**Agent 会话内调用**：heron-connect 启动 agent 时已注入 `HERON_PROJECT` /
+`HERON_SESSION_KEY` / `PATH`，因此 Agent 直接敲 `heron-connect send -m "..."` 即可给
+用户主动发消息，无需任何参数。详见 `agent-runtime.md`。
 
 ### 会话管理
 
@@ -68,7 +75,7 @@ heron-connect send -m "附件" --file /path/x.pdf      # 回传文件
 
 ```bash
 heron-connect cron add|list|edit|info|del ...
-heron-connect relay send ...      # bot 间中继（读 CC_PROJECT / CC_SESSION_KEY）
+heron-connect relay send ...      # bot 间中继（读 HERON_PROJECT / HERON_SESSION_KEY）
 ```
 
 ### 平台引导（见 platforms.md）

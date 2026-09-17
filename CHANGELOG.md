@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.1.44 (2026-09-17)
+
+### Fixed
+
+- **`agent/opencode` 的模型缓存测试在 `go test -race` 下偶发失败**：`TestAvailableModels_BackgroundRefreshUpdatesDiskCache` 等三个测试在并行负载下会以两种形态报错——`waitForModelsInPersistentCache` / `waitForFileContent` 的 **2 秒**轮询上限被击穿，或测试通过后 `t.TempDir()` 清理报 `directory not empty`。根因是这些测试用 shell 脚本假造 `opencode models` CLI，脚本在门控文件出现前以 `sleep 0.01` 死循环等待；`-race` 并行下进程调度变慢，2 秒不够走完「起进程 → 轮询 → 写缓存」，而测试提前返回时那个假 CLI 仍在循环，它随后在临时目录里重建文件，把目录清理也一起弄失败。现把轮询上限放到 20 秒，并新增 `armGateRelease`：测试结束时统一释放门控、等待后台刷新 goroutine 归零、再等假 CLI 所在目录稳定下来，保证子进程先于清理退出。
+  - 该 flake 与本次功能改动无关（`agent/opencode/` 本轮零改动，上次修改在 v1.1.30），是发布门禁顺带暴露的既有问题。
+
+### Changed
+
+- **会话环境变量改名 `CC_PROJECT` / `CC_SESSION_KEY` → `HERON_PROJECT` / `HERON_SESSION_KEY`**：heron-connect 启动 agent 子进程时注入的这两个变量，是 Agent 反向调用 `heron-connect send` / `cron` / `relay` / `agent-sid` 以定位"发给谁"的唯一依据。原名沿用了前身项目 cc-connect 的 `CC_` 前缀，与其承载的语义（heron-connect 会话上下文）不符，现统一到 `HERON_` 前缀。**无兼容层**（旧名不再读取），升级后已有的 agent 会话需重启才会拿到新变量名；运行中进程若非通过 heron-connect 启动、或手动 export 过旧变量，需同步改名。运维类变量（`CC_LOG_*` / `CC_CONFIG_PATH` / `CC_HOOK_*`）保持原样不动。
+
+### Added
+
+- **Agent 可在执行中途主动给用户发消息**：此前系统提示词里明确写着「do NOT use heron-connect send for ordinary text replies」，把 `send` 限定为"只用来回传图片/文件"，于是 Agent 无论任务跑多久都只能在结束时回一次话——用户面对长任务时全程无反馈。现在删掉该禁令，并在提示词里新增「Proactively message the user at any time」章节，说明：调用 `heron-connect send` 会投递一条**独立的新消息**（不替换最终回复）、无需 `--project` / `--session-key`、以及使用边界（长任务确认/里程碑汇报/后台任务完成才发；不要每个工具调用都发；遵守平台频率限制如企微 30 条/分；最终答案仍走正常回复）。链路本身此前已通（env 注入 + `PATH` 注入 + socket API 都在），本次只是解开措辞上的自我限制。
+  - 配套新增 skill 参考文档 `heron-connect-config/references/agent-runtime.md`：面向"会话内运行的 Agent"，完整说明注入的变量及其含义、`heron-connect send` 的用法与场景、以及一个易踩的坑——heron-connect 会记录 `send` 发出的最后一条文本用于去重，**若最终回复与它逐字相同，最终回复会被抑制**，因此最终答案不应走 `send`。
+  - `INSTALL.md` 的 memory 文件模板同步补充主动通知说明。
+
 ## v1.1.43 (2026-09-16)
 
 ### Fixed

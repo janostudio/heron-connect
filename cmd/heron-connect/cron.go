@@ -106,10 +106,10 @@ func runCronAdd(args []string) {
 
 	// Fallback to env vars (set by heron-connect when spawning agent)
 	if project == "" {
-		project = os.Getenv("CC_PROJECT")
+		project = os.Getenv("HERON_PROJECT")
 	}
 	if sessionKey == "" {
-		sessionKey = os.Getenv("CC_SESSION_KEY")
+		sessionKey = os.Getenv("HERON_SESSION_KEY")
 	}
 
 	// If cron expr not provided via --cron, try positional: first 5 fields are cron, rest is prompt/exec
@@ -199,7 +199,7 @@ func runCronList(args []string) {
 	}
 
 	if project == "" {
-		project = os.Getenv("CC_PROJECT")
+		project = os.Getenv("HERON_PROJECT")
 	}
 
 	sockPath := resolveSocketPath(dataDir)
@@ -531,8 +531,8 @@ func printCronAddUsage() {
 Create a new scheduled task (agent prompt or shell command).
 
 Options:
-  -p, --project <name>       Target project (auto-detected from CC_PROJECT env)
-  -s, --session-key <key>    Target session (auto-detected from CC_SESSION_KEY env)
+  -p, --project <name>       Target project (auto-detected from HERON_PROJECT env)
+  -s, --session-key <key>    Target session (auto-detected from HERON_SESSION_KEY env)
   -c, --cron <expr>          Cron expression, e.g. "0 6 * * *"
       --prompt <text>        Task prompt (runs through agent)
       --exec <command>       Shell command (runs directly, mutually exclusive with --prompt)

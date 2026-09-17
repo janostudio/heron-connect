@@ -1898,7 +1898,7 @@ func (e *Engine) processInteractiveMessage(p Platform, msg *Message, session *Se
 // processInteractiveMessageWith is the core interactive processing loop.
 // It accepts an explicit agent, interactiveKey (for the interactiveStates map),
 // and workspaceDir so that multi-workspace mode can route to per-workspace agents.
-// ccSessionKey, when non-empty, is used for CC_SESSION_KEY in the agent env; otherwise interactiveKey is used.
+// ccSessionKey, when non-empty, is used for HERON_SESSION_KEY in the agent env; otherwise interactiveKey is used.
 func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session *Session, agent Agent, sessions *SessionManager, interactiveKey string, workspaceDir string, ccSessionKey string) {
 	// session.Unlock() is NOT deferred here — it is called explicitly in
 	// the drain loop below while holding state.mu to close the race window
@@ -2194,7 +2194,7 @@ func adoptPendingFromPlaceholder(existing, newState *interactiveState) {
 }
 
 // When agentOverride is non-nil it is used instead of e.agent to start the session.
-// ccSessionKey, when non-empty, is used for CC_SESSION_KEY env injection; otherwise sessionKey is used.
+// ccSessionKey, when non-empty, is used for HERON_SESSION_KEY env injection; otherwise sessionKey is used.
 func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, replyCtx any, session *Session, sessions *SessionManager, agentOverride Agent, ccSessionKey string) *interactiveState {
 	// Track whether we hold the lock so we can release it before blocking
 	// operations (closeAgentSessionWithTimeout can block up to 130s) and
@@ -2295,11 +2295,13 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 		ccKey = ccSessionKey
 	}
 
-	// Inject per-session env vars so the agent subprocess can call `heron-connect cron add` etc.
+	// Inject per-session env vars so the agent subprocess can call
+	// `heron-connect send` / `cron add` / `relay send` etc. to talk back to
+	// the user proactively (see skills/heron-connect-config/references/agent-runtime.md).
 	if inj, ok := agent.(SessionEnvInjector); ok {
 		envVars := []string{
-			"CC_PROJECT=" + e.name,
-			"CC_SESSION_KEY=" + ccKey,
+			"HERON_PROJECT=" + e.name,
+			"HERON_SESSION_KEY=" + ccKey,
 		}
 		if exePath, err := os.Executable(); err == nil {
 			binDir := filepath.Dir(exePath)
