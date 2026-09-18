@@ -30,9 +30,9 @@ type APIServer struct {
 
 // SendRequest is the JSON body for POST /send.
 type SendRequest struct {
-	Project    string                `json:"project"`
-	SessionKey string                `json:"session_key"`
-	Message    string                `json:"message"`
+	Project    string                 `json:"project"`
+	SessionKey string                 `json:"session_key"`
+	Message    string                 `json:"message"`
 	Images     []core.ImageAttachment `json:"images,omitempty"`
 	Files      []core.FileAttachment  `json:"files,omitempty"`
 }
@@ -145,6 +145,10 @@ func (s *APIServer) handleSend(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Message == "" && len(req.Images) == 0 && len(req.Files) == 0 {
 		http.Error(w, "message or attachment is required", http.StatusBadRequest)
+		return
+	}
+	if req.SessionKey == "" {
+		http.Error(w, "session key is required", http.StatusBadRequest)
 		return
 	}
 

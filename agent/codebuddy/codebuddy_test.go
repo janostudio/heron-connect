@@ -42,6 +42,31 @@ func TestNormalizeMode(t *testing.T) {
 	}
 }
 
+func TestParseEnv(t *testing.T) {
+	got := parseEnv(map[string]any{
+		"HERON_CONNECT_ENV": "cloud",
+		"COUNT":             3,
+		" bad=key ":         "ignored",
+	})
+	want := []string{"COUNT=3", "HERON_CONNECT_ENV=cloud"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseEnv() = %#v, want %#v", got, want)
+	}
+}
+
+func TestAgentSetSessionEnvPreservesConfiguredEnvironment(t *testing.T) {
+	a := &Agent{configEnv: []string{"HERON_CONNECT_ENV=cloud"}}
+	a.SetSessionEnv([]string{"HERON_PROJECT=auto-bugfix", "HERON_SESSION_KEY=wecom:chat:user"})
+	want := []string{
+		"HERON_CONNECT_ENV=cloud",
+		"HERON_PROJECT=auto-bugfix",
+		"HERON_SESSION_KEY=wecom:chat:user",
+	}
+	if !reflect.DeepEqual(a.sessionEnv, want) {
+		t.Fatalf("sessionEnv = %#v, want %#v", a.sessionEnv, want)
+	}
+}
+
 // ── Agent identity tests ────────────────────────────────────
 
 func TestAgent_Name(t *testing.T) {

@@ -26,6 +26,17 @@ func TestHandleSend_RequiresMessageOrAttachment(t *testing.T) {
 	}
 }
 
+func TestHandleSend_RequiresSessionKey(t *testing.T) {
+	s := &APIServer{engines: make(map[string]*core.Engine), mux: http.NewServeMux()}
+	body, _ := json.Marshal(SendRequest{Project: "test", Message: "hello"})
+	req := httptest.NewRequest(http.MethodPost, "/send", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleSend(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty session key, got %d", rec.Code)
+	}
+}
+
 func TestHandleSend_AllowsAttachmentOnly(t *testing.T) {
 	s := &APIServer{
 		engines: make(map[string]*core.Engine),

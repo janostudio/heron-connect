@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -37,6 +38,7 @@ type Agent struct {
 	model      string // user-selected model (pending until the next session starts)
 	mode       string // "default" | "yolo" (--dangerously-skip-permissions)
 	args       []string
+	configEnv  []string
 	sessionEnv []string
 	// interruptible switches the session to a resident process driven over
 	// stream-json stdin, enabling mid-turn interruption. Absent/false keeps
@@ -61,6 +63,7 @@ func New(opts map[string]any) (core.Agent, error) {
 	mode, _ := opts["mode"].(string)
 	mode = normalizeMode(mode)
 	args := parseStringSlice(opts["args"])
+	configEnv := parseEnv(opts["env"])
 	interruptible, _ := opts["interruptible"].(bool)
 
 	if _, err := exec.LookPath("codebuddy"); err != nil {
@@ -72,6 +75,7 @@ func New(opts map[string]any) (core.Agent, error) {
 		model:         model,
 		mode:          mode,
 		args:          args,
+		configEnv:     configEnv,
 		interruptible: interruptible,
 	}, nil
 }
@@ -79,6 +83,24 @@ func New(opts map[string]any) (core.Agent, error) {
 // parseStringSlice normalises an "args" config value ([]string or []any)
 // into a []string, mirroring agent/acp's helper so extra CLI arguments can
 // be passed through to the spawned codebuddy process.
+func parseEnv(v any) []string {
+	values, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	env := make([]string, 0, len(values))
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		if key == "" || strings.Contains(key, "=") {
+			continue
+		}
+		env = append(env, key+"="+fmt.Sprint(value))
+	}
+	sort.Strings(env)
+	return env
+}
+
 func parseStringSlice(v any) []string {
 	switch x := v.(type) {
 	case nil:
@@ -230,7 +252,7 @@ func codeBuddyFallbackModels() []core.ModelOption {
 func (a *Agent) SetSessionEnv(env []string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.sessionEnv = env
+	a.sessionEnv = core.MergeEnv(a.configEnv, env)
 }
 
 func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentSession, error) {

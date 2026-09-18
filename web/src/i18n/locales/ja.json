@@ -282,7 +282,8 @@
     "attach": "画像/ファイルを添付",
     "removeAttachment": "削除",
     "fileTooBig": "ファイルが大きすぎます（>10MB）",
-    "defaultSession": "Web セッション"
+    "defaultSession": "Web セッション",
+    "jumpToLatest": "最新へ移動"
   },
   "cmd": {
     "search": "コマンドを検索...",

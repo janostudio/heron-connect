@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.1.47 (2026-09-18)
+
+### Added
+
+- **Web 消息流新增「回到最新」悬浮按钮**：用户上滑查看历史消息后，消息区右下角（输入框正上方）出现一个圆形下箭头按钮，点击平滑滚回最新消息。仅当视图离开底部（>80px）且当前会话有消息时显示；回到 80px 内自动隐藏。图标按钮（`ArrowDown`），已补 5 语言文案。
+- **`codebuddy` agent 支持 `env` 配置**：`[projects.agent.options]` 下新增 `env` 表，用于给 codebuddy 子进程注入环境变量（如 `env = { HERON_CONNECT_ENV = "cloud" }`）。配置项在会话环境注入（`SetSessionEnv`）时与运行时变量合并，运行时变量优先——合并走 `core.MergeEnv` 去重，避免同名 key 在 Linux 上因 `getenv` 取首个匹配而被静默忽略。键名含 `=` 或为空白的项会被忽略。
+
+### Changed
+
+- **主动消息（proactive send）必须显式指定 session_key，不再兜底猜测**：`SendToSessionWithAttachments` 此前在 `sessionKey` 为空时有三种兜底——单会话时直接用、多会话纯文本时取第一个（legacy 行为）、仅多会话带附件时报错。前两种都会把消息投给一个**任意**会话，静默发错人。现统一改为：会话 key 为空直接返回错误 `session key is required for proactive messaging`；`api` 侧 `POST /send` 同样在缺少 `session_key` 时返回 400。**这是行为破坏性变更**：依赖"不传 session 也能发"的调用方需要补上 session key。
+
+### Fixed
+
+- **发送消息后不再自动滚动到底部**：v1.1.39 为消除流式 delta 抖动引入了"仅在贴近底部时才跟随"的守卫（`stickToBottomRef`），但该状态一旦因用户上滑置为 `false` 就再没有复位出口 —— 结果是用户上滑后在 Agent 回复期间发消息，自己刚发出的气泡看不见。现两条发送路径（`handleSend`、命令面板 `handleCmdSelect`）在追加消息后强制复位吸附标志，由既有 auto-scroll effect 在下一帧执行实际滚动（不在 `handleSend` 内直接 `scrollIntoView`：`updateSlice` 只是登记 re-render，此刻新气泡尚未进入 DOM，直接滚会少滚一条）。
+
 ## v1.1.46 (2026-09-17)
 
 ### Added

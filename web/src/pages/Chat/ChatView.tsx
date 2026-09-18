@@ -4,7 +4,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, Bot, Circle, WifiOff,
   FileText, Loader2, Download, FileDown,
-  ChevronDown, Clock, X, Folder, FolderOpen, ChevronLeft, ChevronRight, ArrowUp,
+  ChevronDown, Clock, X, Folder, FolderOpen, ChevronLeft, ChevronRight, ArrowUp, ArrowDown,
   Pin, PinOff, Pencil, RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui';
@@ -1033,12 +1033,44 @@ export default function ChatView() {
   const stickToBottomRef = useRef(true);
   const scrollRafRef = useRef<number | null>(null);
 
+  // Mirror of `stickToBottomRef` for the "jump to latest" button. The ref is
+  // read inside the scroll effect (which must not re-run on its own), so it
+  // stays a ref; this state only drives the button's visibility and is
+  // updated at most once per crossing (see handleScroll).
+  const [atBottom, setAtBottom] = useState(true);
+
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stickToBottomRef.current = distance < 80;
+    const near = distance < 80;
+    stickToBottomRef.current = near;
+    // Only flip the state on an actual crossing — a plain setState per scroll
+    // event would re-render ChatView (and its whole toolbar) on every wheel tick.
+    setAtBottom(prev => (prev === near ? prev : near));
   }, []);
+
+  // Re-attach to the bottom on the NEXT render, without scrolling right now.
+  //
+  // `updateSlice` only schedules a re-render, so at call time `messagesEnd` has
+  // not yet moved past the bubble being appended — scrolling here would land
+  // one message short. So we just force the stickiness flags; the auto-scroll
+  // effect (see the Auto-scroll note) does the real scroll once the new message
+  // is in the DOM.
+  //
+  // Used by the send paths: sending is an explicit "give me the newest content"
+  // action, so it overrides a user who had scrolled up. Without this they would
+  // send a message while `stickToBottomRef` was false and never see it.
+  const reattachToBottom = useCallback(() => {
+    stickToBottomRef.current = true;
+    setAtBottom(true);
+  }, []);
+
+  // One-shot jump to the newest message, used by the floating button.
+  const jumpToBottom = useCallback(() => {
+    reattachToBottom();
+    messagesEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [reattachToBottom]);
 
   // Scroll signature: total message count plus the length of the last
   // message. Depend on this instead of the `messages` array identity so
@@ -1174,7 +1206,8 @@ export default function ChatView() {
     }
     bridgeSend(text, media, currentSession?.id);
     setPickedFiles([]);
-  }, [pickedFiles, bridgeStatus, bridgeSend, isRunning, stripDataUrlPrefix, currentSession?.id, ensureViewedId, ensureSlice, updateSlice]);
+    reattachToBottom();
+  }, [pickedFiles, bridgeStatus, bridgeSend, isRunning, stripDataUrlPrefix, currentSession?.id, ensureViewedId, ensureSlice, updateSlice, reattachToBottom]);
 
   // Stable file-open handler. Must NOT be an inline arrow at the call site:
   // a new function identity on every render would defeat the React.memo on
@@ -1202,7 +1235,8 @@ export default function ChatView() {
       updateSlice(targetId, s => ({ ...s, pendingCmd: cmd.cmd }));
     }
     bridgeSend(cmd.cmd);
-  }, [bridgeStatus, bridgeSend, ensureViewedId, ensureSlice, updateSlice]);
+    reattachToBottom();
+  }, [bridgeStatus, bridgeSend, ensureViewedId, ensureSlice, updateSlice, reattachToBottom]);
 
   const handleCardAction = useCallback((value: string) => {
     if (bridgeStatus !== 'connected') return;
@@ -1256,8 +1290,9 @@ export default function ChatView() {
   return (
     <div className="flex flex-col flex-1 min-h-0 animate-fade-in md:flex-row">
       {/* Left chat column; on md+ the open preview drawer becomes an inline
-          right column and this column flexes to fill the remaining width. */}
-      <div className="flex flex-col flex-1 min-w-0 min-h-0">
+          right column and this column flexes to fill the remaining width.
+          `relative` anchors the floating "jump to latest" button below. */}
+      <div className="relative flex flex-col flex-1 min-w-0 min-h-0">
       {/* Header */}
       <div className="flex items-center justify-between pb-3 border-b border-gray-200 dark:border-gray-800 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
@@ -1368,8 +1403,34 @@ export default function ChatView() {
       />
 
       {/* Input area — see ChatComposer: it owns the draft text so typing does
-          not re-render this page (and therefore the transcript). */}
-      <div className="border-t border-gray-200 dark:border-gray-800 pt-3 shrink-0">
+          not re-render this page (and therefore the transcript).
+          `relative` anchors the floating "jump to latest" button, which is
+          positioned against this wrapper's TOP edge — i.e. it always hovers
+          just above the input bar, however tall the composer grows (multi-line
+          draft, attachment chips). Anchoring it to the column's bottom instead
+          would need the composer's height, which is not fixed.
+          The button itself is icon-only (ArrowDown) and sits in the
+          bottom-right, just above the input bar. */}
+      <div className="relative border-t border-gray-200 dark:border-gray-800 pt-3 shrink-0">
+        {!atBottom && messages.length > 0 && (
+          <button
+            type="button"
+            onClick={jumpToBottom}
+            className={cn(
+              'absolute right-4 -translate-y-1/2 z-30',
+              'flex items-center justify-center w-9 h-9 rounded-full',
+              'bg-white/95 backdrop-blur-xl border border-gray-200/80 shadow-lg shadow-black/10',
+              'text-gray-500 hover:text-accent hover:border-accent/40 active:scale-95',
+              'dark:bg-[#1f2228]/95 dark:border-white/[0.12] dark:text-gray-300',
+              'dark:hover:text-accent dark:shadow-black/50',
+              'transition-colors duration-200 animate-fade-in',
+            )}
+            aria-label={t('chat.jumpToLatest')}
+            title={t('chat.jumpToLatest')}
+          >
+            <ArrowDown size={16} />
+          </button>
+        )}
         <ChatComposer
           ref={composerRef}
           onSend={handleSend}

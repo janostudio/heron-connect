@@ -715,6 +715,13 @@ func newTestEngine() *Engine {
 	return NewEngine("test", &stubAgent{}, []Platform{&stubPlatformEngine{n: "test"}}, "", LangEnglish)
 }
 
+func TestEngineSendToSessionWithAttachments_RequiresSessionKey(t *testing.T) {
+	e := newTestEngine()
+	if err := e.SendToSessionWithAttachments("", "delivery ready", nil, nil); err == nil {
+		t.Fatal("expected empty session key to be rejected")
+	}
+}
+
 func TestEngineSendToSessionWithAttachments(t *testing.T) {
 	p := &stubMediaPlatform{stubPlatformEngine: stubPlatformEngine{n: "test"}}
 	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)

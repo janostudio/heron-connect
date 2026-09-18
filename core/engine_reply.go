@@ -20,38 +20,25 @@ import (
 	"strings"
 	"time"
 )
+
 func (e *Engine) SendToSession(sessionKey, message string) error {
 	return e.SendToSessionWithAttachments(sessionKey, message, nil, nil)
 }
 
 func (e *Engine) SendToSessionWithAttachments(sessionKey, message string, images []ImageAttachment, files []FileAttachment) error {
+	if strings.TrimSpace(sessionKey) == "" {
+		return fmt.Errorf("session key is required for proactive messaging")
+	}
+
 	e.interactiveMu.Lock()
 
 	var state *interactiveState
-	if sessionKey != "" {
-		state = e.interactiveStates[sessionKey]
-		if state == nil && e.multiWorkspace {
-			// We already hold interactiveMu, so call the *Locked variant
-			// to avoid a self-deadlock on the non-reentrant mutex.
-			if iKey := e.interactiveKeyForSessionKeyLocked(sessionKey); iKey != sessionKey {
-				state = e.interactiveStates[iKey]
-			}
-		}
-	} else if len(e.interactiveStates) == 1 {
-		// Single session: use it when no sessionKey is provided (backward compatible)
-		for _, s := range e.interactiveStates {
-			state = s
-			break
-		}
-	} else if len(e.interactiveStates) > 1 && (len(images) > 0 || len(files) > 0) {
-		// Multiple sessions with attachments but no explicit sessionKey: ambiguous
-		e.interactiveMu.Unlock()
-		return fmt.Errorf("multiple active sessions; must specify --session to send attachments")
-	} else {
-		// Multiple sessions but text-only: pick the first (legacy behavior)
-		for _, s := range e.interactiveStates {
-			state = s
-			break
+	state = e.interactiveStates[sessionKey]
+	if state == nil && e.multiWorkspace {
+		// We already hold interactiveMu, so call the *Locked variant
+		// to avoid a self-deadlock on the non-reentrant mutex.
+		if iKey := e.interactiveKeyForSessionKeyLocked(sessionKey); iKey != sessionKey {
+			state = e.interactiveStates[iKey]
 		}
 	}
 	e.interactiveMu.Unlock()

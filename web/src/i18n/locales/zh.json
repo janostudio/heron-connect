@@ -282,7 +282,8 @@
     "attach": "上传图片/文件",
     "removeAttachment": "移除",
     "fileTooBig": "文件过大（>10MB）",
-    "defaultSession": "Web 会话"
+    "defaultSession": "Web 会话",
+    "jumpToLatest": "回到最新"
   },
   "cmd": {
     "search": "搜索命令...",

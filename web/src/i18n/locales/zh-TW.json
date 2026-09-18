@@ -282,7 +282,8 @@
     "attach": "上傳圖片/檔案",
     "removeAttachment": "移除",
     "fileTooBig": "檔案過大（>10MB）",
-    "defaultSession": "Web 對話"
+    "defaultSession": "Web 對話",
+    "jumpToLatest": "回到最新"
   },
   "cmd": {
     "search": "搜尋命令...",

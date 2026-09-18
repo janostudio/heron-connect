@@ -411,6 +411,9 @@ func TestSendToSessionWithAttachmentsRespectsDisabledAttachmentSend(t *testing.T
 	}
 }
 
+// Proactive sends must name their target session. With several sessions live
+// and no session key, there is no safe way to guess — the engine rejects the
+// send outright rather than silently delivering to an arbitrary session.
 func TestSendToSessionWithAttachmentsRequiresSessionWhenMultipleSessionsHaveAttachments(t *testing.T) {
 	engine, agent, platform := newMediaEngine(t)
 	first := mediaMessage("first")
@@ -430,8 +433,8 @@ func TestSendToSessionWithAttachmentsRequiresSessionWhenMultipleSessionsHaveAtta
 		[]core.ImageAttachment{{MimeType: "image/png", FileName: "ambiguous.png", Data: []byte("img")}},
 		nil,
 	)
-	if err == nil || !strings.Contains(err.Error(), "multiple active sessions") {
-		t.Fatalf("err = %v, want multiple active sessions error", err)
+	if err == nil || !strings.Contains(err.Error(), "session key is required") {
+		t.Fatalf("err = %v, want session key required error", err)
 	}
 	texts, images, files, _ := platform.snapshot()
 	if containsText(texts, "ambiguous") || len(images) != 0 || len(files) != 0 {

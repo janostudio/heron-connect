@@ -282,7 +282,8 @@
     "attach": "Attach image/file",
     "removeAttachment": "Remove",
     "fileTooBig": "File too large (>10MB)",
-    "defaultSession": "Web Session"
+    "defaultSession": "Web Session",
+    "jumpToLatest": "Jump to latest"
   },
   "cmd": {
     "search": "Search commands...",
