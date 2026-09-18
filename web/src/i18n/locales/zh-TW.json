@@ -283,7 +283,10 @@
     "removeAttachment": "移除",
     "fileTooBig": "檔案過大（>10MB）",
     "defaultSession": "Web 對話",
-    "jumpToLatest": "回到最新"
+    "jumpToLatest": "回到最新",
+    "time": {
+      "yesterday": "昨天"
+    }
   },
   "cmd": {
     "search": "搜尋命令...",

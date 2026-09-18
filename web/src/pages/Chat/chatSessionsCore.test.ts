@@ -444,3 +444,175 @@ describe('typing indicator', () => {
     expect(out.typing).toBe(false);
   });
 });
+
+// ── Message timestamps ───────────────────────────────────────
+//
+// Two rules the UI depends on:
+//
+//   1. every message that reaches the transcript carries a timestamp, so a
+//      live turn and a reloaded history look identical;
+//   2. an assistant timestamp is the FIRST VISIBLE RESPONSE time and is frozen
+//      for the rest of the turn — later deltas and the final reply must only
+//      backfill an empty one, never move an existing one.
+//
+// `now` is injected so both rules can be asserted without touching the clock.
+
+const T1 = '2026-09-18T06:00:00.000Z';
+const T2 = '2026-09-18T06:05:00.000Z';
+
+describe('message timestamps', () => {
+  it('stamps a preview_start progress message', () => {
+    const s = applyFrame(emptySlice(), frame({
+      type: 'preview_start', ref_id: 'r1', session_key: KEY_A, session_id: 'sa',
+      reply_ctx: KEY_A, content: '__heron_connect_progress_card_v1__:{"items":[{"type":"tool","name":"Read"}]}',
+    } as any), 'web-preview-1', T1);
+
+    expect(s.messages).toHaveLength(1);
+    expect(s.messages[0].timestamp).toBe(T1);
+  });
+
+  it('stamps the first streamed delta that creates the answer row', () => {
+    const s = applyFrame(emptySlice(), frame({
+      type: 'reply_stream', session_key: KEY_A, session_id: 'sa', reply_ctx: KEY_A,
+      delta: 'Hel', full_text: 'Hel', done: false,
+    } as any), undefined, T1);
+
+    expect(s.messages[0].timestamp).toBe(T1);
+    expect(s.messages[0].streaming).toBe(true);
+  });
+
+  it('does not move the timestamp on subsequent deltas', () => {
+    // First visible response at T1, second delta arrives at T2.
+    let s = applyFrame(emptySlice(), frame({
+      type: 'reply_stream', session_key: KEY_A, session_id: 'sa', reply_ctx: KEY_A,
+      delta: 'Hel', full_text: 'Hel', done: false,
+    } as any), undefined, T1);
+
+    s = applyFrame(s, frame({
+      type: 'reply_stream', session_key: KEY_A, session_id: 'sa', reply_ctx: KEY_A,
+      delta: 'lo', full_text: 'Hello', done: false,
+    } as any), undefined, T2);
+
+    expect(s.messages[0].content).toBe('Hello');
+    expect(s.messages[0].timestamp).toBe(T1); // frozen, not T2
+  });
+
+  it('does not move the timestamp when the stream completes', () => {
+    let s = applyFrame(emptySlice(), frame({
+      type: 'reply_stream', session_key: KEY_A, session_id: 'sa', reply_ctx: KEY_A,
+      delta: 'Hel', full_text: 'Hel', done: false,
+    } as any), undefined, T1);
+
+    s = applyFrame(s, frame({
+      type: 'reply_stream', session_key: KEY_A, session_id: 'sa', reply_ctx: KEY_A,
+      delta: '', full_text: 'Hello', done: true,
+    } as any), undefined, T2);
+
+    expect(s.messages[0].streaming).toBe(false);
+    expect(s.messages[0].timestamp).toBe(T1); // frozen
+  });
+
+  it('backfills a placeholder that never got a timestamp', () => {
+    // A typing-only turn (no visible content) left the row unstamped; the final
+    // reply fills it in rather than leaving the message without a time.
+    const s = sliceWith(assistant('stream-1', '', { streaming: true }));
+    const out = applyFrame(s, frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', content: 'answer', format: 'markdown',
+    } as any), undefined, T1);
+
+    expect(out.messages[0].timestamp).toBe(T1);
+    expect(out.messages[0].streaming).toBe(false);
+  });
+
+  it('preserves an existing timestamp when the reply settles the row', () => {
+    const s = sliceWith(assistant('stream-1', 'partial', { streaming: true, timestamp: T1 }));
+    const out = applyFrame(s, frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', content: 'final', format: 'markdown',
+    } as any), undefined, T2);
+
+    expect(out.messages[0].content).toBe('final');
+    expect(out.messages[0].timestamp).toBe(T1);
+  });
+
+  it('stamps an appended reply when there was no placeholder', () => {
+    const out = applyFrame(emptySlice(), frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', content: 'hi', format: 'markdown',
+    } as any), undefined, T1);
+
+    expect(out.messages[0].timestamp).toBe(T1);
+  });
+
+  it('stamps cards and buttons', () => {
+    const c = applyFrame(emptySlice(), frame({
+      type: 'card', session_key: KEY_A, session_id: 'sa', reply_ctx: KEY_A, card: { elements: [] },
+    } as any), undefined, T1);
+    expect(c.messages[0].timestamp).toBe(T1);
+
+    const b = applyFrame(emptySlice(), frame({
+      type: 'buttons', session_key: KEY_A, session_id: 'sa', reply_ctx: KEY_A,
+      content: 'pick', buttons: [[{ text: 'A', data: 'a' }]],
+    } as any), undefined, T1);
+    expect(b.messages[0].timestamp).toBe(T1);
+  });
+
+  it('stamps a re-attached progress message from update_message', () => {
+    // The preview was lost, so update_message re-creates the row.
+    const out = applyFrame(emptySlice(), frame({
+      type: 'update_message', session_key: KEY_A, preview_handle: 'web-preview-1',
+      content: '__heron_connect_progress_card_v1__:{"items":[{"type":"tool","name":"Read"}]}',
+    } as any), undefined, T1);
+
+    expect(out.messages[0].timestamp).toBe(T1);
+  });
+
+  it('does not move the timestamp of a live progress message on update', () => {
+    let s = applyFrame(emptySlice(), frame({
+      type: 'preview_start', ref_id: 'r1', session_key: KEY_A, session_id: 'sa',
+      reply_ctx: KEY_A, content: '__heron_connect_progress_card_v1__:{"items":[{"type":"tool","name":"Read"}]}',
+    } as any), 'web-preview-1', T1);
+
+    s = applyFrame(s, frame({
+      type: 'update_message', session_key: KEY_A, preview_handle: 'web-preview-1',
+      content: '__heron_connect_progress_card_v1__:{"items":[{"type":"tool","name":"Bash"}]}',
+    } as any), undefined, T2);
+
+    expect(s.messages[0].timestamp).toBe(T1); // frozen
+  });
+
+  it('strips the slash-command reply into the panel without stamping the transcript', () => {
+    // Panel results are not transcript messages; the timestamp feature must not
+    // leak a message into the transcript for them.
+    const s: SessionSlice = { ...emptySlice(), pendingCmd: '/model' };
+    const out = applyFrame(s, frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', content: 'model list', format: 'markdown',
+    } as any), undefined, T1);
+
+    expect(out.messages).toHaveLength(0);
+    expect(out.cmdResult?.content).toBe('model list');
+  });
+
+  it('leaves history timestamps untouched', () => {
+    // History is stamped server-side; the reducer must not overwrite it.
+    const hist = historyToMessages([{ role: 'assistant', content: 'old', timestamp: T1 }]);
+    const s = mergeHistoryIntoSlice(emptySlice(), hist);
+
+    const out = applyFrame(s, frame({
+      type: 'reply_stream', session_key: KEY_A, session_id: 'sa', reply_ctx: KEY_A,
+      delta: 'x', full_text: 'x', done: false,
+    } as any), undefined, T2);
+
+    expect(out.messages[0].timestamp).toBe(T1); // history row unchanged
+    expect(out.messages[1].timestamp).toBe(T2); // new live row
+  });
+
+  it('stamps from the wall clock when no `now` is supplied', () => {
+    const before = Date.now();
+    const out = applyFrame(emptySlice(), frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', content: 'hi', format: 'markdown',
+    } as any));
+
+    const ts = new Date(out.messages[0].timestamp!).getTime();
+    expect(ts).toBeGreaterThanOrEqual(before);
+    expect(ts).toBeLessThanOrEqual(Date.now());
+  });
+});

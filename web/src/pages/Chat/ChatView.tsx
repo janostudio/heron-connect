@@ -23,6 +23,7 @@ import MessageRow from './MessageRow';
 import ChatComposer, { type ChatComposerHandle } from './ChatComposer';
 import { RenderMarkdown } from './markdownBlocks';
 import { useChatSessions, historyToMessages } from './useChatSessions';
+import { nowStamp } from './messageTime';
 import type { ChatMsg, PickItem } from './chatMessage';
 import { SequenceGuard } from '@/lib/sequenceGuard';
 import {
@@ -1200,6 +1201,7 @@ export default function ChatView() {
           id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           role: 'user' as const,
           content: text,
+          timestamp: nowStamp(),
           localMedia: pickedFiles.length > 0 ? pickedFiles : undefined,
         }],
       }));
@@ -1229,6 +1231,7 @@ export default function ChatView() {
           id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           role: 'user' as const,
           content: cmd.cmd,
+          timestamp: nowStamp(),
         }],
       }));
     } else {

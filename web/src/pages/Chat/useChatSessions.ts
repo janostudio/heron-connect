@@ -52,8 +52,8 @@ export function useChatSessions() {
     });
   }, []);
 
-  const apply = useCallback((id: string, frame: BridgeIncoming, previewHandle?: string) => {
-    updateSlice(id, s => applyFrame(s, frame, previewHandle));
+  const apply = useCallback((id: string, frame: BridgeIncoming, previewHandle?: string, now?: string) => {
+    updateSlice(id, s => applyFrame(s, frame, previewHandle, now));
   }, [updateSlice]);
 
   const seedHistory = useCallback((id: string, history: ChatMsg[]) => {

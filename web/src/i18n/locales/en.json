@@ -283,7 +283,10 @@
     "removeAttachment": "Remove",
     "fileTooBig": "File too large (>10MB)",
     "defaultSession": "Web Session",
-    "jumpToLatest": "Jump to latest"
+    "jumpToLatest": "Jump to latest",
+    "time": {
+      "yesterday": "Yesterday"
+    }
   },
   "cmd": {
     "search": "Search commands...",

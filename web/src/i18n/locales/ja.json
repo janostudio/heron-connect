@@ -283,7 +283,10 @@
     "removeAttachment": "削除",
     "fileTooBig": "ファイルが大きすぎます（>10MB）",
     "defaultSession": "Web セッション",
-    "jumpToLatest": "最新へ移動"
+    "jumpToLatest": "最新へ移動",
+    "time": {
+      "yesterday": "昨日"
+    }
   },
   "cmd": {
     "search": "コマンドを検索...",

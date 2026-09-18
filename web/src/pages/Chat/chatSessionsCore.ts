@@ -21,6 +21,7 @@
 import type { ChatMsg } from './chatMessage';
 import type { CommandResult } from './CommandResultPanel';
 import type { BridgeIncoming } from '@/hooks/useBridgeSocket';
+import { nowStamp } from './messageTime';
 
 // Local copy of ProgressCard.parseProgressCard so this module stays free of
 // component imports (react-markdown et al) when unit-tested. Must stay in sync
@@ -124,11 +125,26 @@ export function settledMessages(messages: ChatMsg[]): ChatMsg[] {
  * The copy matters: settledMessages may hand back the input array unchanged
  * (when nothing was streaming), and mutating that in place would corrupt the
  * previous state object.
+ *
+ * `patch` is applied verbatim, so callers that only want to FILL IN a missing
+ * timestamp must do so themselves (see the `stamp` usage below).
  */
 function settleAndReplace(messages: ChatMsg[], idx: number, patch: Partial<ChatMsg>): ChatMsg[] {
   const next = [...settledMessages(messages)];
   next[idx] = { ...next[idx], ...patch, streaming: false };
   return next;
+}
+
+/**
+ * The timestamp to write for a message we just created or just filled in.
+ *
+ * Assistant messages carry the time of the FIRST VISIBLE RESPONSE (first
+ * streamed text / first progress card) and that value is frozen for the rest
+ * of the turn — a later delta or the final `reply` must not move it. So this
+ * only ever BACKFILLS: an existing stamp always wins.
+ */
+function stampFor(existing: string | undefined, stamp: string): string {
+  return existing || stamp;
 }
 
 /**
@@ -138,8 +154,14 @@ function settleAndReplace(messages: ChatMsg[], idx: number, patch: Partial<ChatM
  * `previewHandle` lets the caller supply the preview handle it already acked
  * to the backend for a `preview_start` frame, so the message id and the ack
  * always agree.
+ *
+ * `now` stamps the messages this frame creates. It defaults to the wall clock
+ * and is injectable so the timestamp rules (first-visible-response wins, never
+ * overwritten) can be asserted deterministically in tests.
  */
-export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHandle?: string): SessionSlice {
+export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHandle?: string, now?: string): SessionSlice {
+  const stamp = now || nowStamp();
+
   // A pending slash command claims the next reply/card and routes it to the
   // command result panel instead of the transcript.
   if (slice.pendingCmd && (msg.type === 'reply' || msg.type === 'card' || msg.type === 'buttons')) {
@@ -161,7 +183,12 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
       const format = (reply as any).format === 'markdown' ? 'markdown' : 'text';
       const idx = slice.messages.findIndex(m => m.streaming && m.role === 'assistant' && !m.previewHandle);
       if (idx >= 0) {
-        return { ...slice, messages: settleAndReplace(slice.messages, idx, { content: reply.content, format }), typing: false };
+        const prev = slice.messages[idx];
+        return { ...slice, messages: settleAndReplace(slice.messages, idx, {
+          content: reply.content,
+          format,
+          timestamp: stampFor(prev.timestamp, stamp),
+        }), typing: false };
       }
       // No matching placeholder (e.g. the turn started while this conversation
       // was not being viewed — `typing_start` was the only thing we saw). As
@@ -173,6 +200,7 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
           role: 'assistant',
           content: reply.content,
           format,
+          timestamp: stamp,
           streaming: false,
         }],
         typing: false,
@@ -184,7 +212,11 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
       if (stream.done) {
         const idx = slice.messages.findIndex(m => m.streaming && m.role === 'assistant' && !m.previewHandle);
         if (idx >= 0) {
-          return { ...slice, messages: settleAndReplace(slice.messages, idx, { content: stream.full_text }), typing: false };
+          const prev = slice.messages[idx];
+          return { ...slice, messages: settleAndReplace(slice.messages, idx, {
+            content: stream.full_text,
+            timestamp: stampFor(prev.timestamp, stamp),
+          }), typing: false };
         }
         return {
           ...slice,
@@ -193,6 +225,7 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
             role: 'assistant',
             content: stream.full_text,
             format: 'markdown',
+            timestamp: stamp,
             streaming: false,
           }],
           typing: false,
@@ -204,8 +237,14 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
       // record the user is watching).
       const answerIdx = slice.messages.findIndex(m => m.streaming && m.role === 'assistant' && !m.previewHandle);
       if (answerIdx >= 0) {
+        const prev = slice.messages[answerIdx];
         const messages = [...slice.messages];
-        messages[answerIdx] = { ...messages[answerIdx], content: stream.full_text };
+        messages[answerIdx] = {
+          ...prev,
+          content: stream.full_text,
+          // First visible response time: set once, never moved by later deltas.
+          timestamp: stampFor(prev.timestamp, stamp),
+        };
         return { ...slice, messages };
       }
       // No answer placeholder yet (e.g. the first delta of a turn for a
@@ -218,6 +257,7 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
           role: 'assistant',
           content: stream.full_text,
           format: 'markdown',
+          timestamp: stamp,
           streaming: true,
         }],
       };
@@ -233,6 +273,7 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
           content: '',
           format: 'card',
           card: card.card,
+          timestamp: stamp,
         }],
         typing: false,
       };
@@ -248,6 +289,7 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
           content: btns.content,
           format: 'buttons',
           buttons: btns.buttons,
+          timestamp: stamp,
         }],
         typing: false,
       };
@@ -273,6 +315,7 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
           role: 'assistant',
           content: ps.content,
           format: 'markdown',
+          timestamp: stamp,
           streaming: true,
           previewHandle: handle,
           progressCard: parseProgressCard(ps.content),
@@ -310,6 +353,7 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
             role: 'assistant',
             content: um.content,
             format: 'markdown',
+            timestamp: stamp,
             streaming: true,
             previewHandle: um.preview_handle,
             progressCard: parseProgressCard(um.content),

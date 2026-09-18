@@ -283,7 +283,10 @@
     "removeAttachment": "Quitar",
     "fileTooBig": "Archivo demasiado grande (>10MB)",
     "defaultSession": "Sesión Web",
-    "jumpToLatest": "Ir al final"
+    "jumpToLatest": "Ir al final",
+    "time": {
+      "yesterday": "Ayer"
+    }
   },
   "cmd": {
     "search": "Buscar comandos...",
