@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   sessionsSignature, fileIsPreviewable, isMarkdown, isHtmlFile,
   isChatCommand, classifyInput, CHAT_COMMANDS, parseListItemText,
+  attachmentAccept, TEXT_EXTS,
 } from './chatHelpers';
 import type { Session } from '@/api/sessions';
 
@@ -123,6 +124,15 @@ describe('fileIsPreviewable', () => {
     expect(fileIsPreviewable('', '')).toBe(false);
     expect(fileIsPreviewable('', 'text/plain')).toBe(true);
   });
+
+  it('previews every extension the picker offers as text', () => {
+    // The other direction of the attachmentAccept consistency check: a format
+    // the user can attach must also be previewable once the agent writes it
+    // back out.
+    for (const ext of TEXT_EXTS) {
+      expect(fileIsPreviewable(`sample.${ext}`, '')).toBe(true);
+    }
+  });
 });
 
 // ── isMarkdown / isHtmlFile ──────────────────────────────────
@@ -210,6 +220,58 @@ describe('classifyInput', () => {
   it('exposes the chat-command set consistently', () => {
     expect(CHAT_COMMANDS.has('/new')).toBe(true);
     expect(CHAT_COMMANDS.has('/status')).toBe(false);
+  });
+});
+
+// ── attachmentAccept ─────────────────────────────────────────
+//
+// The picker's accept list is derived from TEXT_EXTS. The bug this guards
+// against is drift: `.html` was previewable but un-attachable because the two
+// lists were maintained by hand. If a future format is added to TEXT_EXTS and
+// the picker does not offer it, these fail.
+
+describe('attachmentAccept', () => {
+  const accepted = () => attachmentAccept().split(',');
+
+  it('offers every previewable text extension', () => {
+    const list = accepted();
+    for (const ext of TEXT_EXTS) {
+      expect(list).toContain(`.${ext}`);
+    }
+  });
+
+  it('includes html and htm', () => {
+    // The reported gap, and its Windows/legacy-systems twin.
+    expect(accepted()).toContain('.html');
+    expect(accepted()).toContain('.htm');
+  });
+
+  it('keeps the existing document and archive entries', () => {
+    const list = accepted();
+    for (const ext of ['image/*', '.pdf', '.docx', '.xlsx', '.pptx', '.zip', '.tar', '.gz']) {
+      expect(list).toContain(ext);
+    }
+  });
+
+  it('keeps the two-part tar.gz entry intact', () => {
+    // If this is ever built by appending `.gz`, the browser sees only the
+    // final extension and `.tar.gz` stops matching.
+    expect(accepted()).toContain('.tar.gz');
+  });
+
+  it('emits no duplicate or malformed entries', () => {
+    const list = accepted();
+    expect(new Set(list).size).toBe(list.length);
+    // Each entry is `*`, `type/*`, or a dotted extension such as `.tar.gz`.
+    for (const e of list) {
+      expect(e).toMatch(/^(\*|[a-z0-9]+\/\*|\.[a-z0-9]+(\.[a-z0-9]+)*)$/);
+    }
+  });
+
+  it('produces every extension lowercased (browser matching is case-insensitive but the value should be canonical)', () => {
+    for (const e of accepted()) {
+      expect(e).toBe(e.toLowerCase());
+    }
   });
 });
 

@@ -4,6 +4,7 @@ import { FileText, Paperclip, Send, Slash, Square, WifiOff, Loader2, X } from 'l
 import { cn } from '@/lib/utils';
 import CommandPalette, { type SlashCommand } from './CommandPalette';
 import type { PickItem } from './chatMessage';
+import { attachmentAccept } from './chatHelpers';
 
 // The chat composer owns the in-progress text.
 //
@@ -47,7 +48,10 @@ interface Props {
   onCmdSelect: (cmd: SlashCommand) => void;
 }
 
-const ACCEPT = 'image/*,.pdf,.txt,.md,.markdown,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.json,.yaml,.yml,.zip,.tar,.gz,.py,.js,.ts,.go,.java,.c,.h,.cpp,.sh,.sql,.log';
+// Built from chatHelpers.TEXT_EXTS rather than hand-listed: the picker offered
+// fewer formats than the previewer supported, so `.html` (and the rest of the
+// text family) could be rendered but never attached. See attachmentAccept.
+const ACCEPT = attachmentAccept();
 
 const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer({
   onSend, pickedFiles, onRemoveFile, onAddFiles,

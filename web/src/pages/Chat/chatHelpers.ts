@@ -20,11 +20,16 @@ export function sessionsSignature(list: Session[]): string {
     .join('\n');
 }
 
-const TEXT_EXTS = new Set([
+// Extensions the web UI treats as text: previewable inline (see
+// fileIsPreviewable) and offered in the composer's file picker (see
+// attachmentAccept). One list, two consumers — a format that can be previewed
+// but not attached (or vice versa) is always a bug, so they cannot drift.
+export const TEXT_EXTS: readonly string[] = [
   'md', 'markdown', 'txt', 'log', 'json', 'yaml', 'yml', 'xml', 'svg', 'csv',
+  'html', 'htm',
   'ts', 'tsx', 'js', 'jsx', 'go', 'py', 'rs', 'c', 'h', 'cpp', 'hpp', 'java',
   'rb', 'php', 'sh', 'sql', 'toml', 'ini', 'conf', 'cfg', 'env', 'gitignore',
-]);
+];
 
 /**
  * Whether a file can be shown inline in the web UI rather than only offered
@@ -41,7 +46,34 @@ export function fileIsPreviewable(fileName: string, contentType: string): boolea
   if (ct.startsWith('text/') || ct.includes('json') || ct.includes('xml') || ct.includes('svg') || ct.includes('yaml') || ct.includes('javascript') || ct.includes('typescript')) {
     return true;
   }
-  return TEXT_EXTS.has(ext);
+  return TEXT_EXTS.includes(ext);
+}
+
+// Document types the composer's picker offers that are NOT text — they round
+// out ACCEPT below. Kept separate from TEXT_EXTS because they are neither
+// previewable inline nor language-specific source.
+const DOC_EXTS: readonly string[] = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'];
+
+// Archive formats. `.tar.gz` needs the explicit two-part entry: the browser
+// matches on the final extension, and the picker's own accept filter parses
+// this value too — which is why it is built from `['tar.gz', ...]` rather than
+// appended inline.
+const ARCHIVE_EXTS: readonly string[] = ['zip', 'tar', 'gz'];
+
+/**
+ * The `accept` attribute for the composer's file picker. Derived from
+ * TEXT_EXTS so every previewable text format is attachable — the two lists
+ * used to be maintained by hand and had drifted (`.html` could be previewed
+ * but not picked, which is what prompted this).
+ */
+export function attachmentAccept(): string {
+  return [
+    'image/*',
+    ...DOC_EXTS.map(e => `.${e}`),
+    ...TEXT_EXTS.map(e => `.${e}`),
+    ...ARCHIVE_EXTS.map(e => `.${e}`),
+    '.tar.gz',
+  ].join(',');
 }
 
 /**
