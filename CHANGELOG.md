@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.1.51 (2026-09-20)
+
+### Fixed
+
+- **修复 Web 端权限卡片按钮「有形状、没文字」——无法区分允许与拒绝**：v1.1.50 让 `ExitPlanMode` 等授权请求能在 Web 端弹出确认卡片后，卡片上的三个按钮渲染成了三个**无文字的纯色胶囊**，用户看不出哪个是「允许」、哪个是「拒绝」，也就无法完成授权。
+  - **根因（跨语言字段大小写契约破裂）**：`core.ButtonOption` 结构体没有 JSON tag，而 bridge 是通过 `json.Marshal` **直接序列化该结构体**下发给 Web 的（`bridge.go` 的 `SendWithButtons`）。Go 于是按字段名原样输出 **`{"Text":"允许","Data":"perm:allow"}`**（首字母大写），而前端读取的是 `btn.text` / `btn.data`（小写）——取到的全是 `undefined`，`{btn.text}` 渲染为空字符串，按钮只剩背景色。修复：为 `ButtonOption` 补上 `json:"text"` / `json:"data"`。
+  - **为什么只有这条路径出问题**：卡片按钮走的是 `serializeCard()` **手工构造 map**（显式写 `"text"`/`"btn_type"`），因而一直正常；只有 `InlineButtonSender`（网页版审批按钮、Telegram 内联键盘）这条直接序列化的路径中招。这也解释了为何同类卡片有的地方正常、有的地方是空白按钮。
+  - **新增 Go 回归测试**：`bridge/bridge_buttons_wire_test.go` 断言线上载荷必须是**小写** `text`/`data`，并显式检查**不得**出现大写的 `Text`/`Data`。已验证该测试在回退 tag 后会失败（即真的能拦住这个回归），而不是一个恒真的断言。
+  - **Web 端新增布局支持**：`layout`（`core.CardActionLayout`）此前被前端完全忽略，`equal_columns` 在 `web/src/` 里零出现。现 `equal_columns` 让同一行的按钮等宽平分（允许/拒绝并列时不会一宽一窄），`row`/未知值维持原有的自然宽度换行行为——与后端下发的语义对齐。
+  - **修复 `node="[object Object]"` 泄漏到 DOM**：`react-markdown` 会给自定义组件注入 `node` 属性，而 `PreBlock`/`InlineCode` 用 `{...props}` 全量展开到了 `<pre>`/`<code>` 上，导致把内部对象字符串化后写进 DOM。现于解构时显式剔除。
+  - **Web 端新增 5 个回归测试**：覆盖按钮文字必须渲染、不得出现空按钮、不同 `btn_type` 必须区分样式、`equal_columns` 需等宽、`row` 保持自然宽度。
+
 ## v1.1.50 (2026-09-20)
 
 ### Fixed

@@ -57,10 +57,36 @@ function buildReleaseAssets() {
   });
 }
 
+// The archives embed web/dist (web/embed.go), which is gitignored — so a stale
+// bundle in the working tree is invisible to git and would ship silently. The
+// normal path never takes the shortcut across versions (archives are named by
+// version), but re-running a publish for the SAME version does, and there the
+// bundle could be newer than the archives. Refuse rather than ship stale UI.
+function assertBundleNotNewerThanArchives() {
+  const bundle = path.join(ROOT_DIR, "web", "dist", "index.html");
+  if (!fs.existsSync(bundle)) {
+    console.log("[release-assets] web/dist missing — frontend will be rebuilt");
+    return;
+  }
+  const archive = path.join(DIST_DIR, expectedArchives()[0]);
+  if (!fs.existsSync(archive)) return;
+
+  const bundleTime = fs.statSync(bundle).mtimeMs;
+  const archiveTime = fs.statSync(archive).mtimeMs;
+  if (bundleTime > archiveTime) {
+    throw new Error(
+      `web/dist (${new Date(bundleTime).toISOString()}) is newer than the release archives ` +
+        `(${new Date(archiveTime).toISOString()}). The archives embed the OLD frontend. ` +
+        `Remove dist/ and re-run so the bundle is rebuilt into the binaries, e.g.: rm -rf dist && make publish`
+    );
+  }
+}
+
 function ensureLocalAssets() {
   const missing = missingFiles(DIST_DIR, expectedDistFiles());
   if (missing.length === 0) {
     console.log(`[release-assets] Local release assets already exist in ${DIST_DIR}`);
+    if (process.argv[3] !== "--skip-bundle-check") assertBundleNotNewerThanArchives();
     return;
   }
 

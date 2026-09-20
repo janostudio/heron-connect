@@ -271,9 +271,15 @@ type ProgressAssembler interface {
 }
 
 // ButtonOption represents a clickable inline button.
+//
+// The JSON tags matter: the bridge forwards these structs to the Web client by
+// marshalling them directly (bridge.go SendWithButtons), so without explicit
+// lowercase tags Go emits the field names verbatim ("Text"/"Data") while the
+// client reads "text"/"data" — every button then renders with no label, which
+// is exactly how the permission prompt lost its 允许/拒绝 buttons.
 type ButtonOption struct {
-	Text string // display text on the button
-	Data string // callback data returned when clicked (≤64 bytes for Telegram)
+	Text string `json:"text"` // display text on the button
+	Data string `json:"data"` // callback data returned when clicked (≤64 bytes for Telegram)
 }
 
 // InlineButtonSender is an optional interface for platforms that support

@@ -126,7 +126,11 @@ clean:
 # pre-test:    Prerequisites (build + vet) before running tests.
 # ---------------------------------------------------------------------------
 
-pre-test:
+# `web` first: go build here (and in release-all) embeds web/dist, so the
+# frontend must be current before anything compiles. Keeping it in pre-test
+# means `make publish` refreshes the bundle even when release-assets.js takes
+# its "archives already exist" shortcut and never reaches release-all.
+pre-test: web
 	go build ./...
 	go vet ./...
 
@@ -175,7 +179,13 @@ test:
 lint:
 	golangci-lint run ./...
 
-release-all: clean
+# `web` is a hard prerequisite, not a nicety: the binary embeds web/dist
+# (web/embed.go, `//go:embed all:dist`) and dist/ is gitignored. Building
+# release archives without rebuilding the frontend therefore ships whatever
+# stale bundle happens to be sitting in the working tree — frontend fixes
+# silently never reach users. clean removes dist/ but not web/dist, so the
+# ordering here is what keeps the two in sync.
+release-all: clean web
 	@mkdir -p $(DIST)
 	@$(foreach platform,$(PLATFORMS), \
 		$(eval GOOS   := $(word 1,$(subst /, ,$(platform)))) \

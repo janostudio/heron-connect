@@ -44,7 +44,12 @@ function CopyButtonInner({ code }: { code: string }) {
 }
 export const CopyButton = memo(CopyButtonInner);
 
-function PreBlockInner({ children, ...props }: React.HTMLAttributes<HTMLPreElement>) {
+// react-markdown (via hast-util-to-jsx-runtime) hands every custom component a
+// `node` prop holding the hast node. Spreading the rest props straight onto a
+// DOM element therefore leaks `node="[object Object]"` into the markup. React
+// tolerates the unknown attribute but warns, and the stringified object is
+// pure noise in the DOM. Destructuring it out here keeps the spread clean.
+function PreBlockInner({ children, node: _node, ...props }: React.HTMLAttributes<HTMLPreElement> & { node?: unknown }) {
   const codeEl = (children as any)?.props;
   const lang = codeEl?.className?.replace(/^language-/, '') || '';
   const code = typeof codeEl?.children === 'string' ? codeEl.children.replace(/\n$/, '') : '';
@@ -64,7 +69,7 @@ function PreBlockInner({ children, ...props }: React.HTMLAttributes<HTMLPreEleme
 }
 const PreBlock = memo(PreBlockInner);
 
-function InlineCodeInner({ children, className, ...props }: React.HTMLAttributes<HTMLElement>) {
+function InlineCodeInner({ children, className, node: _node, ...props }: React.HTMLAttributes<HTMLElement> & { node?: unknown }) {
   if (className) return <code className={className} {...props}>{children}</code>;
   // The bubble is `bg-white` / `dark:bg-gray-800/80`; pick inline-code tones
   // that read against both: light = subtle slate, dark = distinctly darker
@@ -187,11 +192,19 @@ function CardElementInner({ el, onAction }: { el: any; onAction: (v: string) => 
   if (el.type === 'divider') return <div className="border-t border-gray-200/60 dark:border-gray-700/40" />;
   if (el.type === 'note') return <p className="text-[11px] text-gray-400 dark:text-gray-500">{el.text}</p>;
   if (el.type === 'actions') {
+    // `layout` mirrors core.CardActionLayout: "equal_columns" means the row's
+    // buttons should split the available width evenly (used for the
+    // allow/deny pair so neither looks more inviting than the other),
+    // "row" leaves them at their natural size. Unknown/absent values fall
+    // back to the wrapping row, which is what every card did before layout
+    // was honoured at all.
+    const equalColumns = el.layout === 'equal_columns';
     return (
-      <div className="flex flex-wrap gap-2">
+      <div className={cn('gap-2', equalColumns ? 'flex' : 'flex flex-wrap')}>
         {el.buttons?.map((btn: any, j: number) => (
           <button key={j} onClick={() => onAction(btn.value)} className={cn(
             'px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150',
+            equalColumns && 'flex-1 min-w-0 truncate',
             btn.btn_type === 'primary' ? 'bg-accent text-black hover:bg-accent-dim shadow-sm' :
             btn.btn_type === 'danger' ? 'bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20' :
             'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700',
