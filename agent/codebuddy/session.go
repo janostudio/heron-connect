@@ -21,18 +21,17 @@ import (
 
 // codebuddySession manages a multi-turn CodeBuddy Code conversation.
 //
-// Two modes, selected by the project's `interruptible` option:
+// CodeBuddy always runs in resident mode: the process is started once with
+// `--input-format stream-json` and stays alive across turns, reading prompts
+// from stdin as stream-json lines. This is not optional — the CLI emits
+// control_request/can_use_tool frames and blocks on stdin until a matching
+// control_response arrives, so a per-turn spawn (whose process has no stdin
+// channel to reply on) deadlocks the moment the agent asks for permission.
+// Resident mode also gives us CancelTurn: control_request/interrupt aborts the
+// running turn, and a new prompt can be injected immediately.
 //
-//   - Default (interruptible=false): per-turn spawn. Each Send() runs
-//     `codebuddy -p --output-format stream-json ... -- <prompt>` and the process
-//     exits when the turn ends. Subsequent turns use `--resume <sessionID>`.
-//     This is the historical behaviour, kept byte-for-byte.
-//
-//   - interruptible=true: one resident process started with
-//     `--input-format stream-json`, which makes the CLI read prompts from stdin
-//     as stream-json lines and stay alive across turns. That opens a control
-//     channel: CancelTurn can send control_request/interrupt to abort the
-//     running turn, and a new prompt can be injected immediately.
+// The interruptible field is retained as the mode switch but is always set by
+// Agent.New; the per-turn branches remain only as defensive fallbacks.
 type codebuddySession struct {
 	workDir   string
 	model     string
@@ -344,6 +343,12 @@ func (cs *codebuddySession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderr
 				sawInit = true // only the very first init of the process counts
 			}
 
+		case "control_request":
+			cs.handleControlRequest(&raw)
+
+		case "control_cancel_request":
+			slog.Debug("codebuddySession: permission cancelled", "request_id", raw.RequestID)
+
 		case "file-history-snapshot":
 			// internal housekeeping — skip
 
@@ -443,6 +448,22 @@ type streamEvent struct {
 	Result    string         `json:"result"`
 	IsError   bool           `json:"is_error"`
 	Message   *streamMessage `json:"message"`
+
+	// RequestID and Request carry control_request frames. The CLI blocks on
+	// stdin until a matching control_response arrives, so these must be
+	// surfaced to the engine as a permission prompt rather than ignored —
+	// see handleControlRequest.
+	RequestID string              `json:"request_id"`
+	Request   *controlRequestBody `json:"request"`
+}
+
+// controlRequestBody is the "request" object of a control_request frame.
+// Only the can_use_tool subtype is defined today; the rest are ignored.
+type controlRequestBody struct {
+	Subtype   string         `json:"subtype"`
+	ToolName  string         `json:"tool_name"`
+	ToolUseID string         `json:"tool_use_id"`
+	Input     map[string]any `json:"input"`
 }
 
 type streamMessage struct {
@@ -583,8 +604,105 @@ func (cs *codebuddySession) handleResult(ev *streamEvent, pendingText string) bo
 	return true
 }
 
-func (cs *codebuddySession) RespondPermission(_ string, _ core.PermissionResult) error {
-	return nil
+// handleControlRequest turns a CLI control_request into an
+// EventPermissionRequest for the engine.
+//
+// This is load-bearing, not cosmetic: the CLI emits control_request and then
+// blocks on stdin until a matching control_response arrives. Ignoring the
+// frame — as the adapter did before it handled this event type — leaves the
+// CLI waiting forever, so no result event is ever produced and the turn hangs
+// indefinitely (ExitPlanMode blocks the whole turn; in --permission-mode plan
+// every tool call does). See RespondPermission for the reply path.
+func (cs *codebuddySession) handleControlRequest(ev *streamEvent) {
+	if ev.RequestID == "" || ev.Request == nil {
+		slog.Debug("codebuddySession: malformed control_request, ignoring")
+		return
+	}
+	if ev.Request.Subtype != "can_use_tool" {
+		// Unknown subtype: the CLI would still block on a response we don't
+		// know how to build. Reply with a denial so the turn can make
+		// progress instead of deadlocking.
+		slog.Warn("codebuddySession: unknown control_request subtype", "subtype", ev.Request.Subtype, "request_id", ev.RequestID)
+		_ = cs.RespondPermission(ev.RequestID, core.PermissionResult{
+			Behavior: "deny",
+			Message:  "unsupported control request subtype: " + ev.Request.Subtype,
+		})
+		return
+	}
+
+	if !cs.interruptible {
+		// No stdin channel exists to carry the control_response, so the CLI
+		// can never be unblocked. Surface it loudly: silently dropping this
+		// is exactly the infinite hang this handler exists to prevent.
+		// The Agent forces resident mode, so this should be unreachable.
+		slog.Error("codebuddySession: control_request in non-resident mode cannot be answered", "request_id", ev.RequestID, "tool", ev.Request.ToolName)
+		cs.emit(core.Event{
+			Type:  core.EventError,
+			Error: fmt.Errorf("codebuddy: permission request for %q requires resident (interruptible) mode", ev.Request.ToolName),
+		})
+		return
+	}
+
+	slog.Info("codebuddySession: permission request", "request_id", ev.RequestID, "tool", ev.Request.ToolName)
+	cs.emit(core.Event{
+		Type:         core.EventPermissionRequest,
+		RequestID:    ev.RequestID,
+		ToolName:     ev.Request.ToolName,
+		ToolInput:    extractToolPreview(mustJSON(ev.Request.Input)),
+		ToolInputRaw: ev.Request.Input,
+	})
+}
+
+// mustJSON marshals a tool-input map for preview extraction, yielding an empty
+// raw message when marshalling fails so extractToolPreview falls back cleanly.
+func mustJSON(v map[string]any) json.RawMessage {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return data
+}
+
+// RespondPermission writes the control_response the CLI is blocked on. Only
+// meaningful in resident mode: the reply has to travel back over the resident
+// process's stdin, which the per-turn path does not have.
+func (cs *codebuddySession) RespondPermission(requestID string, result core.PermissionResult) error {
+	if !cs.interruptible {
+		return fmt.Errorf("codebuddySession: RespondPermission requires resident (interruptible) mode")
+	}
+
+	var permResponse map[string]any
+	if result.Behavior == "allow" {
+		updatedInput := result.UpdatedInput
+		if updatedInput == nil {
+			updatedInput = map[string]any{}
+		}
+		permResponse = map[string]any{
+			"behavior":     "allow",
+			"updatedInput": updatedInput,
+		}
+	} else {
+		msg := result.Message
+		if msg == "" {
+			msg = "The user denied this tool use. Stop and wait for the user's instructions."
+		}
+		permResponse = map[string]any{
+			"behavior": "deny",
+			"message":  msg,
+		}
+	}
+
+	controlResponse := map[string]any{
+		"type": "control_response",
+		"response": map[string]any{
+			"subtype":    "success",
+			"request_id": requestID,
+			"response":   permResponse,
+		},
+	}
+
+	slog.Debug("codebuddySession: permission response", "request_id", requestID, "behavior", result.Behavior)
+	return cs.writeJSON(controlResponse)
 }
 
 func (cs *codebuddySession) Events() <-chan core.Event {

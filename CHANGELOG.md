@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.50 (2026-09-20)
+
+### Fixed
+
+- **修复 `codebuddy` agent 执行 `ExitPlanMode` 时整轮永久卡死**：现象是 agent 一进入计划模式（或调用 `ExitPlanMode`）就再无任何响应，日志里只有一条不断增长的 `slow agent send`（实测出现过 `26m57s`、`17m40s`），既无报错也无超时，且**没有任何可定位的日志线索**——这正是它难查的原因。
+  - **根因**：CodeBuddy CLI 在需要授权时会向 stdout 发一帧 `control_request`/`can_use_tool`，然后**阻塞在 stdin 上等待 `control_response`**。而适配器的 `readLoop` 只处理 `system`/`assistant`/`user`/`result`/`file-history-snapshot`，`control_request` 落进 `default` 分支被丢弃（连日志都只是 Debug 级），于是 CLI 永远等不到回应 → 不产 `result` → heron 的轮次永不收尾。计划模式下的**每一次工具调用**都会走这条路径，而 `ExitPlanMode` 是整轮的唯一出口，被挂住即整轮死锁。
+  - **修复**：`readLoop` 新增 `control_request` 分支，把 `can_use_tool` 转为 `EventPermissionRequest` 交给 engine，走与 `claudecode` 完全一致的既有审批 UI（`allow`/`deny` 由用户决定，与先前行为对齐）；`RespondPermission` 由原先的空实现改为真正把 `control_response` 写回 resident 进程 stdin（`allow` 回填 `updatedInput` 以保留原始工具入参，`deny` 附带反馈消息）。未知 subtype 一律回以拒绝，确保**任何** `control_request` 都得到应答——不回就是死锁。
+  - **`codebuddy` 改为始终以 resident（常驻进程）模式运行**：`control_response` 只能经由常驻进程的 stdin 回传，此前的逐轮 spawn 模型根本没有这条通道，因此该模式下遇到授权请求**结构上无法修复**。`interruptible` 配置项不再读取，强制开启。副作用是会话改为单进程跨轮复用，与 `claudecode` 行为一致。
+  - **新增 7 个单测**锁定该契约：授权帧转事件、`allow`/`deny` 帧结构（含 `updatedInput` 回填）、未知 subtype 必回拒绝、非 resident 模式必须报错而非静默、以及"始终 resident"这一不变量本身。
+
 ## v1.1.49 (2026-09-20)
 
 ### Added

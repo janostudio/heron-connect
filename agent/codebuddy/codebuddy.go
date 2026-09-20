@@ -40,9 +40,10 @@ type Agent struct {
 	args       []string
 	configEnv  []string
 	sessionEnv []string
-	// interruptible switches the session to a resident process driven over
-	// stream-json stdin, enabling mid-turn interruption. Absent/false keeps
-	// the historical per-turn spawn behaviour exactly.
+	// interruptible is always true: the session runs as a resident process
+	// driven over stream-json stdin. CodeBuddy requires this because the CLI
+	// blocks on control_request frames that can only be answered over the
+	// resident stdin — see New.
 	interruptible bool
 
 	// discoveredModel caches the account's real active model as reported by
@@ -64,8 +65,12 @@ func New(opts map[string]any) (core.Agent, error) {
 	mode = normalizeMode(mode)
 	args := parseStringSlice(opts["args"])
 	configEnv := parseEnv(opts["env"])
-	interruptible, _ := opts["interruptible"].(bool)
-
+	// CodeBuddy always runs resident: the CLI emits control_request frames
+	// (can_use_tool) and then blocks on stdin until a control_response comes
+	// back, and only a resident process has the stdin channel to answer on. In
+	// the per-turn spawn model there is no way to reply, so any permission
+	// prompt — ExitPlanMode, or every tool call under --permission-mode plan —
+	// deadlocks the turn forever. See the interruptible field below.
 	if _, err := exec.LookPath("codebuddy"); err != nil {
 		return nil, fmt.Errorf("codebuddy: 'codebuddy' not found in PATH, install with: npm install -g @tencent-ai/codebuddy-code")
 	}
@@ -76,7 +81,7 @@ func New(opts map[string]any) (core.Agent, error) {
 		mode:          mode,
 		args:          args,
 		configEnv:     configEnv,
-		interruptible: interruptible,
+		interruptible: true,
 	}, nil
 }
 

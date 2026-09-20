@@ -1082,6 +1082,206 @@ func TestEmit_UnstampedByDefault(t *testing.T) {
 	}
 }
 
+// ── control_request (can_use_tool) tests ────────────────────
+//
+// The CLI emits control_request and blocks on stdin until a control_response
+// arrives. Dropping the frame leaves the CLI waiting forever, so the turn
+// never produces a result — the ExitPlanMode hang. These tests pin both halves
+// of the fix: the frame becomes an EventPermissionRequest, and the reply
+// reaches stdin.
+
+// TestHandleControlRequest_EmitsPermissionRequest verifies a can_use_tool
+// frame is surfaced to the engine carrying everything the reply needs.
+func TestHandleControlRequest_EmitsPermissionRequest(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+	cs.interruptible = true
+
+	cs.handleControlRequest(&streamEvent{
+		Type:      "control_request",
+		RequestID: "perm_1789891817931_2",
+		Request: &controlRequestBody{
+			Subtype:   "can_use_tool",
+			ToolName:  "ExitPlanMode",
+			ToolUseID: "call_abc",
+			Input:     map[string]any{"plan": "do the thing"},
+		},
+	})
+
+	select {
+	case ev := <-cs.events:
+		if ev.Type != core.EventPermissionRequest {
+			t.Fatalf("event type = %v, want EventPermissionRequest", ev.Type)
+		}
+		if ev.RequestID != "perm_1789891817931_2" {
+			t.Errorf("request_id = %q, want perm_1789891817931_2", ev.RequestID)
+		}
+		if ev.ToolName != "ExitPlanMode" {
+			t.Errorf("tool name = %q, want ExitPlanMode", ev.ToolName)
+		}
+		// ToolInputRaw must survive so an "allow" reply can echo updatedInput.
+		if got, _ := ev.ToolInputRaw["plan"].(string); got != "do the thing" {
+			t.Errorf("ToolInputRaw[plan] = %q, want %q", got, "do the thing")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("control_request did not produce a permission event")
+	}
+}
+
+// TestHandleControlRequest_NonResidentEmitsError verifies that without a stdin
+// channel the adapter fails loudly instead of leaving the CLI blocked in
+// silence — the failure mode that made this bug so hard to see.
+func TestHandleControlRequest_NonResidentEmitsError(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+	cs.interruptible = false
+
+	cs.handleControlRequest(&streamEvent{
+		Type:      "control_request",
+		RequestID: "perm_1",
+		Request: &controlRequestBody{Subtype: "can_use_tool", ToolName: "Bash"},
+	})
+
+	select {
+	case ev := <-cs.events:
+		if ev.Type != core.EventError {
+			t.Fatalf("event type = %v, want EventError", ev.Type)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("non-resident control_request must emit an error, not vanish")
+	}
+}
+
+// TestHandleControlRequest_UnknownSubtypeReplies verifies an unrecognised
+// subtype is answered (with a denial) rather than ignored: any control_request
+// the CLI is blocked on must get a response or the turn hangs.
+func TestHandleControlRequest_UnknownSubtypeReplies(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+	cs.interruptible = true
+	stdin := &captureStdin{}
+	cs.stdin = stdin
+
+	cs.handleControlRequest(&streamEvent{
+		Type:      "control_request",
+		RequestID: "perm_9",
+		Request:   &controlRequestBody{Subtype: "something_else"},
+	})
+
+	frames := stdin.frames(t)
+	if len(frames) != 1 {
+		t.Fatalf("expected 1 reply frame, got %d: %v", len(frames), frames)
+	}
+	resp, _ := frames[0]["response"].(map[string]any)
+	inner, _ := resp["response"].(map[string]any)
+	if got := inner["behavior"]; got != "deny" {
+		t.Errorf("behavior = %v, want deny", got)
+	}
+}
+
+// TestRespondPermission_AllowFrame verifies the allow reply carries the
+// original tool input as updatedInput (the CLI echoes it back as the tool's
+// effective input, so dropping it would corrupt the call).
+func TestRespondPermission_AllowFrame(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+	cs.interruptible = true
+	stdin := &captureStdin{}
+	cs.stdin = stdin
+
+	err := cs.RespondPermission("perm_1", core.PermissionResult{
+		Behavior:     "allow",
+		UpdatedInput: map[string]any{"command": "ls"},
+	})
+	if err != nil {
+		t.Fatalf("RespondPermission: %v", err)
+	}
+
+	frames := stdin.frames(t)
+	if len(frames) != 1 {
+		t.Fatalf("expected 1 frame, got %d: %v", len(frames), frames)
+	}
+	f := frames[0]
+	if got := f["type"]; got != "control_response" {
+		t.Errorf("type = %v, want control_response", got)
+	}
+	resp, ok := f["response"].(map[string]any)
+	if !ok {
+		t.Fatalf("response is not an object: %v", f["response"])
+	}
+	if got := resp["subtype"]; got != "success" {
+		t.Errorf("response.subtype = %v, want success", got)
+	}
+	// request_id must be echoed verbatim or the CLI cannot match the reply.
+	if got := resp["request_id"]; got != "perm_1" {
+		t.Errorf("response.request_id = %v, want perm_1", got)
+	}
+	inner, _ := resp["response"].(map[string]any)
+	if got := inner["behavior"]; got != "allow" {
+		t.Errorf("behavior = %v, want allow", got)
+	}
+	updated, _ := inner["updatedInput"].(map[string]any)
+	if got, _ := updated["command"].(string); got != "ls" {
+		t.Errorf("updatedInput.command = %q, want ls", got)
+	}
+}
+
+// TestRespondPermission_DenyFrame verifies a denial always carries a message,
+// since the CLI feeds it back to the model as the tool's result.
+func TestRespondPermission_DenyFrame(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+	cs.interruptible = true
+	stdin := &captureStdin{}
+	cs.stdin = stdin
+
+	if err := cs.RespondPermission("perm_2", core.PermissionResult{Behavior: "deny"}); err != nil {
+		t.Fatalf("RespondPermission: %v", err)
+	}
+
+	frames := stdin.frames(t)
+	if len(frames) != 1 {
+		t.Fatalf("expected 1 frame, got %d: %v", len(frames), frames)
+	}
+	resp, _ := frames[0]["response"].(map[string]any)
+	inner, _ := resp["response"].(map[string]any)
+	if got := inner["behavior"]; got != "deny" {
+		t.Errorf("behavior = %v, want deny", got)
+	}
+	if msg, _ := inner["message"].(string); msg == "" {
+		t.Error("deny reply must carry a non-empty message")
+	}
+}
+
+// TestRespondPermission_NonResidentFails verifies the reply cannot be silently
+// dropped when there is no stdin to write it to.
+func TestRespondPermission_NonResidentFails(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+	cs.interruptible = false
+
+	if err := cs.RespondPermission("perm_1", core.PermissionResult{Behavior: "allow"}); err == nil {
+		t.Error("RespondPermission must fail without a resident stdin")
+	}
+}
+
+// TestNewCodeBuddySession_ForcesResidentMode pins the invariant the whole
+// control_request fix rests on: CodeBuddy sessions are always resident, so a
+// permission reply always has a stdin channel to travel over.
+func TestAgent_AlwaysInterruptible(t *testing.T) {
+	a, err := New(map[string]any{"work_dir": t.TempDir()})
+	if err != nil {
+		t.Skipf("codebuddy CLI not installed: %v", err)
+	}
+	agent, ok := a.(*Agent)
+	if !ok {
+		t.Fatalf("New returned %T, want *Agent", a)
+	}
+	if !agent.interruptible {
+		t.Error("codebuddy must always run resident (interruptible) to answer control_request frames")
+	}
+}
+
 // captureStdin records writes so tests can assert on emitted frames.
 type captureStdin struct {
 	mu   sync.Mutex
