@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/janostudio/heron-connect/core"
 )
@@ -1321,4 +1322,310 @@ func (c *captureStdin) frames(t *testing.T) []map[string]any {
 		out = append(out, m)
 	}
 	return out
+}
+
+// ── background-task event family ────────────────────────────
+//
+// These cover the system/subtype=task_* family, which the CLI emits for work
+// that outlives the turn that started it (Bash run_in_background, a
+// background subagent, a workflow run). The event shapes below are taken
+// verbatim from a real `codebuddy -p --input-format stream-json
+// --output-format stream-json` session that launched `sleep 8 && echo DONE`
+// with run_in_background: true.
+
+// drainEvent reads one event from the session's channel, failing the test if
+// none arrives. Used to assert on (or assert the absence of) emitted events.
+func drainEvent(t *testing.T, cs *codebuddySession) core.Event {
+	t.Helper()
+	select {
+	case ev := <-cs.events:
+		return ev
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("no event emitted")
+		return core.Event{}
+	}
+}
+
+// assertNoEvent fails if the session emitted anything within the grace window.
+func assertNoEvent(t *testing.T, cs *codebuddySession) {
+	t.Helper()
+	select {
+	case ev := <-cs.events:
+		t.Fatalf("unexpected event emitted: type=%v content=%q", ev.Type, ev.Content)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// taskStartedFrame builds the task_started frame the CLI emits just after the
+// tool call that spawned the background task.
+func taskStartedFrame(taskID, description string) *streamEvent {
+	return &streamEvent{
+		Type:        "system",
+		Subtype:     "task_started",
+		TaskID:      taskID,
+		Description: description,
+		SessionID:   "sid-1",
+	}
+}
+
+// taskUpdatedFrame builds a task_updated frame carrying a status transition
+// inside `patch` (the CLI does not put status at the top level here).
+func taskUpdatedFrame(taskID, status string) *streamEvent {
+	patch, _ := json.Marshal(map[string]any{"status": status})
+	return &streamEvent{
+		Type:      "system",
+		Subtype:   "task_updated",
+		TaskID:    taskID,
+		Patch:     patch,
+		SessionID: "sid-1",
+	}
+}
+
+// taskNotificationFrame builds the terminal task_notification frame, which is
+// the authoritative completion signal and carries status + summary at the top
+// level.
+func taskNotificationFrame(taskID, status, summary string) *streamEvent {
+	return &streamEvent{
+		Type:      "system",
+		Subtype:   "task_notification",
+		TaskID:    taskID,
+		Status:    status,
+		Summary:   summary,
+		SessionID: "sid-1",
+	}
+}
+
+func TestHandleTaskEvent_StartAndRunningAreNotRelayed(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	// Mid-turn: task_started and a running task_updated are progress only.
+	if !cs.handleTaskEvent(taskStartedFrame("task-1", "sleep 8 && echo DONE")) {
+		t.Fatal("task_started should be claimed by handleTaskEvent")
+	}
+	assertNoEvent(t, cs)
+
+	cs.handleTaskEvent(taskUpdatedFrame("task-1", "running"))
+	assertNoEvent(t, cs)
+}
+
+func TestHandleTaskEvent_NotificationRelayedAfterTurn(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	cs.handleTaskEvent(taskStartedFrame("task-1", "sleep 8 && echo DONE"))
+	cs.handleTaskEvent(taskUpdatedFrame("task-1", "running"))
+
+	// Between turns: the terminal frame becomes a relayable EventResult so
+	// the engine's unsolicited reader can push it to the platform.
+	cs.turnFinishedSeq.Store(cs.turnSeq.Load())
+	cs.handleTaskEvent(taskNotificationFrame("task-1", "completed",
+		`Background command "sleep 8 && echo DONE" completed`))
+
+	ev := drainEvent(t, cs)
+	if ev.Type != core.EventResult {
+		t.Fatalf("event type = %v, want %v", ev.Type, core.EventResult)
+	}
+	if !ev.Done {
+		t.Error("event should be marked Done")
+	}
+	if !strings.Contains(ev.Content, "已完成") {
+		t.Errorf("content should report completion, got %q", ev.Content)
+	}
+	if !strings.Contains(ev.Content, "sleep 8") {
+		t.Errorf("content should carry the task summary, got %q", ev.Content)
+	}
+}
+
+func TestHandleTaskEvent_TerminalUpdatedIsRelayedOnce(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	cs.handleTaskEvent(taskStartedFrame("task-1", "some command"))
+
+	// The CLI documents that a terminal transition may arrive as
+	// task_updated WITHOUT a following task_notification.
+	cs.turnFinishedSeq.Store(cs.turnSeq.Load())
+	cs.handleTaskEvent(taskUpdatedFrame("task-1", "completed"))
+	ev := drainEvent(t, cs)
+	if ev.Type != core.EventResult {
+		t.Fatalf("event type = %v, want %v", ev.Type, core.EventResult)
+	}
+	if !strings.Contains(ev.Content, "some command") {
+		t.Errorf("should fall back to task_started description, got %q", ev.Content)
+	}
+
+	// The authoritative notification for the same task must not produce a
+	// duplicate message.
+	cs.turnFinishedSeq.Store(cs.turnSeq.Load())
+	cs.handleTaskEvent(taskNotificationFrame("task-1", "completed", "done"))
+	assertNoEvent(t, cs)
+}
+
+func TestHandleTaskEvent_NotificationThenUpdatedIsRelayedOnce(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	cs.handleTaskEvent(taskStartedFrame("task-1", "some command"))
+	cs.turnFinishedSeq.Store(cs.turnSeq.Load())
+	cs.handleTaskEvent(taskNotificationFrame("task-1", "completed", "done"))
+
+	ev := drainEvent(t, cs)
+	if ev.Type != core.EventResult {
+		t.Fatalf("event type = %v, want %v", ev.Type, core.EventResult)
+	}
+
+	// A late task_updated for the same terminal task is a duplicate.
+	cs.turnFinishedSeq.Store(cs.turnSeq.Load())
+	cs.handleTaskEvent(taskUpdatedFrame("task-1", "completed"))
+	assertNoEvent(t, cs)
+}
+
+func TestHandleTaskEvent_StatusesRenderDistinctly(t *testing.T) {
+	cases := []struct {
+		status  string
+		wantSub string
+	}{
+		{"completed", "已完成"},
+		{"failed", "失败"},
+		{"stopped", "已停止"},
+		{"killed", "已停止"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.status, func(t *testing.T) {
+			cs := newTestSession()
+			defer cs.cancel()
+
+			cs.turnFinishedSeq.Store(cs.turnSeq.Load())
+			cs.handleTaskEvent(taskNotificationFrame("task-1", tc.status, "output"))
+			ev := drainEvent(t, cs)
+			if !strings.Contains(ev.Content, tc.wantSub) {
+				t.Errorf("status %q: content = %q, want substring %q", tc.status, ev.Content, tc.wantSub)
+			}
+		})
+	}
+}
+
+func TestHandleTaskEvent_UnknownSubtypeNotClaimed(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	ev := &streamEvent{Type: "system", Subtype: "api_retry", SessionID: "sid-1"}
+	if cs.handleTaskEvent(ev) {
+		t.Error("non-task subtype must not be claimed by handleTaskEvent")
+	}
+}
+
+func TestHandleTaskEvent_WithoutTaskIDIsDropped(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	ev := &streamEvent{Type: "system", Subtype: "task_notification", Status: "completed"}
+	// Claimed (it is a task frame) but not relayed.
+	if !cs.handleTaskEvent(ev) {
+		t.Error("task frame should be claimed even without a task_id")
+	}
+	assertNoEvent(t, cs)
+}
+
+func TestFormatTaskCompletion_SanitizesUntrustedText(t *testing.T) {
+	// Newlines in CLI-supplied text would forge extra lines in an outgoing
+	// chat message.
+	got := formatTaskCompletion("task-1", "", "completed",
+		"line one\nline two\r\nline three", "")
+	if strings.ContainsAny(got, "\n\r") {
+		t.Errorf("embedded newlines should be flattened, got %q", got)
+	}
+
+	// Long values are truncated rather than forwarded whole.
+	long := strings.Repeat("x", taskDescriptionMaxLen*2)
+	got = formatTaskCompletion("task-1", long, "completed", "", "")
+	if utf8.RuneCountInString(got) > taskDescriptionMaxLen+64 {
+		t.Errorf("long description should be truncated, got %d runes",
+			utf8.RuneCountInString(got))
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("truncated text should be marked, got %q", got)
+	}
+}
+
+func TestFormatTaskCompletion_FallsBackToTaskID(t *testing.T) {
+	got := formatTaskCompletion("task-abc", "", "completed", "", "")
+	if !strings.Contains(got, "task-abc") {
+		t.Errorf("should fall back to the task id when no text is available, got %q", got)
+	}
+}
+
+func TestFormatTaskCompletion_IncludesOutputFile(t *testing.T) {
+	got := formatTaskCompletion("task-1", "", "completed", "done", "/tmp/out.log")
+	if !strings.Contains(got, "/tmp/out.log") {
+		t.Errorf("should surface the output file path, got %q", got)
+	}
+}
+
+func TestIsTerminalTaskStatus(t *testing.T) {
+	terminal := []string{"completed", "failed", "stopped", "killed", "cancelled"}
+	for _, s := range terminal {
+		if !isTerminalTaskStatus(s) {
+			t.Errorf("isTerminalTaskStatus(%q) = false, want true", s)
+		}
+	}
+	nonTerminal := []string{"", "pending", "running", "paused"}
+	for _, s := range nonTerminal {
+		if isTerminalTaskStatus(s) {
+			t.Errorf("isTerminalTaskStatus(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestHandleTaskEvent_RelayedEvenAfterUserStartsNewTurn(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	// Turn 1 starts and spawns a long-running background task.
+	cs.turnSeq.Add(1)
+	cs.handleTaskEvent(taskStartedFrame("task-1", "npm run build"))
+
+	// Turn 1 finishes; the task is still running.
+	cs.turnFinishedSeq.Store(cs.turnSeq.Load())
+
+	// The user gets impatient and sends another message, starting turn 2
+	// while the task is still in flight.
+	cs.turnSeq.Add(1)
+
+	// The task now completes. Because it was spawned in turn 1 and that turn
+	// has finished, it must still be relayed — the user asked for this work
+	// and has to hear back, even though a later turn is in progress.
+	cs.handleTaskEvent(taskNotificationFrame("task-1", "completed", "build finished"))
+
+	ev := drainEvent(t, cs)
+	if ev.Type != core.EventResult {
+		t.Fatalf("event type = %v, want %v", ev.Type, core.EventResult)
+	}
+	if !strings.Contains(ev.Content, "build finished") {
+		t.Errorf("content should carry the completion summary, got %q", ev.Content)
+	}
+}
+
+func TestHandleTaskEvent_NotRelayedWhileItsOwnTurnRuns(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	// Turn 1 starts and spawns a task that finishes immediately, while turn 1
+	// is still streaming. Relaying here would cut turn 1's reply short.
+	cs.turnSeq.Add(1)
+	cs.handleTaskEvent(taskStartedFrame("task-1", "quick command"))
+	cs.handleTaskEvent(taskNotificationFrame("task-1", "completed", "done"))
+
+	assertNoEvent(t, cs)
+
+	// Once turn 1's own result arrives, the watermark catches up and the
+	// pending notification becomes relayable.
+	cs.turnFinishedSeq.Store(cs.turnSeq.Load())
+	cs.handleTaskEvent(taskNotificationFrame("task-1", "completed", "done"))
+
+	ev := drainEvent(t, cs)
+	if ev.Type != core.EventResult {
+		t.Fatalf("event type = %v, want %v", ev.Type, core.EventResult)
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/janostudio/heron-connect/core"
 )
@@ -450,5 +451,287 @@ func TestEmit_UnstampedBeforeSetTurnEpoch(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("emit did not deliver the event")
+	}
+}
+
+// ── background-task event family ────────────────────────────
+//
+// Covers the system/subtype=task_* family: how a background task's
+// completion (Bash run_in_background, background subagent, Monitor watch)
+// gets relayed after the turn that started it has ended. Before this was
+// handled, handleSystem read only session_id and ignored subtype, so the
+// whole family was invisible to the user.
+
+// newTaskTestSession builds a minimal session for task-event tests.
+func newTaskTestSession() *claudeSession {
+	ctx, cancel := context.WithCancel(context.Background())
+	cs := &claudeSession{
+		events: make(chan core.Event, 8),
+		ctx:    ctx,
+		cancel: cancel,
+	}
+	cs.sessionID.Store("sid-1")
+	cs.alive.Store(true)
+	return cs
+}
+
+func drainTaskEvent(t *testing.T, cs *claudeSession) core.Event {
+	t.Helper()
+	select {
+	case ev := <-cs.events:
+		return ev
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("no event emitted")
+		return core.Event{}
+	}
+}
+
+func assertNoTaskEvent(t *testing.T, cs *claudeSession) {
+	t.Helper()
+	select {
+	case ev := <-cs.events:
+		t.Fatalf("unexpected event emitted: type=%v content=%q", ev.Type, ev.Content)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestHandleSystem_TaskNotificationRelayedAfterTurn(t *testing.T) {
+	cs := newTaskTestSession()
+	defer cs.cancel()
+
+	cs.turnFinishedSeq.Store(0)
+	cs.handleSystem(map[string]any{
+		"type": "system", "subtype": "task_started",
+		"task_id": "task-1", "description": "sleep 8 && echo DONE",
+		"session_id": "sid-1",
+	})
+
+	cs.turnFinishedSeq.Store(cs.turnSeq.Load())
+	cs.handleSystem(map[string]any{
+		"type": "system", "subtype": "task_notification",
+		"task_id": "task-1", "status": "completed",
+		"summary": `Background command "sleep 8 && echo DONE" completed`,
+		"session_id": "sid-1",
+	})
+
+	// The init-style EventText must not be emitted for a task frame, so the
+	// first event on the channel is the terminal result.
+	ev := drainTaskEvent(t, cs)
+	if ev.Type != core.EventResult {
+		t.Fatalf("event type = %v, want %v (task frames must not emit the init EventText)", ev.Type, core.EventResult)
+	}
+	if !ev.Done {
+		t.Error("event should be marked Done")
+	}
+	if !strings.Contains(ev.Content, "已完成") {
+		t.Errorf("content should report completion, got %q", ev.Content)
+	}
+	if !strings.Contains(ev.Content, "sleep 8") {
+		t.Errorf("content should carry the summary, got %q", ev.Content)
+	}
+}
+
+func TestHandleSystem_TaskFrameDoesNotEmitInitText(t *testing.T) {
+	cs := newTaskTestSession()
+	defer cs.cancel()
+
+	// A task frame must not be funnelled through the session-id branch,
+	// which would emit a content-less EventText for the engine to append to
+	// the reply.
+	cs.handleSystem(map[string]any{
+		"type": "system", "subtype": "task_progress",
+		"task_id": "task-1", "description": "running",
+		"session_id": "sid-1",
+	})
+	assertNoTaskEvent(t, cs)
+}
+
+func TestHandleSystem_InitStillEmitsText(t *testing.T) {
+	cs := newTaskTestSession()
+	defer cs.cancel()
+
+	cs.handleSystem(map[string]any{
+		"type": "system", "subtype": "init", "session_id": "sid-1",
+	})
+
+	ev := drainTaskEvent(t, cs)
+	if ev.Type != core.EventText {
+		t.Fatalf("event type = %v, want %v", ev.Type, core.EventText)
+	}
+	if ev.SessionID != "sid-1" {
+		t.Errorf("SessionID = %q, want sid-1", ev.SessionID)
+	}
+}
+
+func TestHandleTaskEvent_TerminalUpdatedFromPatch(t *testing.T) {
+	cs := newTaskTestSession()
+	defer cs.cancel()
+
+	cs.handleTaskEvent(map[string]any{
+		"type": "system", "subtype": "task_started",
+		"task_id": "task-1", "description": "some command",
+	})
+
+	// A terminal transition may arrive as task_updated carrying the status
+	// inside `patch`, without a following task_notification.
+	cs.turnFinishedSeq.Store(cs.turnSeq.Load())
+	cs.handleTaskEvent(map[string]any{
+		"type": "system", "subtype": "task_updated",
+		"task_id": "task-1",
+		"patch":   map[string]any{"status": "completed"},
+	})
+
+	ev := drainTaskEvent(t, cs)
+	if ev.Type != core.EventResult {
+		t.Fatalf("event type = %v, want %v", ev.Type, core.EventResult)
+	}
+	if !strings.Contains(ev.Content, "some command") {
+		t.Errorf("should fall back to task_started description, got %q", ev.Content)
+	}
+}
+
+func TestHandleTaskEvent_DeduplicatesTerminalFrames(t *testing.T) {
+	cs := newTaskTestSession()
+	defer cs.cancel()
+
+	cs.handleTaskEvent(map[string]any{
+		"type": "system", "subtype": "task_started",
+		"task_id": "task-1", "description": "some command",
+	})
+	cs.turnFinishedSeq.Store(cs.turnSeq.Load())
+
+	cs.handleTaskEvent(map[string]any{
+		"type": "system", "subtype": "task_notification",
+		"task_id": "task-1", "status": "completed", "summary": "done",
+	})
+	if ev := drainTaskEvent(t, cs); ev.Type != core.EventResult {
+		t.Fatalf("event type = %v, want %v", ev.Type, core.EventResult)
+	}
+
+	// Terminal task_updated for the same task is a duplicate, not a second
+	// platform message.
+	cs.handleTaskEvent(map[string]any{
+		"type": "system", "subtype": "task_updated",
+		"task_id": "task-1",
+		"patch":   map[string]any{"status": "completed"},
+	})
+	assertNoTaskEvent(t, cs)
+}
+
+func TestHandleTaskEvent_UnknownSubtypeNotClaimed(t *testing.T) {
+	cs := newTaskTestSession()
+	defer cs.cancel()
+
+	if cs.handleTaskEvent(map[string]any{"subtype": "api_retry"}) {
+		t.Error("non-task subtype must not be claimed by handleTaskEvent")
+	}
+}
+
+func TestHandleResult_MarksTurnFinished(t *testing.T) {
+	cs := newTaskTestSession()
+	defer cs.cancel()
+
+	if cs.turnFinishedSeq.Load() != 0 {
+		t.Fatal("turnFinishedSeq should start at 0")
+	}
+
+	cs.handleResult(map[string]any{
+		"type": "result", "result": "done", "session_id": "sid-1",
+	})
+
+	if cs.turnFinishedSeq.Load() != cs.turnSeq.Load() {
+		t.Error("handleResult should raise the finished-turn watermark so between-turn task frames relay")
+	}
+}
+
+func TestFormatTaskCompletion_ClaudeSanitizesUntrustedText(t *testing.T) {
+	got := formatTaskCompletion("task-1", "", "completed", "a\nb", "")
+	if strings.ContainsAny(got, "\n\r") {
+		t.Errorf("embedded newlines should be flattened, got %q", got)
+	}
+
+	long := strings.Repeat("x", taskDescriptionMaxLen*2)
+	got = formatTaskCompletion("task-1", long, "completed", "", "")
+	if utf8.RuneCountInString(got) > taskDescriptionMaxLen+64 {
+		t.Errorf("long description should be truncated, got %d runes",
+			utf8.RuneCountInString(got))
+	}
+}
+
+func TestIsTerminalTaskStatus_Claude(t *testing.T) {
+	for _, s := range []string{"completed", "failed", "stopped", "killed", "cancelled"} {
+		if !isTerminalTaskStatus(s) {
+			t.Errorf("isTerminalTaskStatus(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"", "pending", "running", "paused"} {
+		if isTerminalTaskStatus(s) {
+			t.Errorf("isTerminalTaskStatus(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestHandleTaskEvent_RelayedEvenAfterUserStartsNewTurn(t *testing.T) {
+	cs := newTaskTestSession()
+	defer cs.cancel()
+
+	// Turn 1 starts and spawns a long-running background task.
+	cs.turnSeq.Add(1)
+	cs.handleTaskEvent(map[string]any{
+		"type": "system", "subtype": "task_started",
+		"task_id": "task-1", "description": "npm run build",
+	})
+
+	// Turn 1 finishes; the task is still running.
+	cs.turnFinishedSeq.Store(cs.turnSeq.Load())
+
+	// The user sends another message, starting turn 2 while the task is in
+	// flight.
+	cs.turnSeq.Add(1)
+
+	// The task completes. It was spawned in turn 1, which has finished, so it
+	// must still be relayed despite turn 2 being in progress.
+	cs.handleTaskEvent(map[string]any{
+		"type": "system", "subtype": "task_notification",
+		"task_id": "task-1", "status": "completed", "summary": "build finished",
+	})
+
+	ev := drainTaskEvent(t, cs)
+	if ev.Type != core.EventResult {
+		t.Fatalf("event type = %v, want %v", ev.Type, core.EventResult)
+	}
+	if !strings.Contains(ev.Content, "build finished") {
+		t.Errorf("content should carry the completion summary, got %q", ev.Content)
+	}
+}
+
+func TestHandleTaskEvent_NotRelayedWhileItsOwnTurnRuns(t *testing.T) {
+	cs := newTaskTestSession()
+	defer cs.cancel()
+
+	// Turn 1 spawns a task that finishes immediately, while turn 1 is still
+	// streaming. Relaying here would cut turn 1's reply short.
+	cs.turnSeq.Add(1)
+	cs.handleTaskEvent(map[string]any{
+		"type": "system", "subtype": "task_started",
+		"task_id": "task-1", "description": "quick command",
+	})
+	cs.handleTaskEvent(map[string]any{
+		"type": "system", "subtype": "task_notification",
+		"task_id": "task-1", "status": "completed", "summary": "done",
+	})
+
+	assertNoTaskEvent(t, cs)
+
+	// Once turn 1's own result arrives, the watermark catches up.
+	cs.turnFinishedSeq.Store(cs.turnSeq.Load())
+	cs.handleTaskEvent(map[string]any{
+		"type": "system", "subtype": "task_notification",
+		"task_id": "task-1", "status": "completed", "summary": "done",
+	})
+
+	ev := drainTaskEvent(t, cs)
+	if ev.Type != core.EventResult {
+		t.Fatalf("event type = %v, want %v", ev.Type, core.EventResult)
 	}
 }

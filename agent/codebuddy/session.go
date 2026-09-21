@@ -73,6 +73,226 @@ type codebuddySession struct {
 
 	// nextRequestID mints unique request_id values for control_request frames.
 	nextRequestID atomic.Int64
+
+	// turnSeq counts foreground turns started on this session. Bumped when a
+	// prompt is written, it lets the background-task bookkeeping say "this
+	// task belongs to turn N". See turnFinishedSeq / handleTaskEvent.
+	turnSeq atomic.Uint64
+
+	// turnFinishedSeq records the highest turn number whose result has been
+	// seen. A background task is relayable once the turn that STARTED it has
+	// finished — a watermark rather than a boolean, so a task that outlives
+	// several later turns still reports in instead of being suppressed by
+	// whatever turn happens to be running when it ends.
+	turnFinishedSeq atomic.Uint64
+
+	// tasksMu guards tasks, the background-task registry.
+	tasksMu sync.Mutex
+	// tasks maps task_id → the last lifecycle state seen for that background
+	// task. It serves two purposes:
+	//
+	//  1. De-duplication. task_notification is the authoritative terminal
+	//     signal, but task_updated may also carry a terminal status (the CLI
+	//     docs note CC sometimes emits ONLY task_updated for a terminal
+	//     transition), and the drain-wait bypass stream can replay frames the
+	//     foreground stream already delivered. Emitting a platform message per
+	//     frame would spam the user with the same completion several times.
+	//  2. Context. task_notification carries only task_id/status/summary;
+	//     the human-readable label lives in task_started.description, which
+	//     arrives earlier on a different frame.
+	tasks map[string]*backgroundTask
+}
+
+// backgroundTask is the per-task state tracked across the task_* event family.
+type backgroundTask struct {
+	description string
+	// startedInTurn is the foreground turn number during which this task was
+	// first observed (i.e. the turn whose tool call spawned it). Its terminal
+	// frame is relayable only once turnFinishedSeq has reached this value, so
+	// a task finishing inside its own turn cannot cut that turn's reply short.
+	startedInTurn uint64
+	// notified is set once a terminal notification has been relayed, so a
+	// replayed or late-arriving terminal frame is dropped instead of
+	// producing a duplicate message.
+	notified bool
+}
+
+// isTerminalTaskStatus reports whether a status value ends a background
+// task's life. task_updated uses the full six-value enum (pending, running,
+// paused, completed, failed, killed) while task_notification collapses to
+// three (completed, failed, stopped) — the union is what matters here.
+func isTerminalTaskStatus(status string) bool {
+	switch status {
+	case "completed", "failed", "stopped", "killed", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+// handleTaskEvent processes the background-task event family
+// (system/subtype=task_started|task_progress|task_updated|task_notification).
+//
+// This family is how the CLI reports work that outlives the turn that started
+// it: a Bash command run with run_in_background, a background subagent, or a
+// workflow run. Two delivery windows exist:
+//
+//   - MID-TURN: task_started / a running task_updated arrive while the
+//     foreground turn is still streaming. These are progress only. They MUST
+//     NOT emit an EventResult — the engine's foreground consumer treats
+//     EventResult as "the turn is over" (it finalizes the progress card,
+//     writes history and fires auto-titling), so relaying one here would cut
+//     the user's reply short.
+//
+//   - BETWEEN TURNS: after the foreground turn's result, the CLI re-opens a
+//     drain-wait bypass stream to report the task reaching a terminal state.
+//     Nothing is consuming the event channel at that point except the engine's
+//     unsolicited reader (core/engine_turn.go runUnsolicitedReader), which
+//     exists precisely to relay such events to the platform.
+//
+// Which window applies is decided per task: each task records the turn number
+// it was spawned in, and its terminal frame is relayable once that turn has
+// finished (turnFinishedSeq >= startedInTurn). Comparing against a watermark
+// rather than "is a turn running right now" matters — a long-running task that
+// completes while the user is already in a later turn still reports in, which
+// is what the user expects after asking for background work.
+//
+// Before this handler existed the whole family fell into readLoop's default
+// branch and was dropped at debug level, so a background task's completion was
+// invisible to the user: the agent reported "started" and then nothing ever
+// came back.
+//
+// Returns whether the event belonged to this family.
+func (cs *codebuddySession) handleTaskEvent(ev *streamEvent) bool {
+	switch ev.Subtype {
+	case "task_started", "task_progress", "task_updated", "task_notification":
+	default:
+		return false
+	}
+
+	if ev.TaskID == "" {
+		slog.Debug("codebuddySession: task event without task_id", "subtype", ev.Subtype)
+		return true
+	}
+
+	cs.tasksMu.Lock()
+	if cs.tasks == nil {
+		cs.tasks = make(map[string]*backgroundTask)
+	}
+	task, ok := cs.tasks[ev.TaskID]
+	if !ok {
+		// First sighting of this task: it was spawned by the turn running
+		// right now, so remember which turn that was.
+		task = &backgroundTask{startedInTurn: cs.turnSeq.Load()}
+		cs.tasks[ev.TaskID] = task
+	}
+	if ev.Description != "" {
+		task.description = ev.Description
+	}
+
+	// Determine whether this frame carries a terminal state, and what text
+	// to relay. task_notification carries `status` + `summary` at top level;
+	// task_updated carries the transition inside `patch`.
+	status := ev.Status
+	summary := ev.Summary
+	if status == "" && len(ev.Patch) > 0 {
+		var patch struct {
+			Status  string `json:"status"`
+			Summary string `json:"summary"`
+		}
+		if err := json.Unmarshal(ev.Patch, &patch); err == nil {
+			status = patch.Status
+			if summary == "" {
+				summary = patch.Summary
+			}
+		}
+	}
+
+	terminal := isTerminalTaskStatus(status)
+	// Dedup: relay a terminal state exactly once per task, and only once the
+	// turn that started it has finished. The authoritative frame is
+	// task_notification, but a terminal task_updated is honoured too because
+	// the CLI documents that it may be the only terminal frame.
+	startedInTurn := task.startedInTurn
+	shouldRelay := terminal && !task.notified && cs.turnFinishedSeq.Load() >= startedInTurn
+	if shouldRelay {
+		task.notified = true
+	}
+	description := task.description
+	cs.tasksMu.Unlock()
+
+	slog.Debug("codebuddySession: task event",
+		"subtype", ev.Subtype, "task_id", ev.TaskID, "status", status,
+		"terminal", terminal, "started_in_turn", startedInTurn, "relay", shouldRelay)
+
+	if !shouldRelay {
+		return true
+	}
+
+	cs.emit(core.Event{
+		Type:      core.EventResult,
+		Content:   formatTaskCompletion(ev.TaskID, description, status, summary, ev.OutputFile),
+		SessionID: cs.CurrentSessionID(),
+		Done:      true,
+	})
+	return true
+}
+
+// taskDescriptionMaxLen bounds how much of the CLI-supplied task description
+// is forwarded to a chat platform. task_started.description (for workflow
+// tasks, workflow_name) and task_notification.summary embed model-generated
+// and user-supplied text, so they are treated as untrusted: a long or
+// multi-line value would blow past platform message limits or break the
+// one-line layout.
+const taskDescriptionMaxLen = 200
+
+// formatTaskCompletion renders the user-facing line for a finished background
+// task. The CLI's own summary is preferred when present; otherwise the
+// description recorded at task_started is used so the message still says
+// which command finished rather than only an opaque task id.
+func formatTaskCompletion(taskID, description, status, summary, outputFile string) string {
+	label := sanitizeTaskText(summary)
+	if label == "" {
+		label = sanitizeTaskText(description)
+	}
+	if label == "" {
+		label = taskID
+	}
+
+	var b strings.Builder
+	switch status {
+	case "completed":
+		b.WriteString("后台任务已完成：")
+	case "failed":
+		b.WriteString("后台任务失败：")
+	case "stopped", "killed", "cancelled":
+		b.WriteString("后台任务已停止：")
+	default:
+		b.WriteString("后台任务结束：")
+	}
+	b.WriteString(label)
+
+	if outputFile != "" {
+		b.WriteString("\n输出文件：")
+		b.WriteString(sanitizeTaskText(outputFile))
+	}
+	return b.String()
+}
+
+// sanitizeTaskText collapses whitespace and truncates CLI-supplied text to a
+// platform-safe length. The value is embedded in an outgoing chat message, so
+// embedded newlines (which would forge additional lines) are flattened.
+func sanitizeTaskText(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	s = strings.Join(strings.Fields(s), " ")
+	if utf8.RuneCountInString(s) <= taskDescriptionMaxLen {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:taskDescriptionMaxLen]) + "…"
 }
 
 // baseArgs builds the codebuddy CLI flags shared by both modes.
@@ -230,6 +450,11 @@ func (cs *codebuddySession) Send(prompt string, images []core.ImageAttachment, f
 	// stdin as stream-json lines. No spawn, no positional argument.
 	if cs.interruptible {
 		slog.Debug("codebuddySession: sending prompt to resident process")
+		// A new foreground turn is starting. Bumping the turn counter means
+		// a task frame arriving before this turn's result is attributed to
+		// this turn and won't be relayed as a between-turns completion. See
+		// handleTaskEvent.
+		cs.turnSeq.Add(1)
 		return cs.writeJSON(map[string]any{
 			"type": "user",
 			"message": map[string]any{
@@ -317,8 +542,16 @@ func (cs *codebuddySession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderr
 					cs.sessionID.Store(raw.SessionID)
 					slog.Debug("codebuddySession: init", "session_id", raw.SessionID)
 				} else {
-					slog.Debug("codebuddySession: ignoring non-primary init (subagent)", "session_id", raw.SessionID)
+					// A mid-conversation init: either a subagent's child
+					// session or the drain-wait bypass stream (re-emitted
+					// after the foreground turn's result). Neither may
+					// overwrite the tracked top-level id.
+					slog.Debug("codebuddySession: ignoring non-primary init (subagent/drain)", "session_id", raw.SessionID)
 				}
+			} else if cs.handleTaskEvent(&raw) {
+				// Background-task lifecycle event — handled. See
+				// handleTaskEvent for when the terminal frame becomes a
+				// relayable EventResult.
 			}
 
 		case "assistant":
@@ -333,6 +566,11 @@ func (cs *codebuddySession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderr
 				gotResult = true
 			}
 			pendingText = ""
+			// Raise the finished-turn watermark: any background task spawned
+			// in this turn (or an earlier one) is now safe to relay. A
+			// watermark rather than a boolean, so a task that outlives later
+			// turns still reports in. See handleTaskEvent.
+			cs.turnFinishedSeq.Store(cs.turnSeq.Load())
 			if cs.interruptible {
 				// Resident mode: the process outlives the turn, so the scanner
 				// must keep reading for the next prompt. Reset the per-turn
@@ -455,6 +693,19 @@ type streamEvent struct {
 	// see handleControlRequest.
 	RequestID string              `json:"request_id"`
 	Request   *controlRequestBody `json:"request"`
+
+	// ── background-task event family (system/subtype=task_*) ──
+	//
+	// The CLI emits task_started / task_progress / task_updated /
+	// task_notification as `system` frames carrying these fields at the top
+	// level (not nested under "message"). See handleSystemSubtype.
+	TaskID      string          `json:"task_id"`
+	TaskType    string          `json:"task_type"`
+	Description string          `json:"description"`
+	Summary     string          `json:"summary"`
+	OutputFile  string          `json:"output_file"`
+	Status      string          `json:"status"`
+	Patch       json.RawMessage `json:"patch"`
 }
 
 // controlRequestBody is the "request" object of a control_request frame.

@@ -373,3 +373,101 @@ func containsAll(msgs []string, needles ...string) bool {
 type simpleError string
 
 func (e simpleError) Error() string { return string(e) }
+
+// TestIntegration_BackgroundTaskCompletionRelayed verifies the end-to-end path
+// for a CLI background task (Bash run_in_background / background subagent /
+// workflow run) reported via the system/subtype=task_* event family.
+//
+// The adapters turn a terminal task frame into an EventResult carrying the
+// completion text; this test asserts that such an event, arriving after the
+// foreground turn that started the task has ended, reaches the platform with
+// its text intact. That is the exact shape the codebuddy and claudecode
+// adapters now emit from handleTaskEvent.
+func TestIntegration_BackgroundTaskCompletionRelayed(t *testing.T) {
+	sess := newPersistentEventsSession("unsol-bgtask")
+	agent := newPersistentEventsAgent("fake-claude", sess)
+	platform := newCapturingPlatform()
+
+	engine := core.NewEngine("test", agent, []core.Platform{platform}, "", core.LangEnglish)
+	defer engine.Stop()
+	require.NoError(t, engine.Start())
+	<-platform.started
+
+	// ─── Phase 1: user asks for work to run in the background ───
+	userMsg := &core.Message{
+		SessionKey: "test:bg:u1",
+		Platform:   "capture",
+		MessageID:  "msg-bg-1",
+		UserID:     "u1",
+		Content:    "start the build in the background",
+		ReplyCtx:   "rctx-bg-1",
+	}
+	go platform.dispatch(userMsg)
+
+	require.True(t, waitForPromptCount(t, sess, 1, 3*time.Second),
+		"agent never received the prompt")
+
+	// The foreground turn acknowledges and returns while the task runs on.
+	const ackMarker = "Build started in the background."
+	sess.emit(core.Event{Type: core.EventText, Content: ackMarker})
+	sess.emit(core.Event{Type: core.EventResult, Content: ackMarker})
+
+	require.True(t, waitForMessage(t, platform, ackMarker, 3*time.Second),
+		"foreground acknowledgement was not delivered")
+
+	// ─── Phase 2: the task finishes after the turn ended ───────
+	// This is the text formatTaskCompletion produces for a terminal task
+	// frame, emitted as an EventResult by the adapter.
+	const (
+		taskID    = "FUPm0Ixyz"
+		taskLabel = `Background command "npm run build" completed`
+	)
+	bgEvent := core.Event{
+		Type:    core.EventResult,
+		Content: "后台任务已完成：" + taskLabel,
+		Done:    true,
+	}
+	sess.emit(bgEvent)
+
+	require.True(t, waitForMessage(t, platform, "后台任务已完成", 3*time.Second),
+		"background task completion was not relayed to the platform")
+	require.True(t, waitForMessage(t, platform, taskLabel, 3*time.Second),
+		"background task summary text was lost in transit")
+
+	// ─── Phase 3: a second terminal frame must not re-deliver ──
+	// The adapters de-duplicate per task_id, so the only path that could
+	// re-deliver is a duplicate event from the reader; assert the reader
+	// does not multiply one event into several.
+	before := len(platform.messages())
+	sess.emit(core.Event{
+		Type:    core.EventResult,
+		Content: "后台任务已完成：" + taskLabel,
+		Done:    true,
+	})
+	time.Sleep(150 * time.Millisecond)
+	after := len(platform.messages())
+	if after > before+1 {
+		t.Errorf("one duplicate event produced %d messages, want at most 1 more", after-before)
+	}
+
+	// The session must remain usable for a follow-up foreground turn.
+	userMsg2 := &core.Message{
+		SessionKey: "test:bg:u1",
+		Platform:   "capture",
+		MessageID:  "msg-bg-2",
+		UserID:     "u1",
+		Content:    "how did it go?",
+		ReplyCtx:   "rctx-bg-2",
+	}
+	go platform.dispatch(userMsg2)
+
+	require.True(t, waitForPromptCount(t, sess, 2, 3*time.Second),
+		"follow-up turn never dispatched after background relay")
+
+	const followUp = "The build succeeded."
+	sess.emit(core.Event{Type: core.EventText, Content: followUp})
+	sess.emit(core.Event{Type: core.EventResult, Content: followUp})
+
+	require.True(t, waitForMessage(t, platform, followUp, 3*time.Second),
+		"follow-up turn response was not delivered")
+}
