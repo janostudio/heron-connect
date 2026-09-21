@@ -1564,6 +1564,29 @@ func (e *Engine) sessionIsInterruptible(interactiveKey string) bool {
 	return ok && ti.Interruptible()
 }
 
+// AgentInterruptible reports whether this project's agent is CONFIGURED to
+// support mid-turn interruption (the `interruptible` agent option).
+//
+// Why not reuse sessionIsInterruptible: that one is a state check — it requires
+// a live, Alive() session and returns false when idle or when none exists yet.
+// The management API needs the configured capability in exactly those cases:
+// the Web UI asks right after a page reload, before any turn has started, to
+// decide whether a busy conversation can be interrupted or only queued.
+//
+// Resolution order: the agent's own capability (AgentInterruptibleReporter),
+// then its config-option snapshot, then false. The false default matches the
+// engine's queueing fallback and the documented config default.
+func (e *Engine) AgentInterruptible() bool {
+	if r, ok := e.agent.(AgentInterruptibleReporter); ok {
+		return r.Interruptible()
+	}
+	if s, ok := e.agent.(WorkspaceAgentOptionSnapshotter); ok {
+		v, _ := s.WorkspaceAgentOptions()["interruptible"].(bool)
+		return v
+	}
+	return false
+}
+
 // interruptRunningTurn stops the in-flight turn for interactiveKey so the
 // caller can take over the session immediately. It mirrors cmdCancel: claim and
 // close cancelCh (stopping local event relay), then ask the backend to abort.

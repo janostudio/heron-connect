@@ -74,6 +74,17 @@ describe('sessionsSignature', () => {
     expect(sessionsSignature([session({ created_at: '2020-01-01T00:00:00Z' })])).toBe(base);
   });
 
+  it('ignores interruptible — it is a project constant, not per-session state', () => {
+    // Deliberately excluded: the signature exists to detect *changes worth
+    // re-rendering for*, and this flag is identical for every session of a
+    // project and never flips during a session's life. Including it would add a
+    // constant to the comparison — noise that can only ever produce false
+    // "changed" verdicts, never a real one.
+    const base = sessionsSignature([session()]);
+    expect(sessionsSignature([session({ interruptible: true })])).toBe(base);
+    expect(sessionsSignature([session({ interruptible: false })])).toBe(base);
+  });
+
   it('distinguishes running=false from undefined', () => {
     // Both render as "not running", so they may share a signature — but the
     // flip to true must be detected.

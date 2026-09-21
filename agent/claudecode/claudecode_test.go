@@ -539,6 +539,7 @@ func TestWorkspaceAgentOptions_FullSnapshot(t *testing.T) {
 		maxContextTokens: 200000,
 		routerURL:        "http://127.0.0.1:3456",
 		routerAPIKey:     "secret",
+		interruptible:    true,
 	}
 	got := a.WorkspaceAgentOptions()
 
@@ -553,6 +554,7 @@ func TestWorkspaceAgentOptions_FullSnapshot(t *testing.T) {
 		"max_context_tokens": 200000,
 		"router_url":         "http://127.0.0.1:3456",
 		"router_api_key":     "secret",
+		"interruptible":      true,
 	}
 	if len(got) != len(want) {
 		t.Errorf("snapshot len = %d, want %d (got=%v)", len(got), len(want), got)
@@ -584,10 +586,22 @@ func TestWorkspaceAgentOptions_OmitsZeroValues(t *testing.T) {
 	for _, k := range []string{
 		"cli_path", "cli_args_flag", "model", "reasoning_effort",
 		"allowed_tools", "disallowed_tools", "max_context_tokens",
-		"router_url", "router_api_key",
+		"router_url", "router_api_key", "interruptible",
 	} {
 		if _, ok := got[k]; ok {
 			t.Errorf("snapshot unexpectedly includes %q = %v", k, got[k])
+		}
+	}
+}
+
+// TestAgent_Interruptible pins the Agent-level capability reporter used by the
+// management API: it must reflect the configured option, not a hard-coded value
+// like codebuddy's.
+func TestAgent_Interruptible(t *testing.T) {
+	for _, want := range []bool{false, true} {
+		a := &Agent{interruptible: want}
+		if got := a.Interruptible(); got != want {
+			t.Errorf("Interruptible() = %v, want %v", got, want)
 		}
 	}
 }
@@ -617,6 +631,7 @@ func TestWorkspaceAgentOptions_RoundTripsThroughNew(t *testing.T) {
 		maxContextTokens: 200000,
 		routerURL:        "http://127.0.0.1:3456",
 		routerAPIKey:     "secret",
+		interruptible:    true,
 	}
 	opts := parent.WorkspaceAgentOptions()
 	opts["work_dir"] = "/tmp/claudecode-test"
@@ -660,5 +675,11 @@ func TestWorkspaceAgentOptions_RoundTripsThroughNew(t *testing.T) {
 	}
 	if child.routerAPIKey != "secret" {
 		t.Errorf("routerAPIKey = %q, want secret", child.routerAPIKey)
+	}
+	// interruptible must survive the snapshot round-trip: a workspace agent
+	// that silently lost it would queue messages while the project-level agent
+	// interrupts them.
+	if !child.interruptible {
+		t.Error("child interruptible = false, want true (snapshot dropped it)")
 	}
 }

@@ -279,6 +279,8 @@
     "inputPlaceholder": "输入消息或按 / 使用命令...",
     "commands": "命令",
     "stop": "停止",
+    "stopInterruptible": "停止当前回复（新消息会打断本轮）",
+    "stopQueued": "停止当前回复（新消息将排队等待）",
     "attach": "上传图片/文件",
     "removeAttachment": "移除",
     "fileTooBig": "文件过大（>10MB）",

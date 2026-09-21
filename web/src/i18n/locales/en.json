@@ -279,6 +279,8 @@
     "inputPlaceholder": "Type a message or press / for commands...",
     "commands": "Commands",
     "stop": "Stop",
+    "stopInterruptible": "Stop the current turn (a new message would interrupt it)",
+    "stopQueued": "Stop the current turn (a new message would be queued)",
     "attach": "Attach image/file",
     "removeAttachment": "Remove",
     "fileTooBig": "File too large (>10MB)",

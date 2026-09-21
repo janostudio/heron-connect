@@ -716,6 +716,10 @@ func (a *Agent) GetRunAsEnv() []string {
 //
 // run_as_user / run_as_env are also omitted because the engine has its own
 // dedicated propagation path via GetRunAsUser/GetRunAsEnv (see heron-connect#496).
+//
+// interruptible IS included: without it a per-workspace agent silently falls
+// back to the queueing default, so mid-turn interruption would work on the
+// project-level agent but not in multi-workspace mode.
 func (a *Agent) WorkspaceAgentOptions() map[string]any {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -743,6 +747,11 @@ func (a *Agent) WorkspaceAgentOptions() map[string]any {
 	if a.reasoningEffort != "" {
 		opts["reasoning_effort"] = a.reasoningEffort
 	}
+	// Only emit when true: the zero value is the documented default (queue),
+	// and omitting it keeps the snapshot free of noise keys.
+	if a.interruptible {
+		opts["interruptible"] = true
+	}
 	if len(a.allowedTools) > 0 {
 		opts["allowed_tools"] = stringsToAny(a.allowedTools)
 	}
@@ -759,6 +768,16 @@ func (a *Agent) WorkspaceAgentOptions() map[string]any {
 		opts["router_api_key"] = a.routerAPIKey
 	}
 	return opts
+}
+
+// Interruptible reports whether this agent is configured for mid-turn
+// interruption (see core.AgentInterruptibleReporter). The management API uses
+// it to expose the capability to the Web UI before any turn has started, when
+// no agent session exists yet and sessionIsInterruptible would report false.
+func (a *Agent) Interruptible() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.interruptible
 }
 
 // snapshotCLIPath rebuilds the cli_path opts string from cliBin and the

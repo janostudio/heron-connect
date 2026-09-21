@@ -141,6 +141,16 @@ func (a *Agent) Name() string           { return "codebuddy" }
 func (a *Agent) CLIBinaryName() string  { return "codebuddy" }
 func (a *Agent) CLIDisplayName() string { return "CodeBuddy" }
 
+// Interruptible reports the hard-coded resident-mode capability (see the
+// interruptible field). Exposed so the management API can advertise it to the
+// Web UI without inferring from agent options — codebuddy never reads an
+// "interruptible" option, so an option-based probe would wrongly report false.
+func (a *Agent) Interruptible() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.interruptible
+}
+
 func (a *Agent) SetWorkDir(dir string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

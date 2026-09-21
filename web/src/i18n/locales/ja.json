@@ -279,6 +279,8 @@
     "inputPlaceholder": "メッセージを入力、または / でコマンド...",
     "commands": "コマンド",
     "stop": "停止",
+    "stopInterruptible": "現在の応答を停止（新しいメッセージは割り込みます）",
+    "stopQueued": "現在の応答を停止（新しいメッセージはキューに入ります）",
     "attach": "画像/ファイルを添付",
     "removeAttachment": "削除",
     "fileTooBig": "ファイルが大きすぎます（>10MB）",

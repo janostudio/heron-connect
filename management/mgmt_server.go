@@ -1591,6 +1591,9 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 	case http.MethodGet:
 		activeKeys := e.InteractiveSessionPlatformMap()
 		turnStates := e.InteractiveSessionTurnStates()
+		// Project-level constant: the agent's interrupt capability does not vary
+		// per session, so resolve it once instead of per iteration.
+		interruptible := e.AgentInterruptible()
 
 		idToKey, activeIDs := e.GetSessions().SessionKeyMap()
 		stored := e.GetSessions().AllSessions()
@@ -1617,6 +1620,7 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 			"pinned":        snap.Pinned,
 			"session_key":   isolateLegacyWebSessionKey(idToKey[snap.ID], snap.ID),
 				"agent_type":    snap.AgentType,
+				"interruptible": interruptible,
 				"active":        activeIDs[snap.ID],
 				"history_count": histCount,
 				"created_at":    snap.CreatedAt,
@@ -1735,6 +1739,7 @@ func (m *ManagementServer) handleProjectSessionDetail(w http.ResponseWriter, r *
 		"live":               live,
 		"running":            running,
 		"waiting_permission": waitingPerm,
+		"interruptible":      e.AgentInterruptible(),
 		"history_count":      len(snap.History),
 		"created_at":         snap.CreatedAt,
 		"updated_at":         snap.UpdatedAt,

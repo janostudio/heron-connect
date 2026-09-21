@@ -26,6 +26,25 @@ func (a *stubAgent) StartSession(_ context.Context, _ string) (AgentSession, err
 func (a *stubAgent) ListSessions(_ context.Context) ([]AgentSessionInfo, error) { return nil, nil }
 func (a *stubAgent) Stop() error                                                { return nil }
 
+// reportingInterruptibleAgent implements AgentInterruptibleReporter — the path
+// taken by agents with a hard-coded capability (codebuddy).
+type reportingInterruptibleAgent struct {
+	stubAgent
+	interruptible bool
+}
+
+func (a *reportingInterruptibleAgent) Interruptible() bool { return a.interruptible }
+
+// snapshotOnlyAgent simulates a config-driven agent (claudecode): it does NOT
+// implement AgentInterruptibleReporter, so the engine must fall back to reading
+// the "interruptible" key out of its option snapshot.
+type snapshotOnlyAgent struct {
+	stubAgent
+	opts map[string]any
+}
+
+func (a *snapshotOnlyAgent) WorkspaceAgentOptions() map[string]any { return a.opts }
+
 type stubAgentSession struct{}
 
 func (s *stubAgentSession) Send(_ string, _ []ImageAttachment, _ []FileAttachment) error { return nil }
@@ -14866,6 +14885,70 @@ func TestSessionIsInterruptible_CapabilityMatrix(t *testing.T) {
 				t.Errorf("sessionIsInterruptible = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestAgentInterruptible_ConfigLevelWorksWhileIdle is the reason
+// AgentInterruptible exists as a separate method: sessionIsInterruptible needs a
+// live session in interactiveStates, so it reports false for an idle project.
+// The Web UI asks exactly then — after a page reload, before any turn starts —
+// so a state check would mislabel an interruptible project as queue-only.
+func TestAgentInterruptible_ConfigLevelWorksWhileIdle(t *testing.T) {
+	e := newTestEngine()
+	e.agent = &reportingInterruptibleAgent{interruptible: true}
+
+	// No interactiveStates entry at all — the idle case.
+	if e.sessionIsInterruptible("test:u") {
+		t.Fatal("precondition: sessionIsInterruptible must be false while idle")
+	}
+	if !e.AgentInterruptible() {
+		t.Error("AgentInterruptible must report the configured capability while idle")
+	}
+}
+
+// TestAgentInterruptible_ResolutionOrder covers the three-tier lookup: the
+// agent's own reporter wins, then the config-option snapshot, then false.
+func TestAgentInterruptible_ResolutionOrder(t *testing.T) {
+	cases := []struct {
+		name  string
+		agent Agent
+		want  bool
+	}{
+		{name: "reporter true", agent: &reportingInterruptibleAgent{interruptible: true}, want: true},
+		{name: "reporter false", agent: &reportingInterruptibleAgent{}, want: false},
+		{name: "snapshot fallback true", agent: &snapshotOnlyAgent{opts: map[string]any{"interruptible": true}}, want: true},
+		{name: "snapshot fallback false", agent: &snapshotOnlyAgent{opts: map[string]any{}}, want: false},
+		{name: "snapshot wrong type", agent: &snapshotOnlyAgent{opts: map[string]any{"interruptible": "yes"}}, want: false},
+		{name: "neither interface", agent: &stubAgent{}, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestEngine()
+			e.agent = tc.agent
+			if got := e.AgentInterruptible(); got != tc.want {
+				t.Errorf("AgentInterruptible = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAgentInterruptible_DeadSessionStillReportsConfig pins that this is a
+// config check, not a liveness check: a project whose agent was configured for
+// interruption keeps advertising it even when a previously running session has
+// died, because the capability survives a session restart.
+func TestAgentInterruptible_DeadSessionStillReportsConfig(t *testing.T) {
+	e := newTestEngine()
+	e.agent = &reportingInterruptibleAgent{interruptible: true}
+	dead := newInterruptibleSession("dead", true)
+	dead.alive = false
+	e.interactiveStates["test:u"] = &interactiveState{agentSession: dead}
+
+	if e.sessionIsInterruptible("test:u") {
+		t.Fatal("precondition: dead session must not be interruptible")
+	}
+	if !e.AgentInterruptible() {
+		t.Error("AgentInterruptible must not depend on session liveness")
 	}
 }
 

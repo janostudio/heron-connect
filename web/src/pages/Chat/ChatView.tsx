@@ -887,7 +887,7 @@ export default function ChatView() {
   // conversation (instead of one shared transcript) is what lets a background
   // conversation keep streaming while you read another one.
   const store = useChatSessions();
-  const { slices, slicesRef, setSlices, ensureSlice, updateSlice, apply, seedHistory, settleAll } = store;
+  const { slices, slicesRef, setSlices, ensureSlice, updateSlice, apply, seedHistory, setServerRunning, settleAll } = store;
 
   // ── Stable routing keys ──────────────────────────────────────
   //
@@ -913,6 +913,13 @@ export default function ChatView() {
   // id once persisted; for an unsaved draft we key the slice by its own key.
   const viewedId = currentSession?.id || draftKey;
   const sessionKey = currentSession?.session_key || draftKey;
+
+  // The frame handler and the session-list poll must stay identity-stable —
+  // useBridgeSocket captures the handler once as onMessage, and adding
+  // `viewedId` to the poll's deps would rebuild its interval on every
+  // navigation — so both read the current view id through this ref.
+  const viewedIdRef = useRef(viewedId);
+  viewedIdRef.current = viewedId;
 
   // Get (or lazily mint) the routing id for the conversation on screen. Called
   // before sending, so a brand-new conversation has a slice to receive into.
@@ -941,6 +948,7 @@ export default function ChatView() {
   const viewedSlice = viewedId ? slices[viewedId] : undefined;
   const messages = viewedSlice?.messages ?? [];
   const typing = viewedSlice?.typing ?? false;
+  const serverRunning = viewedSlice?.serverRunning ?? false;
   const cmdResult: CommandResult | null = viewedSlice?.cmdResult ?? null;
 
   // When an unsaved draft becomes a persisted session, its live output sits
@@ -1000,19 +1008,30 @@ export default function ChatView() {
         // live output that arrived from the bridge, that content is newer than
         // the persisted history and must survive.
         seedHistory(target.id, historyToMessages(detail.history || []));
+        // REST is authoritative for "is a turn still running". A page reload
+        // wipes every bridge frame, so typing/streaming read false even though
+        // the backend turn is still going — without this the composer would
+        // offer "send" while the agent is mid-answer.
+        setServerRunning(target.id, !!detail.running);
       } else {
         setCurrentSession(null);
       }
     } finally {
       if (seq.isCurrent(ticket)) setLoading(false);
     }
-  }, [projectName, routeSessionId, seedHistory]);
+  }, [projectName, routeSessionId, seedHistory, setServerRunning]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
   // Periodically refresh the session list so execution-status badges (running
   // / waiting permission) stay current while other sessions run in parallel.
-  // Only refreshes the list — never touches the open conversation.
+  //
+  // It also keeps the OPEN conversation's server-authoritative busy flag in
+  // sync. This is what unsticks a red stop button when a turn ends but the
+  // terminal bridge frame was lost, and what flips it back when another client
+  // stops a turn. It does NOT reopen the "history clobbers live content"
+  // problem the old comment guarded against: only `serverRunning` is written,
+  // never `messages`/`typing`.
   //
   // The poll fires every 5s but the payload is almost always identical. Since
   // sortSessions() always builds a fresh array, an unconditional setSessions
@@ -1025,8 +1044,17 @@ export default function ChatView() {
       const { sessions: allSessions } = await listSessions(projectName);
       const sorted = sortSessions(allSessions || []);
       setSessions(prev => (sessionsSignature(prev) === sessionsSignature(sorted) ? prev : sorted));
+
+      // Read the open conversation from the ref, not from a closure: depending
+      // on `viewedId` here would rebuild this callback (and its interval) on
+      // every navigation.
+      const openId = viewedIdRef.current;
+      if (openId) {
+        const open = sorted.find(s => s.id === openId);
+        if (open) setServerRunning(openId, !!open.running);
+      }
     } catch { /* transient — keep last known list */ }
-  }, [projectName]);
+  }, [projectName, setServerRunning]);
 
   useEffect(() => {
     const timer = setInterval(refreshSessions, 5000);
@@ -1088,12 +1116,6 @@ export default function ChatView() {
   //                    a conversation that has not been persisted yet.
   //   3. drop        — a conversation this client never opened (e.g. another
   //                    tab's conversation on the same platform).
-  // The frame handler must stay identity-stable (useBridgeSocket captures it
-  // once as onMessage), so read the current view id through a ref rather than
-  // closing over it.
-  const viewedIdRef = useRef(viewedId);
-  viewedIdRef.current = viewedId;
-
   const handleBridgeMessage = useCallback((msg: BridgeIncoming) => {
     const msgKey = (msg as any).session_key as string | undefined;
     const msgID = (msg as any).session_id as string | undefined;
@@ -1219,18 +1241,26 @@ export default function ChatView() {
   }, []);
 
   // If the bridge connection drops mid-turn, no terminal event will arrive for
-  // ANY conversation — settle them all so no red stop button gets stuck.
+  // ANY conversation — settle their local stream flags so no red stop button
+  // stays stuck. `serverRunning` is intentionally left alone (see settleAll):
+  // it is REST-sourced truth, and clearing it here would show a sendable
+  // composer for a conversation the backend is still working on.
   useEffect(() => {
     if (bridgeStatus !== 'connected') {
       settleAll();
     }
   }, [bridgeStatus, settleAll]);
 
-  // True while the VIEWED conversation is actively producing a reply (typing
-  // indicator or a streaming message in flight). Scoped to the conversation on
-  // screen: a background conversation running in parallel must not light up
-  // this one's stop button.
-  const isRunning = typing || messages.some(m => m.streaming);
+  // True while the VIEWED conversation is actively producing a reply. Scoped to
+  // the conversation on screen: a background conversation running in parallel
+  // must not light up this one's stop button.
+  //
+  // Busy = the backend says a turn is executing (authoritative, survives a
+  // reload) OR this client is locally streaming. OR-ed rather than replaced:
+  // the REST flag lags by up to one poll interval, while the WS flag is instant
+  // but empty after a reload — together they cover both edges. Never AND-ed,
+  // because either source alone may know about a turn the other cannot see.
+  const isRunning = serverRunning || typing || messages.some(m => m.streaming);
 
   const handleStop = useCallback(() => {
     bridgeSend('/stop');
@@ -1569,6 +1599,7 @@ export default function ChatView() {
           bridgeCfgLoaded={!!bridgeCfg}
           bridgeStatus={bridgeStatus}
           isRunning={isRunning}
+          interruptible={viewedStatus?.interruptible ?? false}
           onStop={handleStop}
           cmdOpen={cmdOpen}
           onCmdOpenChange={setCmdOpen}

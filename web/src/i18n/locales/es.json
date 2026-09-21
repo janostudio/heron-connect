@@ -279,6 +279,8 @@
     "inputPlaceholder": "Escribe un mensaje o presiona / para comandos...",
     "commands": "Comandos",
     "stop": "Detener",
+    "stopInterruptible": "Detener la respuesta actual (un mensaje nuevo la interrumpiría)",
+    "stopQueued": "Detener la respuesta actual (un mensaje nuevo se pondría en cola)",
     "attach": "Adjuntar imagen/archivo",
     "removeAttachment": "Quitar",
     "fileTooBig": "Archivo demasiado grande (>10MB)",

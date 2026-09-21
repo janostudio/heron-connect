@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   emptySlice, applyFrame, mergeHistoryIntoSlice, historyToMessages,
-  isHistoryMessage, settledMessages, type SessionSlice,
+  isHistoryMessage, settledMessages, setServerRunning, type SessionSlice,
 } from './chatSessionsCore';
 import type { ChatMsg } from './chatMessage';
 import type { BridgeIncoming } from '@/hooks/useBridgeSocket';
@@ -251,6 +251,15 @@ describe('mergeHistoryIntoSlice', () => {
     const s = mergeHistoryIntoSlice(live, [user('hist-0', 'q1')]);
     expect(s.typing).toBe(true);
     expect(s.pendingCmd).toBe('/status');
+  });
+
+  it('never clears the server busy flag (a reload must not hide a running turn)', () => {
+    // The reported bug: reload → history refetch → composer becomes sendable
+    // while the backend turn is still going. History is a persisted snapshot
+    // and cannot know about the in-flight turn, so it must not touch this flag.
+    const live: SessionSlice = { ...emptySlice(), serverRunning: true };
+    const s = mergeHistoryIntoSlice(live, [user('hist-0', 'q1')]);
+    expect(s.serverRunning).toBe(true);
   });
 
   it('keeps the slice identity when nothing changed (memo precondition)', () => {
@@ -614,5 +623,88 @@ describe('message timestamps', () => {
     const ts = new Date(out.messages[0].timestamp!).getTime();
     expect(ts).toBeGreaterThanOrEqual(before);
     expect(ts).toBeLessThanOrEqual(Date.now());
+  });
+});
+
+// ── Server-authoritative busy flag ───────────────────────────
+//
+// Regression tests for the two reported Web bugs, both rooted in the same
+// cause: `isRunning` used to depend only on bridge frames.
+//   ① interruptible=true: the stop button stayed red after a turn ended,
+//      because the terminal frame was lost / the turn was cut short.
+//   ② interruptible=false: a page reload made the composer sendable while
+//      the backend turn was still running, because frames never replay.
+// The REST-sourced flag fixes both, so the important properties are that it
+// starts false, is applied idempotently, and is NOT clobbered by frame events.
+
+describe('setServerRunning', () => {
+  it('starts false so a fresh slice is never spuriously "running"', () => {
+    expect(emptySlice().serverRunning).toBe(false);
+  });
+
+  it('sets the flag and keeps the messages array by reference', () => {
+    const before = emptySlice();
+    const after = setServerRunning(before, true);
+
+    expect(after.serverRunning).toBe(true);
+    expect(before.serverRunning).toBe(false);                        // no mutation
+    expect(after.messages).toBe(before.messages);                    // rows not rebuilt
+  });
+
+  it('returns the same slice when the value is unchanged (5s poll precondition)', () => {
+    // The poll runs forever; a fresh identity every tick would re-render every
+    // memoized MessageRow for nothing.
+    const idle = emptySlice();
+    expect(setServerRunning(idle, false)).toBe(idle);          // already false
+
+    const running = setServerRunning(idle, true);
+    expect(setServerRunning(running, true)).toBe(running);     // already true
+  });
+
+  it('toggles back to false (turn ended, poll caught up)', () => {
+    const running = setServerRunning(emptySlice(), true);
+    expect(setServerRunning(running, false).serverRunning).toBe(false);
+  });
+
+  it('is independent of the local typing flag', () => {
+    const typing: SessionSlice = { ...emptySlice(), typing: true };
+    // REST says the turn is over while the local stream still says typing.
+    const s = setServerRunning(typing, false);
+    expect(s.serverRunning).toBe(false);
+    expect(s.typing).toBe(true);   // the other stream is untouched
+  });
+});
+
+describe('frame events do not clobber the server busy flag', () => {
+  // Pins the "two independent streams" contract: WS frames settle typing /
+  // streaming only, REST settles serverRunning only. If a frame ever cleared
+  // serverRunning, the poll would fight the stream and the button would flicker.
+  const running: SessionSlice = { ...emptySlice(), serverRunning: true };
+
+  it('typing_stop leaves serverRunning alone', () => {
+    const s = applyFrame(running, frame({ type: 'typing_stop', session_key: KEY_A } as any));
+    expect(s.typing).toBe(false);
+    expect(s.serverRunning).toBe(true);
+  });
+
+  it('typing_start leaves serverRunning alone', () => {
+    const s = applyFrame(emptySlice(), frame({ type: 'typing_start', session_key: KEY_A } as any));
+    expect(s.typing).toBe(true);
+    expect(s.serverRunning).toBe(false);
+  });
+
+  it('a completed reply_stream leaves serverRunning alone', () => {
+    const s = applyFrame(running, frame({
+      type: 'reply_stream', session_key: KEY_A, session_id: 'sa', reply_ctx: KEY_A,
+      delta: 'done', full_text: 'done', done: true,
+    } as any));
+    expect(s.serverRunning).toBe(true);
+  });
+
+  it('a final reply leaves serverRunning alone', () => {
+    const s = applyFrame(running, frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', content: 'final', format: 'markdown',
+    } as any));
+    expect(s.serverRunning).toBe(true);
   });
 });

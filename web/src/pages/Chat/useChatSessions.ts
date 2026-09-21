@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import {
   emptySlice, applyFrame, mergeHistoryIntoSlice, settledMessages,
+  setServerRunning as setServerRunningCore,
   type SessionSlice, type SliceMap,
 } from './chatSessionsCore';
 import type { ChatMsg } from './chatMessage';
@@ -14,7 +15,7 @@ import type { BridgeIncoming } from '@/hooks/useBridgeSocket';
 // Re-exported so callers have one import for the whole feature.
 export {
   emptySlice, applyFrame, mergeHistoryIntoSlice, historyToMessages,
-  isHistoryMessage,
+  setServerRunning, isHistoryMessage,
 } from './chatSessionsCore';
 export type { SessionSlice, SliceMap } from './chatSessionsCore';
 
@@ -60,7 +61,25 @@ export function useChatSessions() {
     updateSlice(id, s => mergeHistoryIntoSlice(s, history));
   }, [updateSlice]);
 
-  /** Settle every conversation (only correct when the connection dropped). */
+  /**
+   * Overwrite this conversation's server-authoritative busy flag. Fed from the
+   * management REST API (`session.running`) on load and on every session-list
+   * poll — the only source that survives a page reload or a lost bridge frame.
+   */
+  const setServerRunning = useCallback((id: string, running: boolean) => {
+    updateSlice(id, s => setServerRunningCore(s, running));
+  }, [updateSlice]);
+
+  /**
+   * Settle every conversation's LOCAL stream flags (typing/streaming) — with the
+   * connection down no terminal frame can arrive, so without this a red stop
+   * button would stay stuck forever.
+   *
+   * `serverRunning` is deliberately NOT touched: it is REST-sourced truth, and
+   * clearing it here would re-introduce the "reload shows a sendable composer
+   * while the turn still runs" bug for every disconnected session. The next
+   * successful poll / fetchData reconciles it.
+   */
   const settleAll = useCallback(() => {
     setSlices(prev => {
       let changed = false;
@@ -78,7 +97,8 @@ export function useChatSessions() {
   }, []);
 
   return {
-    slices, slicesRef, setSlices, ensureSlice, updateSlice, apply, seedHistory, settleAll,
+    slices, slicesRef, setSlices, ensureSlice, updateSlice, apply, seedHistory,
+    setServerRunning, settleAll,
   };
 }
 

@@ -1280,6 +1280,13 @@ func TestAgent_AlwaysInterruptible(t *testing.T) {
 	if !agent.interruptible {
 		t.Error("codebuddy must always run resident (interruptible) to answer control_request frames")
 	}
+	// The management API reads the capability through the Agent-level reporter
+	// (core.AgentInterruptibleReporter), not the raw field. codebuddy never
+	// reads an "interruptible" config option, so an option-snapshot probe would
+	// wrongly report false — this pins the reporter to the field.
+	if !agent.Interruptible() {
+		t.Error("Interruptible() = false, want true (must expose the hard-coded capability)")
+	}
 }
 
 // captureStdin records writes so tests can assert on emitted frames.

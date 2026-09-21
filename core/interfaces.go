@@ -398,6 +398,25 @@ type TurnInterrupter interface {
 	Interruptible() bool
 }
 
+// AgentInterruptibleReporter is an optional interface for AGENTS (not sessions)
+// that can report whether they are configured for mid-turn interruption.
+//
+// Why this exists alongside TurnInterrupter: TurnInterrupter lives on a live
+// SESSION and is only meaningful while that session is running. The management
+// API needs the CONFIGURED capability before any turn starts — right after a
+// page reload, while no agent session exists yet. Agents whose interruptibility
+// is hard-coded rather than config-derived (codebuddy always runs resident and
+// must stay interruptible) implement this so that capability is reported
+// directly instead of being inferred from config options they never read.
+//
+// Agents whose interruptibility is purely config-driven (claudecode) need not
+// implement it; the engine falls back to the option snapshot.
+type AgentInterruptibleReporter interface {
+	// Interruptible reports whether this agent is configured for mid-turn
+	// interruption with immediate prompt injection.
+	Interruptible() bool
+}
+
 // TurnEpochSetter is an optional interface for agent sessions that stamp their
 // events with a turn epoch. The engine mints a fresh epoch per turn and calls
 // SetTurnEpoch before sending the prompt; the session then copies that value

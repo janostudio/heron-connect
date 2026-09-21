@@ -625,6 +625,55 @@ func TestMgmt_SessionList_IncludesPinned(t *testing.T) {
 	}
 }
 
+func TestMgmt_SessionList_IncludesInterruptible(t *testing.T) {
+	_, ts, e := testManagementServer(t, "tok")
+	e.GetSessions().GetOrCreateActive("user1")
+
+	r := mgmtGet(t, ts.URL+"/api/v1/projects/test-project/sessions", "tok")
+	if !r.OK {
+		t.Fatalf("list failed: %s", r.Error)
+	}
+	var data struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	if err := json.Unmarshal(r.Data, &data); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if len(data.Sessions) == 0 {
+		t.Fatal("expected at least one session")
+	}
+	// The field must be present and boolean on every entry — the Web UI reads it
+	// to choose between the "interrupt" and "queue" busy affordances, and a
+	// missing key there silently degrades to the queue wording.
+	for _, sess := range data.Sessions {
+		v, ok := sess["interruptible"]
+		if !ok {
+			t.Errorf("session %v missing interruptible", sess["id"])
+			continue
+		}
+		if _, isBool := v.(bool); !isBool {
+			t.Errorf("interruptible = %v (%T), want bool", v, v)
+		}
+	}
+}
+
+func TestMgmt_SessionDetail_IncludesInterruptible(t *testing.T) {
+	_, ts, e := testManagementServer(t, "tok")
+	s := e.GetSessions().GetOrCreateActive("user1")
+
+	r := mgmtGet(t, ts.URL+"/api/v1/projects/test-project/sessions/"+s.ID, "tok")
+	if !r.OK {
+		t.Fatalf("detail failed: %s", r.Error)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(r.Data, &data); err != nil {
+		t.Fatalf("unmarshal detail: %v", err)
+	}
+	if _, ok := data["interruptible"].(bool); !ok {
+		t.Errorf("interruptible = %v (%T), want bool", data["interruptible"], data["interruptible"])
+	}
+}
+
 func TestMgmt_Config(t *testing.T) {
 	srv, ts, _ := testManagementServer(t, "tok")
 

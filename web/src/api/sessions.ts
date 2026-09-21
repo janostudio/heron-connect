@@ -18,6 +18,13 @@ export interface Session {
   running?: boolean;
   /** True while the turn is blocked on a permission/AskUserQuestion answer. */
   waiting_permission?: boolean;
+  /**
+   * True when a message arriving mid-turn interrupts the running turn instead
+   * of queueing until it ends. Project-level agent capability, so it is the
+   * same for every session of a project — the UI uses it to tell the two busy
+   * states apart. Absent/false means queueing.
+   */
+  interruptible?: boolean;
   /** True when the session is user-pinned (shown first in lists). */
   pinned?: boolean;
   created_at: string;

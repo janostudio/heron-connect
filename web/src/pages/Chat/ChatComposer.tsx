@@ -42,6 +42,13 @@ interface Props {
   bridgeCfgLoaded: boolean;
   bridgeStatus: string;
   isRunning: boolean;
+  /**
+   * Whether a message sent mid-turn interrupts the running turn (true) or is
+   * queued until it ends (false). Only used to pick the stop button's tooltip —
+   * the button itself stays clickable either way, because /stop must always be
+   * able to cancel a long-running turn.
+   */
+  interruptible: boolean;
   onStop: () => void;
   cmdOpen: boolean;
   onCmdOpenChange: (open: boolean) => void;
@@ -55,7 +62,7 @@ const ACCEPT = attachmentAccept();
 
 const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer({
   onSend, pickedFiles, onRemoveFile, onAddFiles,
-  canSend, bridgeCfgLoaded, bridgeStatus, isRunning, onStop,
+  canSend, bridgeCfgLoaded, bridgeStatus, isRunning, interruptible, onStop,
   cmdOpen, onCmdOpenChange, onCmdSelect,
 }, ref) {
   const { t } = useTranslation();
@@ -263,8 +270,9 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
       {isRunning ? (
         <button
           type="button"
+          data-testid="composer-stop"
           onClick={onStop}
-          title={t('chat.stop')}
+          title={t(interruptible ? 'chat.stopInterruptible' : 'chat.stopQueued')}
           className="p-3 rounded-xl bg-red-500 text-white hover:bg-red-600 transition-colors flex items-center shadow-sm"
         >
           <Square size={16} className="fill-current" />
@@ -272,6 +280,7 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
       ) : (
         <button
           type="button"
+          data-testid="composer-send"
           onClick={submit}
           disabled={!draft.trim() && pickedFiles.length === 0}
           className="p-3 rounded-xl bg-accent text-black hover:bg-accent-dim transition-colors disabled:opacity-50 flex items-center"

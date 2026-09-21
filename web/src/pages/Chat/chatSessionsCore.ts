@@ -42,6 +42,16 @@ function parseProgressCard(content: string): ChatMsg['progressCard'] {
 export interface SessionSlice {
   messages: ChatMsg[];
   typing: boolean;
+  /**
+   * Server-authoritative busy flag from the management REST API
+   * (`session.running`) for THIS conversation.
+   *
+   * Deliberately separate from `typing`: after a page reload there is no bridge
+   * frame history, so only REST can tell us a turn is still running. The two are
+   * OR-ed at render time (see ChatView's isRunning) and must never overwrite
+   * each other — WS events settle their own side, REST polling settles this one.
+   */
+  serverRunning: boolean;
   /** Pending slash command whose next reply should go to the result panel. */
   pendingCmd: string | null;
   /** Result currently shown in this conversation's command panel. */
@@ -54,10 +64,21 @@ export function emptySlice(): SessionSlice {
   return {
     messages: [],
     typing: false,
+    serverRunning: false,
     pendingCmd: null,
     cmdResult: null,
     previewHandleCounter: 0,
   };
+}
+
+/**
+ * Apply the server's authoritative busy flag to one slice.
+ *
+ * Returns the input unchanged when the value is identical, so the 5s session
+ * poll does not invalidate memoized consumers (MessageRow) on every tick.
+ */
+export function setServerRunning(slice: SessionSlice, running: boolean): SessionSlice {
+  return slice.serverRunning === running ? slice : { ...slice, serverRunning: running };
 }
 
 export type SliceMap = Record<string, SessionSlice>;

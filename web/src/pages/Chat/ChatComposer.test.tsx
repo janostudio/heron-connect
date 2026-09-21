@@ -18,10 +18,15 @@ import React, { useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import ChatComposer from './ChatComposer';
+// Side-effect import: registers the i18next instance so `t()` resolves real
+// strings. Without it react-i18next warns NO_I18NEXT_INSTANCE and returns the
+// raw keys, which would make the title assertions below meaningless.
+import '@/i18n';
 
 let container: HTMLDivElement;
-let root: Root;
-
+// Lazily created per test and dropped in afterEach: each test owns its own
+// container, so a stale root from the previous test must not be reused.
+let root: Root | null = null;
 beforeEach(() => {
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -30,8 +35,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  act(() => { root.unmount(); });
+  const r = root;
+  if (r) act(() => { r.unmount(); });
   container.remove();
+  root = null;
   delete (globalThis as any).IS_REACT_ACT_ENVIRONMENT;
 });
 
@@ -42,7 +49,12 @@ function CountingSibling() {
   return React.createElement('div', { 'data-testid': 'transcript' }, 'transcript');
 }
 
-function Harness({ onSend }: { onSend: (t: string) => void }) {
+function Harness({ onSend, isRunning = false, interruptible = false, onStop = () => {} }: {
+  onSend: (t: string) => void;
+  isRunning?: boolean;
+  interruptible?: boolean;
+  onStop?: () => void;
+}) {
   // Holds the state a real ChatView holds, so a keystroke leaking into the
   // parent would show up as extra sibling renders.
   const [picked] = useState<any[]>([]);
@@ -58,8 +70,9 @@ function Harness({ onSend }: { onSend: (t: string) => void }) {
       canSend: true,
       bridgeCfgLoaded: true,
       bridgeStatus: 'connected',
-      isRunning: false,
-      onStop: () => {},
+      isRunning,
+      interruptible,
+      onStop,
       cmdOpen: false,
       onCmdOpenChange: () => {},
       onCmdSelect: () => {},
@@ -67,10 +80,22 @@ function Harness({ onSend }: { onSend: (t: string) => void }) {
   );
 }
 
+/** Reuse the mounted root within a test, mounting it on first use. */
+function renderInto(props: Parameters<typeof Harness>[0]) {
+  if (!root) root = createRoot(container);
+  const r = root;
+  act(() => { r.render(React.createElement(Harness, props)); });
+}
+
 function render(onSend: (t: string) => void = () => {}) {
-  root = createRoot(container);
-  act(() => { root.render(React.createElement(Harness, { onSend })); });
+  renderInto({ onSend });
   return container.querySelector('textarea') as HTMLTextAreaElement;
+}
+
+/** Render with the stop button showing, so its title/behaviour can be asserted. */
+function renderRunning(opts: { interruptible: boolean; onStop?: () => void }) {
+  renderInto({ onSend: () => {}, isRunning: true, ...opts });
+  return container.querySelector('[data-testid="composer-stop"]') as HTMLButtonElement;
 }
 
 function typeInto(textarea: HTMLTextAreaElement, value: string) {
@@ -117,5 +142,46 @@ describe('ChatComposer typing isolation', () => {
 
     expect(sent).toEqual(['ship it']);
     expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('');
+  });
+});
+
+// ── Stop button: the two busy states ─────────────────────────
+//
+// The button looks the same whether the agent is configured to interrupt or to
+// queue, because clicking it means the same thing either way (stop this turn).
+// What differs is the tooltip, which tells the user what a *new message* would
+// do. The `interruptible` flag comes from the management API because the web
+// client cannot know the agent's config, and a missing flag must degrade to the
+// queue wording rather than crash.
+
+describe('ChatComposer stop button', () => {
+  it('shows the interrupt wording when the agent interrupts mid-turn', () => {
+    const stop = renderRunning({ interruptible: true });
+    expect(stop.title).toMatch(/interrupt/i);
+    expect(stop.title).not.toMatch(/queue/i);
+  });
+
+  it('shows the queue wording when the agent queues mid-turn messages', () => {
+    const stop = renderRunning({ interruptible: false });
+    expect(stop.title).toMatch(/queue/i);
+  });
+
+  it('stays clickable and calls onStop in BOTH states', () => {
+    // /stop must always be able to cancel a long-running turn — queueing new
+    // messages is not a reason to trap the user in a turn they cannot end.
+    for (const interruptible of [true, false]) {
+      let calls = 0;
+      const stop = renderRunning({ interruptible, onStop: () => { calls++; } });
+
+      expect(stop.disabled).toBe(false);
+      act(() => { stop.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+      expect(calls).toBe(1);
+    }
+  });
+
+  it('offers the send button when idle, regardless of interruptible', () => {
+    renderInto({ onSend: () => {}, interruptible: true });
+    expect(container.querySelector('[data-testid="composer-stop"]')).toBeNull();
+    expect(container.querySelector('[data-testid="composer-send"]')).not.toBeNull();
   });
 });
