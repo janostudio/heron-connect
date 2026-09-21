@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.3.1 (2026-09-21)
+
+### Added
+
+- **新增 `heron-connect share` 命令，可在命令行管理分享链接**。此前分享只能在 Web 界面点按钮；现在终端里也能用：
+  - `heron-connect share <project> <path>` —— 生成链接并打印（可直接接管道，如 `| pbcopy`）
+  - `heron-connect share list [project]` —— 列出所有分享
+  - `heron-connect share revoke <token|url>` —— 立即失效，**接受完整链接**（带尾斜杠、带 `?download=1` 也能正确识别，因为用户手上拿到的就是链接）
+  - 命令通过本地 Unix socket 与运行中的实例通信，和 `send`/`relay` 一致；实例没在跑会明确报错而不是静默写入文件。
+- **分享改为幂等：同一个文件重复分享会返回同一条链接，不再生成新 token**（Web 界面同样生效）。此前每次调用都会新建链接，导致同一文件出现多条互不相干的链接——撤销其中一条时另一条仍然有效，看起来像撤销失效。接口现在还会返回 `reused` 标志，调用方可以区分"刚刚分享"和"之前已分享"。
+
+### Changed
+
+- **分享的业务逻辑收敛为一份实现**（`ManagementServer.CreateShare/ListShares/RevokeShare`），Web 界面与 CLI 共用。此前只有 HTTP 端点内部一份逻辑，若为 CLI 另写一份，路径校验（尤其是**路径穿越防护**）就有了分叉的风险——两处略有差异的校验正是越权漏洞的常见来源。现在 CLI 通过 socket 委托到同一实现。
+
+### Fixed
+
+- **修正 CLI 对分享链接的解析**：`share revoke` 接受带尾斜杠的链接（浏览器和聊天工具常会自动补上），此前会因 token 多出一个 `/` 而匹配失败、报 "share not found"。
+
 ## v1.3.0 (2026-09-21)
 
 ### Added

@@ -721,6 +721,9 @@ func main() {
 		case "web":
 			runWeb(os.Args[2:])
 			return
+		case "share":
+			runShare(os.Args[2:])
+			return
 		}
 	}
 
@@ -1170,6 +1173,12 @@ func main() {
 		if cronSched != nil {
 			apiSrv.SetCronScheduler(cronSched)
 		}
+		// Share links are managed by the management layer; the socket API just
+		// exposes them to `heron-connect share` so the CLI and the Web UI act on
+		// the same store through one implementation of the logic.
+		if mgmtSrv != nil {
+			apiSrv.SetShareService(mgmtSrv)
+		}
 		apiSrv.Start()
 	}
 
@@ -1456,6 +1465,11 @@ Commands:
     show <id>        Show session messages (-n N for last N)
 
   agent-sid          Print the agent session ID for the current session
+
+  share              Manage public read-only links to project files
+    <project> <path>  Share a file (idempotent); prints the link
+    list [project]    List share links
+    revoke <token>    Disable a link immediately
 
   relay              Cross-project message relay
     send             Send a message to another project and get the response

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,7 +26,35 @@ type APIServer struct {
 	engines    map[string]*core.Engine // project name → engine
 	cron       *core.CronScheduler
 	relay      core.RelayManagerAPI
+	shares     ShareService
 	mu         sync.RWMutex
+}
+
+// ShareService is the file-sharing capability the socket API exposes, so a CLI
+// invocation can manage share links for a running instance. Implemented by the
+// management server; declared here so this package does not depend on it.
+type ShareService interface {
+	// CreateShare returns the share for a file, reusing an existing link when
+	// one is already minted (sharing is idempotent).
+	CreateShare(project, relPath string) (*ShareResult, error)
+	// ListShares returns shares, optionally filtered to one project.
+	ListShares(project string) ([]ShareResult, error)
+	// RevokeShare disables a link. found reports whether the token existed.
+	RevokeShare(token string) (found bool, err error)
+}
+
+// ShareResult is the wire shape shared by the socket API and the CLI. Field
+// names match the management HTTP API so the two entry points stay aligned.
+type ShareResult struct {
+	Token     string `json:"token"`
+	URL       string `json:"url"`
+	Project   string `json:"project"`
+	Path      string `json:"path"`
+	FileName  string `json:"file_name"`
+	CreatedAt int64  `json:"created_at"`
+	// Reused is true when an existing link was returned rather than a new one
+	// being minted.
+	Reused bool `json:"reused"`
 }
 
 // SendRequest is the JSON body for POST /send.
@@ -73,6 +102,9 @@ func NewAPIServer(dataDir string) (*APIServer, error) {
 	s.mux.HandleFunc("/relay/send", s.handleRelaySend)
 	s.mux.HandleFunc("/relay/bind", s.handleRelayBind)
 	s.mux.HandleFunc("/relay/binding", s.handleRelayBinding)
+	s.mux.HandleFunc("/share/create", s.handleShareCreate)
+	s.mux.HandleFunc("/share/list", s.handleShareList)
+	s.mux.HandleFunc("/share/revoke", s.handleShareRevoke)
 
 	return s, nil
 }
@@ -92,6 +124,132 @@ func (s *APIServer) RegisterEngine(name string, e *core.Engine) {
 
 func (s *APIServer) SetRelayManager(rm core.RelayManagerAPI) {
 	s.relay = rm
+}
+
+// SetShareService wires the file-sharing capability into the socket API. Left
+// unset in builds without a management server, in which case the share
+// endpoints report 503 rather than pretending to work.
+func (s *APIServer) SetShareService(svc ShareService) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.shares = svc
+}
+
+// ── file sharing over the socket ──────────────────────────────
+//
+// These endpoints let `heron-connect share` manage links for a running
+// instance. They deliberately delegate to ShareService rather than
+// reimplementing the logic: sharing has one implementation, so the CLI and the
+// Web UI cannot drift apart in behaviour (path validation, idempotency,
+// revocation).
+
+func (s *APIServer) shareService() (ShareService, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.shares, s.shares != nil
+}
+
+func (s *APIServer) handleShareCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	svc, ok := s.shareService()
+	if !ok {
+		http.Error(w, "file sharing not available", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Project string `json:"project"`
+		Path    string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Project) == "" {
+		http.Error(w, "project is required", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		http.Error(w, "path is required", http.StatusBadRequest)
+		return
+	}
+
+	res, err := svc.CreateShare(req.Project, req.Path)
+	if err != nil {
+		http.Error(w, err.Error(), shareErrStatus(err))
+		return
+	}
+	apiJSON(w, http.StatusOK, res)
+}
+
+func (s *APIServer) handleShareList(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.shareService()
+	if !ok {
+		http.Error(w, "file sharing not available", http.StatusServiceUnavailable)
+		return
+	}
+	shares, err := svc.ListShares(r.URL.Query().Get("project"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if shares == nil {
+		shares = []ShareResult{}
+	}
+	apiJSON(w, http.StatusOK, shares)
+}
+
+func (s *APIServer) handleShareRevoke(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	svc, ok := s.shareService()
+	if !ok {
+		http.Error(w, "file sharing not available", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Token) == "" {
+		http.Error(w, "token is required", http.StatusBadRequest)
+		return
+	}
+
+	found, err := svc.RevokeShare(req.Token)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.Error(w, "share not found", http.StatusNotFound)
+		return
+	}
+	apiJSON(w, http.StatusOK, map[string]any{"revoked": req.Token})
+}
+
+// shareErrStatus maps a share failure onto an HTTP status. The management
+// layer reports bad input as a plain error, so the common cases are matched on
+// the message the two layers share.
+func shareErrStatus(err error) int {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "not found"):
+		return http.StatusNotFound
+	case strings.Contains(msg, "escapes"), strings.Contains(msg, "forbidden"):
+		return http.StatusForbidden
+	case strings.Contains(msg, "only files"), strings.Contains(msg, "required"):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 func (s *APIServer) RelayManager() core.RelayManagerAPI {

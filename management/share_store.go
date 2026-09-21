@@ -125,6 +125,42 @@ func (s *ShareStore) Create(project, relPath, fileName string) (*FileShare, erro
 	return sh, nil
 }
 
+// FindByPath returns the share already minted for a project-relative path, if
+// any. Creating a share is idempotent: handing out a second token for the same
+// file would leave the caller holding a link they cannot tell apart from the
+// first, and revoking either one would look like a no-op bug.
+//
+// Returns the oldest matching share so repeated calls stay stable even if
+// duplicate records exist from an earlier version.
+func (s *ShareStore) FindByPath(project, relPath string) (*FileShare, bool) {
+	relPath = strings.TrimPrefix(filepath.ToSlash(relPath), "/")
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var found *FileShare
+	for _, sh := range s.shares {
+		if sh.Project != project || sh.RelPath != relPath {
+			continue
+		}
+		if found == nil || sh.CreatedAt < found.CreatedAt {
+			found = sh
+		}
+	}
+	return found, found != nil
+}
+
+// CreateOrReuse returns the existing share for a file, or mints one.
+//
+// Sharing is idempotent by design: the same file handed out twice would give
+// the caller two indistinguishable links, and revoking one would leave the
+// other silently working. reused reports which happened so callers can say so.
+func (s *ShareStore) CreateOrReuse(project, relPath, fileName string) (sh *FileShare, reused bool, err error) {
+	if existing, ok := s.FindByPath(project, relPath); ok {
+		return existing, true, nil
+	}
+	sh, err = s.Create(project, relPath, fileName)
+	return sh, false, err
+}
+
 // Get returns the share for token, if any.
 func (s *ShareStore) Get(token string) (*FileShare, bool) {
 	s.mu.RLock()

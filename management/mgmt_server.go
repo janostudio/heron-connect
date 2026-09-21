@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/janostudio/heron-connect/api"
 	"github.com/janostudio/heron-connect/bridge"
 	"github.com/janostudio/heron-connect/core"
 )
@@ -853,21 +854,118 @@ func (m *ManagementServer) createShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sh, err := m.shareStore.Create(req.Project, rel, filepath.Base(full))
+	sh, err := m.CreateShare(req.Project, rel)
 	if err != nil {
-		slog.Error("share: create failed", "project", req.Project, "path", rel, "error", err)
-		mgmtError(w, http.StatusInternalServerError, "failed to persist share")
+		mgmtError(w, shareErrStatus(err), err.Error())
 		return
 	}
 
 	mgmtJSON(w, http.StatusOK, map[string]any{
 		"token":      sh.Token,
-		"url":        "/api/v1/share/" + sh.Token,
+		"url":        sh.URL,
 		"project":    sh.Project,
-		"path":       sh.RelPath,
+		"path":       sh.Path,
 		"file_name":  sh.FileName,
 		"created_at": sh.CreatedAt,
+		// True when an existing link was returned instead of minting a new
+		// one, so callers can tell "already shared" from "just shared".
+		"reused": sh.Reused,
 	})
+}
+
+// CreateShare validates a project-relative path and returns its share, minting
+// a link only if the file is not already shared.
+//
+// This is the single implementation behind both the HTTP endpoint (used by the
+// Web UI) and the Unix socket endpoint (used by the CLI). Keeping one copy is
+// what makes the two entry points behave identically — a second, slightly
+// different validation of an attacker-influenced path is exactly how a
+// traversal hole appears.
+func (m *ManagementServer) CreateShare(project, path string) (*api.ShareResult, error) {
+	if m.shareStore == nil {
+		return nil, fmt.Errorf("file sharing is not enabled")
+	}
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return nil, fmt.Errorf("project is required")
+	}
+	rel := strings.TrimPrefix(strings.TrimSpace(path), "/")
+	if rel == "" {
+		return nil, fmt.Errorf("path is required")
+	}
+
+	full, err := m.resolveProjectFile(project, rel)
+	if err != nil {
+		return nil, err
+	}
+	// Refuse to mint a link for something that cannot be served. Sharing a
+	// directory is not supported (a share is one file) and a missing path
+	// would produce a link that 404s forever.
+	st, err := os.Stat(full)
+	if err != nil {
+		return nil, fmt.Errorf("file not found")
+	}
+	if st.IsDir() {
+		return nil, fmt.Errorf("only files can be shared, not directories")
+	}
+
+	sh, reused, err := m.shareStore.CreateOrReuse(project, rel, filepath.Base(full))
+	if err != nil {
+		return nil, fmt.Errorf("failed to persist share: %w", err)
+	}
+	return toAPIResult(sh, reused), nil
+}
+
+// ListShares returns shares, optionally filtered to one project. Implements
+// api.ShareService.
+func (m *ManagementServer) ListShares(project string) ([]api.ShareResult, error) {
+	if m.shareStore == nil {
+		return nil, fmt.Errorf("file sharing is not enabled")
+	}
+	shares := m.shareStore.ListByProject(project)
+	out := make([]api.ShareResult, 0, len(shares))
+	for _, sh := range shares {
+		out = append(out, *toAPIResult(sh, false))
+	}
+	return out, nil
+}
+
+// RevokeShare disables a link. Implements api.ShareService.
+func (m *ManagementServer) RevokeShare(token string) (bool, error) {
+	if m.shareStore == nil {
+		return false, fmt.Errorf("file sharing is not enabled")
+	}
+	return m.shareStore.Revoke(strings.TrimSpace(token)), nil
+}
+
+func toAPIResult(sh *FileShare, reused bool) *api.ShareResult {
+	return &api.ShareResult{
+		Token:     sh.Token,
+		URL:       "/api/v1/share/" + sh.Token,
+		Project:   sh.Project,
+		Path:      sh.RelPath,
+		FileName:  sh.FileName,
+		CreatedAt: sh.CreatedAt,
+		Reused:    reused,
+	}
+}
+
+// shareErrStatus maps a CreateShare failure onto an HTTP status.
+func shareErrStatus(err error) int {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "not found"):
+		return http.StatusNotFound
+	case strings.Contains(msg, "escapes"):
+		return http.StatusForbidden
+	case strings.Contains(msg, "required"),
+		strings.Contains(msg, "only files"):
+		return http.StatusBadRequest
+	case strings.Contains(msg, "not enabled"):
+		return http.StatusServiceUnavailable
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // listShares returns shares, optionally filtered to one project.

@@ -609,6 +609,161 @@ func TestShare_RevokedAndUnknownTokensStill404ForBrowsers(t *testing.T) {
 	}
 }
 
+// ── idempotency ───────────────────────────────────────────────
+//
+// Sharing the same file twice must return the SAME link. Handing out a second
+// token would leave the caller holding two indistinguishable links, and
+// revoking one would look like a no-op bug. Applies to the Web UI and the CLI
+// alike, since both call this one implementation.
+
+func TestShare_CreateIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "notes.md", "x")
+	ts, _ := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
+
+	first := createShareViaAPI(t, ts, "tok", "proj", "notes.md")
+	second := createShareViaAPI(t, ts, "tok", "proj", "notes.md")
+
+	if first != second {
+		t.Fatalf("second create minted a new token: %q then %q", first, second)
+	}
+
+	// Only one record should exist.
+	resp, body := doReq(t, http.MethodGet, ts.URL+"/api/v1/share?project=proj", "tok", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list: %d", resp.StatusCode)
+	}
+	var env struct {
+		Data struct {
+			Shares []map[string]any `json:"shares"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(env.Data.Shares) != 1 {
+		t.Fatalf("expected exactly 1 share after two creates, got %d", len(env.Data.Shares))
+	}
+}
+
+// TestShare_CreateReportsReuse distinguishes "just shared" from "already
+// shared" so callers can say so instead of silently returning an old link.
+func TestShare_CreateReportsReuse(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "notes.md", "x")
+	ts, _ := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
+
+	create := func() bool {
+		body, _ := json.Marshal(map[string]string{"project": "proj", "path": "notes.md"})
+		resp, raw := doReq(t, http.MethodPost, ts.URL+"/api/v1/share", "tok", body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("create: %d %s", resp.StatusCode, raw)
+		}
+		var env struct {
+			Data struct {
+				Reused bool `json:"reused"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &env); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return env.Data.Reused
+	}
+
+	if create() {
+		t.Error("first create should report reused=false")
+	}
+	if !create() {
+		t.Error("second create should report reused=true")
+	}
+}
+
+// TestShare_DifferentFilesGetDifferentLinks makes sure the reuse lookup keys on
+// the path and does not collapse distinct files onto one token.
+func TestShare_DifferentFilesGetDifferentLinks(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.md", "A")
+	writeFile(t, dir, "b.md", "B")
+	sub := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Same base name in a different directory must not collide.
+	writeFile(t, sub, "a.md", "nested A")
+	ts, _ := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
+
+	topA := createShareViaAPI(t, ts, "tok", "proj", "a.md")
+	topB := createShareViaAPI(t, ts, "tok", "proj", "b.md")
+	nestedA := createShareViaAPI(t, ts, "tok", "proj", "sub/a.md")
+
+	if topA == topB || topA == nestedA || topB == nestedA {
+		t.Fatalf("distinct files share a token: a=%s b=%s sub/a=%s", topA, topB, nestedA)
+	}
+
+	// And each link still serves its own file.
+	for tok, want := range map[string]string{topA: "A", topB: "B", nestedA: "nested A"} {
+		resp, body := doReq(t, http.MethodGet, ts.URL+"/api/v1/share/"+tok, "", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("token %s: %d", tok, resp.StatusCode)
+		}
+		if string(body) != want {
+			t.Fatalf("token %s served %q, want %q", tok, body, want)
+		}
+	}
+}
+
+// TestShare_ReuseAfterRevokeMintsFresh: revoking then sharing again must give a
+// NEW token — the old one has to stay dead.
+func TestShare_ReuseAfterRevokeMintsFresh(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "notes.md", "x")
+	ts, _ := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
+
+	first := createShareViaAPI(t, ts, "tok", "proj", "notes.md")
+	if r, _ := doReq(t, http.MethodDelete, ts.URL+"/api/v1/share/"+first, "tok", nil); r.StatusCode != http.StatusOK {
+		t.Fatalf("revoke: %d", r.StatusCode)
+	}
+
+	second := createShareViaAPI(t, ts, "tok", "proj", "notes.md")
+	if second == first {
+		t.Fatal("re-shared after revoke returned the revoked token")
+	}
+	// The old token must remain dead.
+	if r, _ := doReq(t, http.MethodGet, ts.URL+"/api/v1/share/"+first, "", nil); r.StatusCode != http.StatusNotFound {
+		t.Fatalf("revoked token came back to life: %d", r.StatusCode)
+	}
+	// The new one works.
+	if r, _ := doReq(t, http.MethodGet, ts.URL+"/api/v1/share/"+second, "", nil); r.StatusCode != http.StatusOK {
+		t.Fatalf("fresh token should work: %d", r.StatusCode)
+	}
+}
+
+func TestShareStore_FindByPath(t *testing.T) {
+	s, err := NewShareStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.FindByPath("proj", "a.md"); ok {
+		t.Fatal("FindByPath on an empty store should miss")
+	}
+	created, err := s.Create("proj", "a.md", "a.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := s.FindByPath("proj", "a.md")
+	if !ok || got.Token != created.Token {
+		t.Fatalf("FindByPath did not find the created share: %+v", got)
+	}
+	// A leading slash and a different project must not match.
+	if _, ok := s.FindByPath("proj", "/a.md"); !ok {
+		t.Error("FindByPath should normalise a leading slash")
+	}
+	if _, ok := s.FindByPath("other", "a.md"); ok {
+		t.Error("FindByPath must not match across projects")
+	}
+}
+
 // ── ShareStore unit tests ─────────────────────────────────────
 
 func TestShareStore_CreateGetRevoke(t *testing.T) {
