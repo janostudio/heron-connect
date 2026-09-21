@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io/fs"
 	"log/slog"
 	"mime"
@@ -707,6 +708,18 @@ func (m *ManagementServer) serveShare(w http.ResponseWriter, r *http.Request, to
 
 	name := filepath.Base(full)
 	contentType := fileContentType(name)
+
+	// Browser navigation asks for HTML; downloaders and curl do not. Only a
+	// genuine browser navigation gets the rendered share page, so every link
+	// already handed out keeps serving raw bytes to anything else.
+	// ?raw=1 is the page's own fetch (an explicit opt-out of the HTML branch),
+	// and ?download=1 always means "give me the file".
+	// If the viewer page is unavailable we fall through to the raw bytes rather
+	// than answering a valid link with nothing.
+	if wantsSharePage(r) && m.serveSharePage(w, r, sh, name, contentType) {
+		return
+	}
+
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.URL.Query().Get("download") == "1" || contentType == "application/octet-stream" {
@@ -715,6 +728,89 @@ func (m *ManagementServer) serveShare(w http.ResponseWriter, r *http.Request, to
 		w.Header().Set("Content-Disposition", "inline")
 	}
 	http.ServeContent(w, r, name, st.ModTime(), f)
+}
+
+// wantsSharePage reports whether the request is a browser navigation that
+// should receive the rendered share page rather than the raw file.
+//
+// The Accept header is the discriminator: browsers send text/html on
+// navigation, while curl, wget, download managers and our own fetch send
+// something else (usually */*). Getting this backwards would either break
+// every link already shared (if raw access started returning HTML) or leave
+// the original problem in place (if nothing returned HTML).
+func wantsSharePage(r *http.Request) bool {
+	if r.URL.Query().Get("download") == "1" || r.URL.Query().Get("raw") == "1" {
+		return false
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
+}
+
+// serveSharePage renders the shared file inside the standalone viewer page and
+// reports whether it handled the request.
+//
+// It returns false when the viewer page is unavailable (a -tags no_web build,
+// or a frontend bundle without share.html). The caller must then fall through
+// to serving the raw bytes — answering a valid link with an empty 200 would be
+// worse than showing the file unrendered.
+//
+// The page is built from share.html (a second Vite entry point, so it does not
+// drag in the admin SPA, its auth store or its websocket). The file's identity
+// is passed through data attributes rather than an inline script: inline
+// scripts would force a much weaker CSP on a page that renders content the
+// agent produced, which is not a trade worth making for a few parameters.
+func (m *ManagementServer) serveSharePage(w http.ResponseWriter, r *http.Request, sh *FileShare, name, contentType string) bool {
+	assets := core.GetWebAssets()
+	if assets == nil {
+		return false
+	}
+	page, err := fs.ReadFile(assets, "share.html")
+	if err != nil {
+		slog.Debug("share: share.html absent from embedded assets; serving raw file", "error", err)
+		return false
+	}
+
+	// The markdown/HTML being displayed is agent output, so treat it as
+	// untrusted. No inline scripts or styles, no remote script origins; the
+	// page only needs to talk back to its own origin for the raw fetch.
+	w.Header().Set("Content-Security-Policy",
+		"default-src 'none'; "+
+			"script-src 'self'; "+
+			"style-src 'self' 'unsafe-inline'; "+
+			"img-src 'self' data: blob:; "+
+			"media-src 'self' data: blob:; "+
+			"font-src 'self' data:; "+
+			"connect-src 'self'; "+
+			"frame-src 'self' blob: data:; "+
+			"base-uri 'none'; "+
+			"form-action 'none'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Shares are revocable, so the viewer must not be cached indefinitely.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	html := injectShareData(page, sh, name, contentType)
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodHead {
+		return true
+	}
+	if _, err := w.Write(html); err != nil {
+		slog.Debug("share: write page failed", "error", err)
+	}
+	return true
+}
+
+// injectShareData stamps the share's identity onto the root element as data
+// attributes. See serveSharePage for why this is not an inline script.
+func injectShareData(page []byte, sh *FileShare, name, contentType string) []byte {
+	attrs := fmt.Sprintf(
+		`data-share-token="%s" data-share-name="%s" data-share-type="%s"`,
+		html.EscapeString(sh.Token),
+		html.EscapeString(name),
+		html.EscapeString(contentType),
+	)
+	out := strings.Replace(string(page), "<div id=\"share-root\"",
+		"<div id=\"share-root\" "+attrs, 1)
+	return []byte(out)
 }
 
 // createShare mints a link for an existing file. POST /api/v1/share

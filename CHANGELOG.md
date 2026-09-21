@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.3.0 (2026-09-21)
+
+### Added
+
+- **分享链接现在会渲染 markdown，而不是让收件人看到源码**。v1.2.0 的文件分享能用了，但 `.md` 文件是以 `text/markdown` 原样返回的——浏览器不渲染 markdown，于是收件人看到的是带 `#`、`**`、`|` 的**原始源码**。现在用浏览器打开分享链接会得到一个**阅读页**：标题、表格、代码块都按 Web 端同一套样式渲染（复用 `react-markdown` + GFM + 代码高亮），顶部仅有文件名与「Download」按钮。
+  - **URL 完全没变，已发出的分享链接全部继续有效**。服务端按 `Accept` 头区分：浏览器导航（`Accept: text/html`）得到阅读页；`curl`、`wget`、下载管理器、以及阅读页自身的取数请求一律仍拿到**原始文件字节**。这条兼容性有专门的回归测试盯着——并且验证过：把分流改成「永远返回 HTML」时该测试会失败。
+  - **`?download=1` 依然强制下载**，且优先于 `Accept`；新增 `?raw=1` 作为阅读页自己的取数通道。
+  - **能预览的就预览**：markdown 走渲染；其他文本（`.txt`/`.json`/`.log` 等）等宽展示；图片 / PDF / 音频 / 视频直接预览；`.html` 走**沙箱 iframe**（允许脚本但不给 `allow-same-origin`，与站内预览同一套沙箱姿态，图表等内联 JS 可运行但无法触达本站存储与接口）；其余二进制只给下载按钮。
+  - **阅读页是独立入口，不加载管理端**：新增 Vite 第二入口 `share.html`，并拆出 `vendor`/`markdown` 独立 chunk。收件人是匿名的，所以这个页面**不含**路由、auth store、WebSocket 与 `cc_token`——已验证其全部依赖 chunk 中这些标识均为 0，且 SPA 业务 chunk 未被引用。分享链接因此不会把收件人踢到登录页，也不必为一个文件下载整套管理界面。
+  - **安全**：页面设严格 CSP（`default-src 'none'`、`script-src 'self'`、`connect-src 'self'`、`base-uri 'none'`，不含 `unsafe-eval`），`Cache-Control: no-store`（分享可撤销，阅读页不可长期缓存）；文件名注入 HTML 属性时做转义（有针对性测试）；markdown 中的原始 HTML 依赖 `react-markdown` 的安全默认值保持**惰性文本**（不做 `rehype-raw`），有测试断言注入的 `<script>`/`onerror` 不会变成活元素。
+  - **阅读页不可用时优雅降级**：`-tags no_web` 构建或前端产物缺失 `share.html` 时，回退为返回原始文件字节，而不是给一个有效的链接返回空响应。
+  - 测试：Go 侧新增 9 个（Accept 分流的双向验证、`?raw=1`、`?download=1` 优先、CSP、文件名转义、撤销/未知 token 对浏览器同样 404，以及一条用**真实内嵌前端产物**跑完整 HTTP 链路的端到端测试）；前端 5 个（markdown 确实渲染成 `<h1>`/`<table>` 而非字面语法、原始 HTML 保持惰性、类型分支判定）。
+
 ## v1.2.0 (2026-09-21)
 
 ### Added

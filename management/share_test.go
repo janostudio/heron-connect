@@ -10,14 +10,46 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
+
+	"github.com/janostudio/heron-connect/core"
+	// Registers the REAL embedded web/dist via its init(). Imported here (not
+	// in production code) so TestRealHTTPShareFlow exercises the actual
+	// bundle; the web package depends only on core, so there is no cycle.
+	_ "github.com/janostudio/heron-connect/web"
 )
 
 // ── test helpers ──────────────────────────────────────────────
+
+// installFakeSharePage registers a minimal stand-in for the embedded
+// share.html.
+//
+// The management package's tests never import the web package, so no embedded
+// frontend is registered and core.GetWebAssets() returns nil. Without a page
+// the viewer branch would silently fall through to raw bytes and every
+// navigation test would pass for the wrong reason. Registering a fake page
+// makes the branch under test actually execute.
+func installFakeSharePage(t *testing.T) {
+	t.Helper()
+	// Restore whatever was registered before (the real embedded bundle in this
+	// build) rather than nil — blanking it would break any later test that
+	// needs the real assets.
+	prev := core.GetWebAssets()
+	fsys := fstest.MapFS{
+		"share.html": &fstest.MapFile{
+			Data: []byte(`<!DOCTYPE html><html><body><div id="share-root"></div>` +
+				`<script type="module" src="/assets/share.js"></script></body></html>`),
+		},
+	}
+	core.RegisterWebAssets(fsys)
+	t.Cleanup(func() { core.RegisterWebAssets(prev) })
+}
 
 // newShareMgmtServer builds a management server with both a work dir and a
 // share store, wired exactly as main.go does it.
 func newShareMgmtServer(t *testing.T, token string, projectWorkDir map[string]string) (*httptest.Server, *ShareStore) {
 	t.Helper()
+	installFakeSharePage(t)
 	store, err := NewShareStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewShareStore: %v", err)
@@ -396,6 +428,187 @@ func TestShare_CannotReachOtherFilesByEditingURL(t *testing.T) {
 	}
 }
 
+// ── Accept-based content negotiation ──────────────────────────
+//
+// The share URL serves two different things depending on who asks: a rendered
+// viewer page for a browser navigation, raw bytes for everything else. Links
+// had already been handed out before the viewer existed, so the raw branch is
+// the compatibility contract — breaking it would silently change what every
+// previously shared link returns to curl, wget and download managers.
+
+func doGetAccept(t *testing.T, url, accept string) (*http.Response, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp, body
+}
+
+// TestShare_RawBytesForNonBrowserClients is the regression guard for every
+// link already shared: a plain HTTP client must still get the file itself.
+func TestShare_RawBytesForNonBrowserClients(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "notes.md", "# Heading\n\nBODY-TEXT\n")
+	ts, _ := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
+	token := createShareViaAPI(t, ts, "tok", "proj", "notes.md")
+
+	for _, accept := range []string{"*/*", "text/plain", ""} {
+		resp, body := doGetAccept(t, ts.URL+"/api/v1/share/"+token, accept)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("accept %q: expected 200, got %d", accept, resp.StatusCode)
+		}
+		if string(body) != "# Heading\n\nBODY-TEXT\n" {
+			t.Fatalf("accept %q: expected raw markdown, got %q", accept, body)
+		}
+		if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
+			t.Fatalf("accept %q: expected markdown content-type, got %q", accept, ct)
+		}
+	}
+}
+
+// TestShare_BrowserNavigationGetsViewerPage is the feature itself.
+func TestShare_BrowserNavigationGetsViewerPage(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "notes.md", "# Heading\n\nBODY-TEXT\n")
+	ts, _ := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
+	token := createShareViaAPI(t, ts, "tok", "proj", "notes.md")
+
+	resp, body := doGetAccept(t, ts.URL+"/api/v1/share/"+token, "text/html,application/xhtml+xml,*/*;q=0.8")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("expected an HTML page, got %q", ct)
+	}
+	// The page must not be the raw markdown — that is the bug being fixed.
+	if strings.Contains(string(body), "BODY-TEXT") {
+		t.Error("viewer page leaked the raw file content instead of rendering it")
+	}
+	// It must carry the share identity for the client-side viewer to fetch with.
+	if !strings.Contains(string(body), "data-share-token=\""+token+"\"") {
+		t.Error("viewer page is missing the share token attribute")
+	}
+	if !strings.Contains(string(body), "data-share-name=\"notes.md\"") {
+		t.Error("viewer page is missing the file name attribute")
+	}
+}
+
+// TestShare_RawParamAlwaysServesBytes: the viewer fetches with ?raw=1, and that
+// must beat the Accept header (fetch sends */*, but a browser-driven fetch can
+// still carry text/html in some setups).
+func TestShare_RawParamAlwaysServesBytes(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "notes.md", "RAW-CONTENT")
+	ts, _ := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
+	token := createShareViaAPI(t, ts, "tok", "proj", "notes.md")
+
+	resp, body := doGetAccept(t, ts.URL+"/api/v1/share/"+token+"?raw=1", "text/html")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if string(body) != "RAW-CONTENT" {
+		t.Fatalf("?raw=1 must return the file bytes, got %q", body)
+	}
+}
+
+// TestShare_DownloadParamBeatsHTMLAccept: ?download=1 is an explicit request for
+// the file and must win over a browser-style Accept header.
+func TestShare_DownloadParamBeatsHTMLAccept(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "notes.md", "RAW-CONTENT")
+	ts, _ := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
+	token := createShareViaAPI(t, ts, "tok", "proj", "notes.md")
+
+	resp, body := doGetAccept(t, ts.URL+"/api/v1/share/"+token+"?download=1", "text/html,application/xhtml+xml")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if string(body) != "RAW-CONTENT" {
+		t.Fatalf("?download=1 must return the file bytes, got %q", body)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment") {
+		t.Fatalf("expected attachment disposition, got %q", cd)
+	}
+}
+
+// TestShare_ViewerPageHasStrictCSP: the page renders agent-produced content, so
+// it must not be able to run arbitrary scripts or reach remote origins.
+func TestShare_ViewerPageHasStrictCSP(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "notes.md", "# x")
+	ts, _ := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
+	token := createShareViaAPI(t, ts, "tok", "proj", "notes.md")
+
+	resp, _ := doGetAccept(t, ts.URL+"/api/v1/share/"+token, "text/html")
+	csp := resp.Header.Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("viewer page must set a Content-Security-Policy")
+	}
+	for _, want := range []string{"default-src 'none'", "script-src 'self'", "connect-src 'self'", "base-uri 'none'"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP missing %q: %s", want, csp)
+		}
+	}
+	// 'unsafe-eval' would let injected content escape the sandbox of intent.
+	if strings.Contains(csp, "unsafe-eval") {
+		t.Errorf("CSP must not allow unsafe-eval: %s", csp)
+	}
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("expected nosniff, got %q", got)
+	}
+}
+
+// TestShare_ViewerEscapesShareName: the file name lands in an HTML attribute,
+// so a crafted name must not be able to break out of it.
+func TestShare_ViewerEscapesShareName(t *testing.T) {
+	dir := t.TempDir()
+	// A file whose name contains characters that would terminate the attribute.
+	name := `ev"il<>&.md`
+	writeFile(t, dir, name, "x")
+	ts, store := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
+
+	sh, err := store.Create("proj", name, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, body := doGetAccept(t, ts.URL+"/api/v1/share/"+sh.Token, "text/html")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if strings.Contains(string(body), `<>&.md"`) {
+		t.Error("file name was injected into the page unescaped")
+	}
+}
+
+// TestShare_RevokedAndUnknownTokensStill404ForBrowsers: the viewer path must
+// not become an oracle that reveals whether a token once existed.
+func TestShare_RevokedAndUnknownTokensStill404ForBrowsers(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "notes.md", "x")
+	ts, _ := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
+	token := createShareViaAPI(t, ts, "tok", "proj", "notes.md")
+
+	if r, _ := doReq(t, http.MethodDelete, ts.URL+"/api/v1/share/"+token, "tok", nil); r.StatusCode != http.StatusOK {
+		t.Fatalf("revoke failed: %d", r.StatusCode)
+	}
+	for _, tok := range []string{token, "deadbeefdeadbeef"} {
+		resp, _ := doGetAccept(t, ts.URL+"/api/v1/share/"+tok, "text/html")
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("token %q with browser Accept: expected 404, got %d", tok, resp.StatusCode)
+		}
+	}
+}
+
 // ── ShareStore unit tests ─────────────────────────────────────
 
 func TestShareStore_CreateGetRevoke(t *testing.T) {
@@ -624,4 +837,95 @@ func TestShare_EndToEndFullFlow(t *testing.T) {
 	if r, _ := doReq(t, http.MethodGet, shareURL, "", nil); r.StatusCode != http.StatusNotFound {
 		t.Fatalf("after revoke expected 404, got %d", r.StatusCode)
 	}
+}
+func TestRealHTTPShareFlow(t *testing.T) {
+	// Requires the REAL embedded bundle (imported by this package's web
+	// dependency chain in production). Skip if it is absent rather than
+	// failing, so this stays runnable in a bare checkout.
+	if core.GetWebAssets() == nil {
+		t.Skip("no embedded web assets in this build")
+	}
+	work := t.TempDir()
+	os.WriteFile(filepath.Join(work, "r.md"), []byte("# Title\n\n| A | B |\n|---|---|\n| 1 | 2 |\n"), 0o644)
+
+	store, err := NewShareStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewManagementServer(0, "tok", nil)
+	m.SetShareStore(store)
+	m.RegisterProjectWorkDir("proj", work)
+	mux := http.NewServeMux()
+	ts := httptest.NewServer(m.buildHandler(mux))
+	defer ts.Close()
+
+	body, _ := json.Marshal(map[string]string{"project": "proj", "path": "r.md"})
+	req, _ := http.NewRequest("POST", ts.URL+"/api/v1/share", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer tok")
+	res, _ := http.DefaultClient.Do(req)
+	raw, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	var env struct {
+		Data struct {
+			URL string `json:"url"`
+		} `json:"data"`
+	}
+	json.Unmarshal(raw, &env)
+	shareURL := ts.URL + env.Data.URL
+	t.Logf("share url: %s", shareURL)
+
+	get := func(accept string) (int, string, string) {
+		r, _ := http.NewRequest("GET", shareURL, nil)
+		if accept != "" {
+			r.Header.Set("Accept", accept)
+		}
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, resp.Header.Get("Content-Type"), string(b)
+	}
+
+	// Browser navigation -> viewer page (real embed).
+	code, ct, page := get("text/html,application/xhtml+xml,*/*;q=0.8")
+	t.Logf("browser  -> %d %s (%d bytes)", code, ct, len(page))
+	if code != 200 || !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("browser navigation should get the viewer page, got %d %s", code, ct)
+	}
+	if !strings.Contains(page, "share-root") {
+		t.Fatal("viewer page missing its mount point")
+	}
+	if !strings.Contains(page, "data-share-token=") {
+		t.Fatal("viewer page missing the injected token")
+	}
+	// It must reference the share chunk, not the SPA chunk.
+	if !strings.Contains(page, "assets/share-") {
+		t.Error("viewer page does not load the share chunk")
+	}
+	if strings.Contains(page, "BODY") || strings.Contains(page, "# Title") {
+		t.Error("viewer page leaked raw markdown")
+	}
+
+	// curl -> raw markdown.
+	code, ct, rawBody := get("*/*")
+	t.Logf("curl     -> %d %s (%d bytes)", code, ct, len(rawBody))
+	if code != 200 || !strings.HasPrefix(ct, "text/markdown") {
+		t.Fatalf("curl should still get raw markdown, got %d %s", code, ct)
+	}
+	if !strings.Contains(rawBody, "# Title") {
+		t.Fatalf("raw body wrong: %q", rawBody)
+	}
+
+	// The viewer's own fetch (?raw=1) -> raw markdown.
+	r2, _ := http.NewRequest("GET", shareURL+"?raw=1", nil)
+	r2.Header.Set("Accept", "*/*")
+	resp2, _ := http.DefaultClient.Do(r2)
+	b2, _ := io.ReadAll(resp2.Body)
+	resp2.Body.Close()
+	if !strings.Contains(string(b2), "# Title") {
+		t.Fatalf("?raw=1 should return the file, got %q", b2)
+	}
+	t.Log("all three paths correct: browser=page, curl=raw, ?raw=1=raw")
 }
