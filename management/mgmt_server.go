@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -53,6 +54,10 @@ type ManagementServer struct {
 	// the effective agent work_dir at startup so the web UI can preview/download
 	// files the agent generated on disk.
 	projectWorkDirs map[string]string
+
+	// shareStore holds public file-share links. nil = sharing disabled; the
+	// share endpoints then report 503. Injected at startup.
+	shareStore *ShareStore
 
 	cronScheduler      *core.CronScheduler
 	heartbeatScheduler *core.HeartbeatScheduler
@@ -118,6 +123,10 @@ func (m *ManagementServer) RegisterProjectWorkDir(name, workDir string) {
 func (m *ManagementServer) SetCronScheduler(cs *core.CronScheduler)           { m.cronScheduler = cs }
 func (m *ManagementServer) SetHeartbeatScheduler(hs *core.HeartbeatScheduler) { m.heartbeatScheduler = hs }
 func (m *ManagementServer) SetBridgeServer(bs *bridge.BridgeServer)             { m.bridgeServer = bs }
+
+// SetShareStore enables public file sharing. Without it the share endpoints
+// return 503 rather than silently accepting links that could never be served.
+func (m *ManagementServer) SetShareStore(s *ShareStore) { m.shareStore = s }
 func (m *ManagementServer) SetSetupFeishuSave(fn func(FeishuSetupSaveRequest) error) {
 	m.setupFeishuSave = fn
 }
@@ -257,6 +266,15 @@ func (m *ManagementServer) buildHandler(mux *http.ServeMux) http.Handler {
 	// work dir). Auth-protected + path-traversal guarded. Serves bytes inline
 	// for preview by default; ?download=1 forces attachment download.
 	mux.HandleFunc(prefix+"/files/", m.wrap(m.handleFile))
+
+	// Public share links. Deliberately NOT wrapped in m.wrap: possessing the
+	// token IS the authorization, and a recipient has no management token.
+	// It stays under /api/ so withStaticFallback hands it to this mux —
+	// anything outside /api/ that is not an embedded asset falls through to
+	// the SPA index.html, which would serve HTML instead of the file.
+	// handleShareRoutes authenticates the management operations itself.
+	mux.HandleFunc(prefix+"/share", m.handleShareRoutes)
+	mux.HandleFunc(prefix+"/share/", m.handleShareRoutes)
 
 	// Cron (global)
 	mux.HandleFunc(prefix+"/cron", m.wrap(m.handleCron))
@@ -496,22 +514,9 @@ func (m *ManagementServer) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m.mu.RLock()
-	root := m.projectWorkDirs[project]
-	m.mu.RUnlock()
-	if root == "" {
-		mgmtError(w, http.StatusNotFound, "unknown project or no work dir")
-		return
-	}
-	rootAbs, err := filepath.Abs(root)
+	full, err := m.resolveProjectFile(project, decoded)
 	if err != nil {
-		mgmtError(w, http.StatusInternalServerError, "resolve work dir failed")
-		return
-	}
-	full := filepath.Join(rootAbs, filepath.FromSlash(decoded))
-	// Path-traversal guard: the resolved path must stay under the root.
-	if full != rootAbs && !strings.HasPrefix(full, rootAbs+string(os.PathSeparator)) {
-		mgmtError(w, http.StatusForbidden, "path escapes work dir")
+		mgmtError(w, resolveErrStatus(err), err.Error())
 		return
 	}
 
@@ -531,6 +536,12 @@ func (m *ManagementServer) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if st.IsDir() {
+		rootAbs := filepath.Dir(full)
+		// handleDirListing needs the work-dir root to compute the relative
+		// path it reports; recover it from the resolved path's root segment.
+		if r, err := m.projectRoot(project); err == nil {
+			rootAbs = r
+		}
 		m.handleDirListing(w, rootAbs, full)
 		return
 	}
@@ -548,6 +559,245 @@ func (m *ManagementServer) handleFile(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(name))
 	}
 	http.ServeContent(w, r, name, st.ModTime(), f)
+}
+
+// errProjectUnknown / errPathEscapes are sentinels letting callers map a
+// resolve failure onto the right HTTP status without string matching.
+var (
+	errProjectUnknown = errors.New("unknown project or no work dir")
+	errPathEscapes    = errors.New("path escapes work dir")
+	errBadPath        = errors.New("invalid path")
+)
+
+// resolveErrStatus maps a resolveProjectFile error to an HTTP status.
+func resolveErrStatus(err error) int {
+	switch {
+	case errors.Is(err, errPathEscapes):
+		return http.StatusForbidden
+	case errors.Is(err, errProjectUnknown):
+		return http.StatusNotFound
+	default:
+		return http.StatusBadRequest
+	}
+}
+
+// projectRoot returns the absolute work-dir root registered for a project.
+func (m *ManagementServer) projectRoot(project string) (string, error) {
+	m.mu.RLock()
+	root := m.projectWorkDirs[project]
+	m.mu.RUnlock()
+	if root == "" {
+		return "", errProjectUnknown
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve work dir failed: %w", err)
+	}
+	return rootAbs, nil
+}
+
+// resolveProjectFile maps a project-relative path onto an absolute path inside
+// that project's registered work dir, refusing anything that escapes the root.
+//
+// This is the single path-traversal guard for every endpoint that reads files
+// out of a work dir (the authenticated files endpoint and the public share
+// endpoint). It is deliberately shared rather than duplicated: a second,
+// subtly different copy of this check is exactly how a traversal hole gets
+// introduced, and the share endpoint serves unauthenticated callers.
+func (m *ManagementServer) resolveProjectFile(project, rel string) (string, error) {
+	rootAbs, err := m.projectRoot(project)
+	if err != nil {
+		return "", err
+	}
+	if rel == "" {
+		return rootAbs, nil
+	}
+	full := filepath.Join(rootAbs, filepath.FromSlash(rel))
+	if full != rootAbs && !strings.HasPrefix(full, rootAbs+string(os.PathSeparator)) {
+		return "", errPathEscapes
+	}
+	return full, nil
+}
+
+// ── Public file shares ─────────────────────────────────────────
+//
+// Sharing turns one file into a capability URL that needs no management token:
+//   GET    /api/v1/share/<token>   -> serve the file      (PUBLIC)
+//   POST   /api/v1/share           -> create a share      (auth)
+//   GET    /api/v1/share?project=X -> list shares         (auth)
+//   DELETE /api/v1/share/<token>   -> revoke a share      (auth)
+//
+// Only the first is public. The handler is reached without going through
+// m.wrap (so a share recipient needs no token), which means the management
+// operations must authenticate themselves — see the guard in handleShareRoutes.
+// Keep that boundary exact: widening it would let an anonymous caller mint or
+// enumerate links.
+
+func (m *ManagementServer) handleShareRoutes(w http.ResponseWriter, r *http.Request) {
+	if m.shareStore == nil {
+		mgmtError(w, http.StatusServiceUnavailable, "file sharing is not enabled")
+		return
+	}
+
+	token := strings.TrimPrefix(r.URL.Path, "/api/v1/share")
+	token = strings.TrimPrefix(token, "/")
+
+	// The one public action. Everything else below requires the management
+	// token, so authenticate before dispatching to it.
+	if r.Method == http.MethodGet && token != "" {
+		m.serveShare(w, r, token)
+		return
+	}
+
+	if !m.authenticate(r) {
+		mgmtError(w, http.StatusUnauthorized, "unauthorized: missing or invalid token")
+		return
+	}
+
+	switch {
+	case r.Method == http.MethodGet && token == "":
+		m.listShares(w, r)
+	case r.Method == http.MethodPost && token == "":
+		m.createShare(w, r)
+	case r.Method == http.MethodDelete && token != "":
+		m.revokeShare(w, token)
+	default:
+		mgmtError(w, http.StatusMethodNotAllowed, "unsupported share operation")
+	}
+}
+
+// serveShare streams the shared file. Public: the token is the credential.
+func (m *ManagementServer) serveShare(w http.ResponseWriter, r *http.Request, token string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		mgmtError(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	sh, ok := m.shareStore.Get(token)
+	if !ok {
+		// Same response for unknown and revoked tokens — don't let a prober
+		// distinguish "never existed" from "was revoked".
+		mgmtError(w, http.StatusNotFound, "share not found")
+		return
+	}
+
+	full, err := m.resolveProjectFile(sh.Project, sh.RelPath)
+	if err != nil {
+		mgmtError(w, resolveErrStatus(err), "shared file is not available")
+		return
+	}
+
+	f, err := os.Open(full)
+	if err != nil {
+		// The file was deleted or made unreadable after the link was minted.
+		mgmtError(w, http.StatusNotFound, "shared file is not available")
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		mgmtError(w, http.StatusInternalServerError, "stat file failed")
+		return
+	}
+	// A share grants exactly one file. Never expose a directory listing or a
+	// directory stream, even if a directory was somehow shared.
+	if st.IsDir() {
+		mgmtError(w, http.StatusNotFound, "shared file is not available")
+		return
+	}
+
+	name := filepath.Base(full)
+	contentType := fileContentType(name)
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if r.URL.Query().Get("download") == "1" || contentType == "application/octet-stream" {
+		w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(name))
+	} else {
+		w.Header().Set("Content-Disposition", "inline")
+	}
+	http.ServeContent(w, r, name, st.ModTime(), f)
+}
+
+// createShare mints a link for an existing file. POST /api/v1/share
+// body: {"project": "...", "path": "agents/x.md"}
+func (m *ManagementServer) createShare(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Project string `json:"project"`
+		Path    string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mgmtError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	req.Project = strings.TrimSpace(req.Project)
+	if req.Project == "" {
+		mgmtError(w, http.StatusBadRequest, "project is required")
+		return
+	}
+	rel := strings.TrimPrefix(strings.TrimSpace(req.Path), "/")
+	if rel == "" {
+		mgmtError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+
+	full, err := m.resolveProjectFile(req.Project, rel)
+	if err != nil {
+		mgmtError(w, resolveErrStatus(err), err.Error())
+		return
+	}
+	// Refuse to mint a link for something that cannot be served. Sharing a
+	// directory is not supported (a share is one file) and a missing path
+	// would produce a link that 404s forever.
+	st, err := os.Stat(full)
+	if err != nil {
+		mgmtError(w, http.StatusNotFound, "file not found")
+		return
+	}
+	if st.IsDir() {
+		mgmtError(w, http.StatusBadRequest, "only files can be shared, not directories")
+		return
+	}
+
+	sh, err := m.shareStore.Create(req.Project, rel, filepath.Base(full))
+	if err != nil {
+		slog.Error("share: create failed", "project", req.Project, "path", rel, "error", err)
+		mgmtError(w, http.StatusInternalServerError, "failed to persist share")
+		return
+	}
+
+	mgmtJSON(w, http.StatusOK, map[string]any{
+		"token":      sh.Token,
+		"url":        "/api/v1/share/" + sh.Token,
+		"project":    sh.Project,
+		"path":       sh.RelPath,
+		"file_name":  sh.FileName,
+		"created_at": sh.CreatedAt,
+	})
+}
+
+// listShares returns shares, optionally filtered to one project.
+func (m *ManagementServer) listShares(w http.ResponseWriter, r *http.Request) {
+	shares := m.shareStore.ListByProject(r.URL.Query().Get("project"))
+	out := make([]map[string]any, 0, len(shares))
+	for _, sh := range shares {
+		out = append(out, map[string]any{
+			"token":      sh.Token,
+			"url":        "/api/v1/share/" + sh.Token,
+			"project":    sh.Project,
+			"path":       sh.RelPath,
+			"file_name":  sh.FileName,
+			"created_at": sh.CreatedAt,
+		})
+	}
+	mgmtJSON(w, http.StatusOK, map[string]any{"shares": out})
+}
+
+// revokeShare permanently disables a link.
+func (m *ManagementServer) revokeShare(w http.ResponseWriter, token string) {
+	if !m.shareStore.Revoke(token) {
+		mgmtError(w, http.StatusNotFound, "share not found")
+		return
+	}
+	mgmtOK(w, "share revoked")
 }
 
 // handleDirListing writes a JSON directory listing for a project work-dir

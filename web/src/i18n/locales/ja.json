@@ -286,6 +286,13 @@
     "jumpToLatest": "最新へ移動",
     "time": {
       "yesterday": "昨日"
+    },
+    "share": {
+      "share": "共有",
+      "copyLink": "リンクをコピー",
+      "linkCopied": "リンクをコピーしました",
+      "revoke": "共有を停止",
+      "warning": "このリンクを知っている人は誰でもログイン不要でファイルを閲覧できます。"
     }
   },
   "cmd": {

@@ -286,6 +286,13 @@
     "jumpToLatest": "Jump to latest",
     "time": {
       "yesterday": "Yesterday"
+    },
+    "share": {
+      "share": "Share",
+      "copyLink": "Copy link",
+      "linkCopied": "Link copied",
+      "revoke": "Stop sharing",
+      "warning": "Anyone with this link can read the file — no login required."
     }
   },
   "cmd": {

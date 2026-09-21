@@ -968,6 +968,14 @@ func main() {
 		if cronSched != nil {
 			mgmtSrv.SetCronScheduler(cronSched)
 		}
+		// Public file shares persist under <data_dir>/shares/. Without the
+		// store the share endpoints report 503 rather than minting links that
+		// could never be served.
+		if shareStore, err := management.NewShareStore(cfg.DataDir); err != nil {
+			slog.Warn("share store unavailable; file sharing disabled", "error", err)
+		} else {
+			mgmtSrv.SetShareStore(shareStore)
+		}
 		if cfg.Dashboard.IsEnabled() {
 			mgmtSrv.SetDashboardSettings(&management.DashboardSettings{
 				Enabled:               true,

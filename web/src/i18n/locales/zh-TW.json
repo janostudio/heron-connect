@@ -286,6 +286,13 @@
     "jumpToLatest": "回到最新",
     "time": {
       "yesterday": "昨天"
+    },
+    "share": {
+      "share": "分享",
+      "copyLink": "複製連結",
+      "linkCopied": "連結已複製",
+      "revoke": "取消分享",
+      "warning": "任何人取得此連結都可直接讀取該檔案，無需登入。"
     }
   },
   "cmd": {

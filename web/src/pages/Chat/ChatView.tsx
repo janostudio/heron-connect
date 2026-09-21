@@ -5,7 +5,7 @@ import {
   ArrowLeft, Bot, Circle, WifiOff,
   FileText, Loader2, Download, FileDown,
   ChevronDown, Clock, X, Folder, FolderOpen, ChevronLeft, ChevronRight, ArrowUp, ArrowDown,
-  Pin, PinOff, Pencil, RefreshCw,
+  Pin, PinOff, Pencil, RefreshCw, Share2, Check, Link2, Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { listSessions, getSession, createSession, sessionTitle, updateSession, sortSessions, type Session, type SessionDetail } from '@/api/sessions';
@@ -30,7 +30,8 @@ import {
   sessionsSignature, fileIsPreviewable, isMarkdown, isHtmlFile,
   CHAT_COMMANDS, classifyInput,
 } from './chatHelpers';
-import { cn, loadLS, saveLS } from '@/lib/utils';
+import { cn, loadLS, saveLS, copyText } from '@/lib/utils';
+import { createShare, revokeShare, absoluteShareURL, type ShareInfo } from '@/api/share';
 
 // `chatCommands` produce output in the message stream (they change state);
 // the rest are handled by their own result panel.
@@ -393,6 +394,7 @@ function ProjectFileBrowser({ open, projectName, onClose, onInsertFile, previewW
 }) {
   // Remember the last browsed directory + selected file per project so the
   // browser re-opens where the user left off instead of the project root.
+  const { t } = useTranslation();
   const browseKey = useMemo(() => `cc_file_browser:${projectName}`, [projectName]);
   const remembered = useMemo(() => loadLS<{ path?: string; fileName?: string }>(browseKey), [browseKey]);
 
@@ -420,6 +422,57 @@ function ProjectFileBrowser({ open, projectName, onClose, onInsertFile, previewW
   const currentFileRel = currentFile
     ? (currentPath ? `${currentPath}/${currentFile.name}` : currentFile.name)
     : '';
+
+  // ── File sharing ──
+  // Sharing hands out a link that works without login, so it is opt-in per
+  // file and always revocable. Keyed by the project-relative path so switching
+  // files does not leave a stale link on screen.
+  const [share, setShare] = useState<ShareInfo | null>(null);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareCopied, setShareCopied] = useState<'ok' | 'fail' | null>(null);
+  const [shareError, setShareError] = useState('');
+
+  // Clear the share panel when the user navigates to a different file.
+  useEffect(() => {
+    setShare(null);
+    setShareError('');
+    setShareCopied(null);
+  }, [currentFileRel]);
+
+  const copyShareLink = useCallback(async (url: string) => {
+    const ok = await copyText(absoluteShareURL(url));
+    setShareCopied(ok ? 'ok' : 'fail');
+    setTimeout(() => setShareCopied(null), 2000);
+  }, []);
+
+  const createShareForCurrent = useCallback(async () => {
+    if (!currentFileRel) return;
+    setShareBusy(true);
+    setShareError('');
+    try {
+      const info = await createShare(projectName, currentFileRel);
+      setShare(info);
+      await copyShareLink(info.url);
+    } catch (e: any) {
+      setShareError(e?.message || 'Failed to create share link');
+    } finally {
+      setShareBusy(false);
+    }
+  }, [currentFileRel, projectName, copyShareLink]);
+
+  const revokeCurrentShare = useCallback(async () => {
+    if (!share) return;
+    setShareBusy(true);
+    setShareError('');
+    try {
+      await revokeShare(share.token);
+      setShare(null);
+    } catch (e: any) {
+      setShareError(e?.message || 'Failed to revoke share link');
+    } finally {
+      setShareBusy(false);
+    }
+  }, [share]);
 
   // Load the directory listing whenever the current dir changes. We do NOT
   // force the dropdown open here — openDir/goParent set it true at the call
@@ -626,10 +679,82 @@ function ProjectFileBrowser({ open, projectName, onClose, onInsertFile, previewW
           >
             <FileDown size={15} /> 插入地址
           </button>
-          <Button onClick={triggerDownload} disabled={!currentFile} className="flex items-center gap-2">
-            <Download size={15} /> Download
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Share creates a link that needs no login, so its state is
+                shown inline (copied / failed) rather than in a global toast —
+                matching the CopyButton pattern used elsewhere. */}
+            <button
+              type="button"
+              onClick={() => (share ? copyShareLink(share.url) : createShareForCurrent())}
+              disabled={!currentFile || shareBusy}
+              className={cn(
+                'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
+                shareCopied === 'ok'
+                  ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20'
+                  : shareCopied === 'fail'
+                    ? 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20'
+                    : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.08]',
+                'disabled:opacity-40 disabled:pointer-events-none',
+              )}
+              title={share ? t('chat.share.copyLink') : t('chat.share.share')}
+            >
+              {shareBusy ? <Loader2 size={15} className="animate-spin" />
+                : shareCopied === 'ok' ? <Check size={15} />
+                : shareCopied === 'fail' ? <X size={15} />
+                : <Share2 size={15} />}
+              {shareCopied === 'ok' ? t('chat.share.linkCopied') : t('chat.share.share')}
+            </button>
+            {share && (
+              <button
+                type="button"
+                onClick={revokeCurrentShare}
+                disabled={shareBusy}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                title={t('chat.share.revoke')}
+              >
+                <Trash2 size={15} /> {t('chat.share.revoke')}
+              </button>
+            )}
+            <Button onClick={triggerDownload} disabled={!currentFile} className="flex items-center gap-2">
+              <Download size={15} /> Download
+            </Button>
+          </div>
         </div>
+
+        {/* Share panel: the created link plus an explicit "anyone with this
+            link can read the file" warning, since sharing bypasses login. */}
+        {(share || shareError) && (
+          <div className="px-4 pb-3 shrink-0">
+            {shareError ? (
+              <div className="flex items-start gap-2 px-3 py-2 rounded-lg text-xs bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400">
+                <X size={14} className="shrink-0 mt-0.5" />
+                <span className="break-all">{shareError}</span>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/60 dark:bg-amber-900/10 p-3 space-y-2">
+                <div className="text-[11px] text-amber-700 dark:text-amber-400">
+                  {t('chat.share.warning')}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Link2 size={14} className="shrink-0 text-gray-400" />
+                  <input
+                    readOnly
+                    value={absoluteShareURL(share!.url)}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="flex-1 min-w-0 px-2 py-1 rounded-md text-[11px] font-mono bg-white dark:bg-black/30 border border-gray-200 dark:border-white/10 text-gray-700 dark:text-gray-300"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => copyShareLink(share!.url)}
+                    className="shrink-0 px-2 py-1 rounded-md text-[11px] font-medium text-accent hover:bg-accent/10 transition-colors"
+                  >
+                    {t('chat.share.copyLink')}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </>
   );
