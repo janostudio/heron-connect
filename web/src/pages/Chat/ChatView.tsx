@@ -79,41 +79,53 @@ const Transcript = memo(function Transcript({
     <div
       ref={scrollRef}
       onScroll={onScroll}
-      className="flex-1 overflow-y-auto overflow-x-hidden py-4 md:py-6 px-2 space-y-5"
+      className="flex-1 overflow-y-auto overflow-x-hidden py-4 md:py-6 px-2"
     >
-      {messages.length === 0 && !loading && (
-        <div className="flex flex-col items-center justify-center h-full text-center py-12">
-          <div className="w-16 h-16 rounded-2xl bg-accent/10 flex items-center justify-center mb-4">
-            <Bot size={32} className="text-accent" />
+      {/* Single content child, so a ResizeObserver on it reports the whole
+          transcript's height. Without this wrapper the scroller's
+          firstElementChild is (depending on state) the empty-state block or the
+          first message row, and observing it would track one row's height
+          rather than the content that actually pushes the bottom down. The
+          `space-y-5` that used to live on the scroller is here because the
+          spacing must be inside the observed element.
+          `min-h-full` keeps the empty state's `h-full` centering working: the
+          scroller has a definite height (flex-1 in its column), so this wrapper
+          gets at least that height and the inner percentage resolves. */}
+      <div className="space-y-5 min-h-full">
+        {messages.length === 0 && !loading && (
+          <div className="flex flex-col items-center justify-center h-full text-center py-12">
+            <div className="w-16 h-16 rounded-2xl bg-accent/10 flex items-center justify-center mb-4">
+              <Bot size={32} className="text-accent" />
+            </div>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">{t('chat.emptyHint')}</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500">{t('chat.slashHint')}</p>
           </div>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">{t('chat.emptyHint')}</p>
-          <p className="text-xs text-gray-400 dark:text-gray-500">{t('chat.slashHint')}</p>
-        </div>
-      )}
-      {messages.map((msg) => (
-        <MessageRow
-          key={msg.id}
-          msg={msg}
-          projectName={projectName}
-          onOpenFile={onOpenFile}
-          onCardAction={onCardAction}
-        />
-      ))}
-      {typing && !messages.some(m => m.streaming) && (
-        <div className="flex gap-3 justify-start">
-          <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center shrink-0 mt-1">
-            <Bot size={16} className="text-accent" />
-          </div>
-          <div className="rounded-2xl px-5 py-3.5 text-sm bg-white dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700/60 rounded-bl-md shadow-sm">
-            <div className="flex gap-1.5">
-              <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+        )}
+        {messages.map((msg) => (
+          <MessageRow
+            key={msg.id}
+            msg={msg}
+            projectName={projectName}
+            onOpenFile={onOpenFile}
+            onCardAction={onCardAction}
+          />
+        ))}
+        {typing && !messages.some(m => m.streaming) && (
+          <div className="flex gap-3 justify-start">
+            <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center shrink-0 mt-1">
+              <Bot size={16} className="text-accent" />
+            </div>
+            <div className="rounded-2xl px-5 py-3.5 text-sm bg-white dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700/60 rounded-bl-md shadow-sm">
+              <div className="flex gap-1.5">
+                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
             </div>
           </div>
-        </div>
-      )}
-      <div ref={messagesEnd} />
+        )}
+        <div ref={messagesEnd} />
+      </div>
     </div>
   );
 });
@@ -1177,9 +1189,37 @@ export default function ChatView() {
   // Now: follow only when the user is already near the bottom, scroll
   // instantly (not smoothly) while streaming, and coalesce multiple requests
   // within the same animation frame.
+  //
+  // Three layers, because any one of them alone leaves the first paint stuck
+  // short of the bottom (the v1.3.4 bug):
+  //
+  //  1. Signature effect — scrolls when the message list changes. This is the
+  //     streaming/send path.
+  //  2. ResizeObserver on the transcript — scrolls when the CONTENT grows
+  //     without a message-list change. This is what covers async height:
+  //     HistoryImage swaps a 120x80 placeholder for a (up to 220px) <img>
+  //     after its fetch resolves (see markdownBlocks.tsx), and
+  //     rehype-highlight re-lays-out code blocks. Both land well after the
+  //     requestAnimationFrame in layer 1 has already fired, so layer 1 alone
+  //     lands on the placeholder-height bottom and stops mid-transcript.
+  //  3. Programmatic-scroll flag — suppresses the scroll events that layers 1
+  //     and 2 themselves generate, so a content growth cannot be mistaken for
+  //     the user scrolling up and silently disable stickiness.
+  //
+  // Layer 1 can also fail to fire at all: seedHistory merges into the slice and
+  // mergeHistoryIntoSlice deliberately keeps the slice identity when the
+  // history is positionally identical (chatSessionsCore.ts), so scrollSignature
+  // does not change. The session-switch effect below re-attaches unconditionally
+  // to cover that.
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
   const scrollRafRef = useRef<number | null>(null);
+
+  // Set while WE are moving the viewport (auto-scroll / jump-to-latest), so a
+  // scroll event that fires as a result of it does not get read as user intent.
+  // Cleared on the next frame after the scroll has been dispatched; a scroll
+  // event is queued before that frame, so handleScroll always sees the flag.
+  const programmaticScrollRef = useRef(false);
 
   // Mirror of `stickToBottomRef` for the "jump to latest" button. The ref is
   // read inside the scroll effect (which must not re-run on its own), so it
@@ -1187,9 +1227,23 @@ export default function ChatView() {
   // updated at most once per crossing (see handleScroll).
   const [atBottom, setAtBottom] = useState(true);
 
+  // Scroll to the newest message instantly and mark the move as ours.
+  const scrollToBottom = useCallback(() => {
+    programmaticScrollRef.current = true;
+    messagesEnd.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+    // Clear on the next frame: the scroll event this call queued is delivered
+    // before it, so handleScroll still observes the flag.
+    requestAnimationFrame(() => { programmaticScrollRef.current = false; });
+  }, []);
+
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
+    // Our own scroll landing at the bottom must not be re-interpreted as a
+    // stickiness decision — and more importantly, a scroll event caused by the
+    // content growing under a stationary scrollTop (distance suddenly > 80)
+    // must not be read as "the user scrolled up".
+    if (programmaticScrollRef.current) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
     const near = distance < 80;
     stickToBottomRef.current = near;
@@ -1202,9 +1256,9 @@ export default function ChatView() {
   //
   // `updateSlice` only schedules a re-render, so at call time `messagesEnd` has
   // not yet moved past the bubble being appended — scrolling here would land
-  // one message short. So we just force the stickiness flags; the auto-scroll
-  // effect (see the Auto-scroll note) does the real scroll once the new message
-  // is in the DOM.
+  // one message short. So we just force the stickiness flags; layers 1 and 2 of
+  // the Auto-scroll machinery do the real scroll once the new message is in the
+  // DOM (and re-settle it as the row's content finishes laying out).
   //
   // Used by the send paths: sending is an explicit "give me the newest content"
   // action, so it overrides a user who had scrolled up. Without this they would
@@ -1217,7 +1271,13 @@ export default function ChatView() {
   // One-shot jump to the newest message, used by the floating button.
   const jumpToBottom = useCallback(() => {
     reattachToBottom();
+    programmaticScrollRef.current = true;
     messagesEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    // The smooth animation emits scroll events over several frames; keep the
+    // flag up long enough that none of them is read as user intent.
+    const clear = () => { programmaticScrollRef.current = false; };
+    requestAnimationFrame(clear);
+    setTimeout(clear, 400);
   }, [reattachToBottom]);
 
   // Scroll signature: total message count plus the length of the last
@@ -1226,14 +1286,68 @@ export default function ChatView() {
   const lastMsg = messages[messages.length - 1];
   const scrollSignature = `${messages.length}:${lastMsg?.content.length ?? 0}:${lastMsg?.streaming ? 1 : 0}`;
 
+  // Layer 1: message list changed (streaming delta, send, settle).
   useEffect(() => {
     if (!stickToBottomRef.current) return;
     if (scrollRafRef.current != null) return;
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = null;
-      messagesEnd.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+      scrollToBottom();
     });
-  }, [scrollSignature, typing]);
+  }, [scrollSignature, typing, scrollToBottom]);
+
+  // Layer 2: the transcript's rendered height changed without a message-list
+  // change. This is the fix for the first paint stopping short: the
+  // HistoryImage placeholder → real image swap, syntax highlighting, and font
+  // loading all resize the content after layer 1 has already run.
+  //
+  // The observed element is the transcript's single content wrapper (see the
+  // Transcript component) — observing the scroller alone would not report
+  // anything, because its own border box is fixed by the flex parent while the
+  // content inside it overflows.
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return;
+    const scroller = scrollRef.current;
+    const content = scroller?.firstElementChild;
+    if (!scroller || !content) return;
+    let lastHeight = scroller.scrollHeight;
+    const ro = new ResizeObserver(() => {
+      // Ignore growth while the user is reading history, and ignore shrinks —
+      // those are removals (a settled placeholder, a collapsed card) where
+      // following would fight the user.
+      if (!stickToBottomRef.current) { lastHeight = scroller.scrollHeight; return; }
+      if (scroller.scrollHeight <= lastHeight) { lastHeight = scroller.scrollHeight; return; }
+      lastHeight = scroller.scrollHeight;
+      // Coalesce with layer 1 through the shared rAF slot so a burst of
+      // resizes costs one scroll, not one per mutation.
+      if (scrollRafRef.current != null) return;
+      scrollRafRef.current = requestAnimationFrame(() => {
+        scrollRafRef.current = null;
+        scrollToBottom();
+      });
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [scrollToBottom, loading, viewedId]);
+
+  // Switching (or first opening) a conversation is an explicit "show me this
+  // conversation" action, so it re-attaches to the bottom unconditionally —
+  // including when the user had scrolled up in the PREVIOUS conversation.
+  //
+  // This is the layer that covers scrollSignature not changing: seedHistory
+  // merges positionally-identical history into the slice and keeps the slice
+  // identity (chatSessionsCore.ts), so layer 1 never fires and the transcript
+  // is left wherever the scrollTop happened to be.
+  //
+  // The rAF here may run before the seeded rows are laid out; layer 2 picks up
+  // the slack on the resize that follows. Both are needed.
+  useEffect(() => {
+    if (!viewedId) return;
+    stickToBottomRef.current = true;
+    setAtBottom(true);
+    const id = requestAnimationFrame(scrollToBottom);
+    return () => cancelAnimationFrame(id);
+  }, [viewedId, scrollToBottom]);
 
   // Cancel a pending scroll frame on unmount.
   useEffect(() => () => {

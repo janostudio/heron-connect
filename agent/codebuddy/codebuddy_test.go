@@ -2,6 +2,7 @@ package codebuddy
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -1628,4 +1629,294 @@ func TestHandleTaskEvent_NotRelayedWhileItsOwnTurnRuns(t *testing.T) {
 	if ev.Type != core.EventResult {
 		t.Fatalf("event type = %v, want %v", ev.Type, core.EventResult)
 	}
+}
+
+// ── multimodal content tests ────────────────────────────────
+//
+// These cover the image path: the CLI accepts message.content as either a
+// string or an array of content blocks, and images must be delivered as base64
+// blocks inside the SAME frame as the prompt.
+
+// TestBuildUserContent_NoImagesIsPlainString pins the default: without images
+// the content is the bare prompt string, not a single-element array. Existing
+// text-only behaviour must not change shape.
+func TestBuildUserContent_NoImagesIsPlainString(t *testing.T) {
+	got := buildUserContent("hello", nil)
+	s, ok := got.(string)
+	if !ok {
+		t.Fatalf("content type = %T, want string", got)
+	}
+	if s != "hello" {
+		t.Errorf("content = %q, want %q", s, "hello")
+	}
+}
+
+// TestBuildUserContent_SingleImage verifies image-before-text ordering and the
+// base64 source block shape the CLI expects.
+func TestBuildUserContent_SingleImage(t *testing.T) {
+	data := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02}
+	got := buildUserContent("what is this?", []core.ImageAttachment{
+		{MimeType: "image/png", Data: data, FileName: "x.png"},
+	})
+
+	parts, ok := got.([]map[string]any)
+	if !ok {
+		t.Fatalf("content type = %T, want []map[string]any", got)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("parts len = %d, want 2", len(parts))
+	}
+
+	// Image block first.
+	img := parts[0]
+	if img["type"] != "image" {
+		t.Errorf("parts[0].type = %v, want image", img["type"])
+	}
+	src, ok := img["source"].(map[string]any)
+	if !ok {
+		t.Fatalf("parts[0].source is not an object: %v", img["source"])
+	}
+	if src["type"] != "base64" {
+		t.Errorf("source.type = %v, want base64", src["type"])
+	}
+	if src["media_type"] != "image/png" {
+		t.Errorf("source.media_type = %v, want image/png", src["media_type"])
+	}
+	wantB64 := base64.StdEncoding.EncodeToString(data)
+	if src["data"] != wantB64 {
+		t.Errorf("source.data = %v, want %v", src["data"], wantB64)
+	}
+
+	// Text block last.
+	txt := parts[1]
+	if txt["type"] != "text" {
+		t.Errorf("parts[1].type = %v, want text", txt["type"])
+	}
+	if txt["text"] != "what is this?" {
+		t.Errorf("parts[1].text = %v, want %q", txt["text"], "what is this?")
+	}
+}
+
+// TestBuildUserContent_MultipleImagesPreserveOrder verifies each image becomes
+// its own block in the caller's order. Order matters: the model refers to
+// "the first image" / "the second image".
+func TestBuildUserContent_MultipleImagesPreserveOrder(t *testing.T) {
+	got := buildUserContent("compare", []core.ImageAttachment{
+		{MimeType: "image/png", Data: []byte("one")},
+		{MimeType: "image/jpeg", Data: []byte("two")},
+		{MimeType: "image/webp", Data: []byte("three")},
+	})
+
+	parts := got.([]map[string]any)
+	if len(parts) != 4 { // 3 images + 1 text
+		t.Fatalf("parts len = %d, want 4", len(parts))
+	}
+
+	wantMimes := []string{"image/png", "image/jpeg", "image/webp"}
+	wantData := []string{"one", "two", "three"}
+	for i := range wantMimes {
+		src := parts[i]["source"].(map[string]any)
+		if src["media_type"] != wantMimes[i] {
+			t.Errorf("parts[%d].source.media_type = %v, want %v", i, src["media_type"], wantMimes[i])
+		}
+		want := base64.StdEncoding.EncodeToString([]byte(wantData[i]))
+		if src["data"] != want {
+			t.Errorf("parts[%d].source.data = %v, want %v", i, src["data"], want)
+		}
+	}
+	if parts[3]["type"] != "text" {
+		t.Errorf("last part type = %v, want text", parts[3]["type"])
+	}
+}
+
+// TestBuildUserContent_DefaultsMimeType verifies an attachment with no mime
+// type still produces a usable block rather than an empty media_type, which
+// the model API would reject.
+func TestBuildUserContent_DefaultsMimeType(t *testing.T) {
+	got := buildUserContent("x", []core.ImageAttachment{{Data: []byte("d")}})
+	src := got.([]map[string]any)[0]["source"].(map[string]any)
+	if src["media_type"] != "image/png" {
+		t.Errorf("media_type = %v, want image/png fallback", src["media_type"])
+	}
+}
+
+// TestBuildUserContent_EmptyPromptStillHasTextBlock verifies an image-only
+// message (no caption) still carries a text part, since some providers reject
+// an image-only content array.
+func TestBuildUserContent_EmptyPromptStillHasTextBlock(t *testing.T) {
+	for _, prompt := range []string{"", "   ", "\n\t"} {
+		got := buildUserContent(prompt, []core.ImageAttachment{{MimeType: "image/png", Data: []byte("d")}})
+		parts := got.([]map[string]any)
+		last := parts[len(parts)-1]
+		if last["type"] != "text" {
+			t.Fatalf("prompt %q: last part type = %v, want text", prompt, last["type"])
+		}
+		if s, _ := last["text"].(string); strings.TrimSpace(s) == "" {
+			t.Errorf("prompt %q: text block is empty", prompt)
+		}
+	}
+}
+
+// TestSend_ResidentWithImages_WritesMultimodalFrame is the end-to-end check:
+// a resident Send with images must put an array (not a string) in the frame's
+// message.content, with the prompt inside it.
+func TestSend_ResidentWithImages_WritesMultimodalFrame(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+	cs.interruptible = true
+	stdin := &captureStdin{}
+	cs.stdin = stdin
+
+	err := cs.Send("describe this", []core.ImageAttachment{
+		{MimeType: "image/png", Data: []byte("PNGDATA")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Send returned error: %v", err)
+	}
+
+	frames := stdin.frames(t)
+	if len(frames) != 1 {
+		t.Fatalf("expected 1 frame, got %d: %v", len(frames), frames)
+	}
+	f := frames[0]
+	if f["type"] != "user" {
+		t.Errorf("frame type = %v, want user", f["type"])
+	}
+
+	msg, ok := f["message"].(map[string]any)
+	if !ok {
+		t.Fatalf("message is not an object: %v", f["message"])
+	}
+	if msg["role"] != "user" {
+		t.Errorf("message.role = %v, want user", msg["role"])
+	}
+
+	// content MUST be an array here — a string would silently drop the image.
+	parts, ok := msg["content"].([]any)
+	if !ok {
+		t.Fatalf("message.content type = %T, want array (image was dropped)", msg["content"])
+	}
+	if len(parts) != 2 {
+		t.Fatalf("content parts = %d, want 2", len(parts))
+	}
+	first := parts[0].(map[string]any)
+	if first["type"] != "image" {
+		t.Errorf("first block type = %v, want image", first["type"])
+	}
+	last := parts[1].(map[string]any)
+	if last["type"] != "text" || last["text"] != "describe this" {
+		t.Errorf("last block = %v, want text %q", last, "describe this")
+	}
+}
+
+// TestSend_ResidentWithoutImages_KeepsStringContent guards the regression that
+// matters most: the existing text-only path must still emit a plain string.
+func TestSend_ResidentWithoutImages_KeepsStringContent(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+	cs.interruptible = true
+	stdin := &captureStdin{}
+	cs.stdin = stdin
+
+	if err := cs.Send("just text", nil, nil); err != nil {
+		t.Fatalf("Send returned error: %v", err)
+	}
+
+	frames := stdin.frames(t)
+	if len(frames) != 1 {
+		t.Fatalf("expected 1 frame, got %d", len(frames))
+	}
+	msg := frames[0]["message"].(map[string]any)
+	s, ok := msg["content"].(string)
+	if !ok {
+		t.Fatalf("message.content type = %T, want string", msg["content"])
+	}
+	if s != "just text" {
+		t.Errorf("content = %q, want %q", s, "just text")
+	}
+}
+
+// TestSend_ResidentWithImagesAndFiles verifies both paths compose: files are
+// appended to the prompt as path references, and the result is still wrapped
+// in the multimodal array.
+func TestSend_ResidentWithImagesAndFiles(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+	cs.interruptible = true
+	cs.workDir = t.TempDir()
+	stdin := &captureStdin{}
+	cs.stdin = stdin
+
+	if err := cs.Send("look", []core.ImageAttachment{{MimeType: "image/png", Data: []byte("IMG")}},
+		[]core.FileAttachment{{MimeType: "text/plain", Data: []byte("body"), FileName: "notes.txt"}}); err != nil {
+		t.Fatalf("Send returned error: %v", err)
+	}
+
+	parts := stdin.frames(t)[0]["message"].(map[string]any)["content"].([]any)
+	if len(parts) != 2 {
+		t.Fatalf("content parts = %d, want 2", len(parts))
+	}
+	text := parts[1].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "look") {
+		t.Errorf("text block lost the prompt: %q", text)
+	}
+	if !strings.Contains(text, "notes.txt") {
+		t.Errorf("text block missing file path reference: %q", text)
+	}
+}
+
+// TestSend_ResidentWithImages_TurnSeqBumped verifies the multimodal path still
+// advances the turn counter — background-task attribution depends on it, and
+// an early return in the image branch would silently break that.
+func TestSend_ResidentWithImages_TurnSeqBumped(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+	cs.interruptible = true
+	cs.stdin = &captureStdin{}
+
+	before := cs.turnSeq.Load()
+	if err := cs.Send("x", []core.ImageAttachment{{MimeType: "image/png", Data: []byte("d")}}, nil); err != nil {
+		t.Fatalf("Send returned error: %v", err)
+	}
+	if got := cs.turnSeq.Load(); got != before+1 {
+		t.Errorf("turnSeq = %d, want %d", got, before+1)
+	}
+}
+
+// TestAnnotateUnsupportedImages verifies the per-turn spawn path (which has no
+// channel for content blocks) tells the model an image was attached instead of
+// dropping it silently. Silently dropping is what produced the original
+// "where is the image?" confusion.
+func TestAnnotateUnsupportedImages(t *testing.T) {
+	t.Run("no images leaves prompt untouched", func(t *testing.T) {
+		got := annotateUnsupportedImages("look at this", nil)
+		if got != "look at this" {
+			t.Errorf("prompt = %q, want unchanged", got)
+		}
+	})
+
+	t.Run("images disclose the limitation", func(t *testing.T) {
+		got := annotateUnsupportedImages("look at this", []core.ImageAttachment{
+			{MimeType: "image/png", Data: []byte("d")},
+		})
+		if !strings.Contains(got, "look at this") {
+			t.Errorf("prompt lost its original text: %q", got)
+		}
+		if !strings.Contains(got, "cannot deliver image content") {
+			t.Errorf("annotation missing the limitation note: %q", got)
+		}
+		if !strings.Contains(got, "1 image(s)") {
+			t.Errorf("annotation missing the image count: %q", got)
+		}
+	})
+
+	t.Run("count reflects multiple images", func(t *testing.T) {
+		got := annotateUnsupportedImages("x", []core.ImageAttachment{
+			{MimeType: "image/png", Data: []byte("a")},
+			{MimeType: "image/png", Data: []byte("b")},
+		})
+		if !strings.Contains(got, "2 image(s)") {
+			t.Errorf("annotation missing the image count: %q", got)
+		}
+	})
 }

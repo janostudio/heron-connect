@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -434,10 +435,74 @@ func (cs *codebuddySession) emit(ev core.Event) {
 	}
 }
 
-func (cs *codebuddySession) Send(prompt string, images []core.ImageAttachment, files []core.FileAttachment) error {
-	if len(images) > 0 {
-		slog.Warn("codebuddySession: images not supported, ignoring")
+// annotateUnsupportedImages appends a disclosure to the prompt when images
+// must travel over the per-turn command-line transport, which has no channel
+// for base64 content blocks.
+//
+// The old behaviour logged a warning and dropped the images, so the model saw
+// a bare "look at this" and replied that it could not find any image — the
+// user's complaint. Naming the limitation lets the model say something useful
+// ("this transport can't carry images; please resend as a file path") instead
+// of guessing. Agent.New always selects resident mode, so this is defensive.
+func annotateUnsupportedImages(prompt string, images []core.ImageAttachment) string {
+	if len(images) == 0 {
+		return prompt
 	}
+	slog.Warn("codebuddySession: per-turn mode cannot attach images as content blocks; referencing as text only", "images", len(images))
+	return fmt.Sprintf("%s\n\n(%d image(s) were attached by the user, but this transport cannot deliver image content. Ask the user to resend if visual inspection is required.)", prompt, len(images))
+}
+
+// buildUserContent assembles the stream-json `message.content` value for a
+// user frame.
+//
+// With no images it returns the plain prompt string, which is what the CLI has
+// always received — the string form stays the default so existing text-only
+// behaviour is untouched. With images it returns the multimodal array form
+//
+//	[{"type":"image","source":{...}}, ..., {"type":"text","text":prompt}]
+//
+// because the CLI accepts `content` as either a string or an array of content
+// blocks. Images go first and the text block last, matching both the CLI's own
+// ordering and the claudecode adapter.
+//
+// The images must travel inside the SAME frame as the prompt: when multiple
+// user frames are piped at once the CLI treats each as an independent session,
+// so a follow-up frame would land in a conversation with no image history and
+// the model would report that it never received an image.
+//
+// Sending the array is what makes vision work at all. The CLI cannot be told
+// about images via filesystem paths in a way the model "sees" — an attached
+// image has to be a base64 content block.
+func buildUserContent(prompt string, images []core.ImageAttachment) any {
+	if len(images) == 0 {
+		return prompt
+	}
+
+	parts := make([]map[string]any, 0, len(images)+1)
+	for _, img := range images {
+		mimeType := img.MimeType
+		if mimeType == "" {
+			mimeType = "image/png"
+		}
+		parts = append(parts, map[string]any{
+			"type": "image",
+			"source": map[string]any{
+				"type":       "base64",
+				"media_type": mimeType,
+				"data":       base64.StdEncoding.EncodeToString(img.Data),
+			},
+		})
+	}
+
+	if strings.TrimSpace(prompt) == "" {
+		prompt = "Please analyze the attached image(s)."
+	}
+	parts = append(parts, map[string]any{"type": "text", "text": prompt})
+
+	return parts
+}
+
+func (cs *codebuddySession) Send(prompt string, images []core.ImageAttachment, files []core.FileAttachment) error {
 	if len(files) > 0 {
 		filePaths := core.SaveFilesToDisk(cs.workDir, files)
 		prompt = core.AppendFileRefs(prompt, filePaths)
@@ -455,17 +520,21 @@ func (cs *codebuddySession) Send(prompt string, images []core.ImageAttachment, f
 		// this turn and won't be relayed as a between-turns completion. See
 		// handleTaskEvent.
 		cs.turnSeq.Add(1)
+		content := buildUserContent(prompt, images)
+		if _, isString := content.(string); !isString {
+			slog.Debug("codebuddySession: sending multimodal content", "images", len(images))
+		}
 		return cs.writeJSON(map[string]any{
 			"type": "user",
 			"message": map[string]any{
 				"role":    "user",
-				"content": prompt,
+				"content": content,
 			},
 		})
 	}
 
 	sid := cs.CurrentSessionID()
-	args := launchArgs(prompt, sid, cs.mode, cs.model, cs.extraArgs)
+	args := launchArgs(annotateUnsupportedImages(prompt, images), sid, cs.mode, cs.model, cs.extraArgs)
 
 	slog.Debug("codebuddySession: launching", "resume", sid != "", "args_len", len(args))
 
