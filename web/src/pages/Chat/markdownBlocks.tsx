@@ -44,6 +44,24 @@ function CopyButtonInner({ code }: { code: string }) {
 }
 export const CopyButton = memo(CopyButtonInner);
 
+// Flattens a React children tree to its concatenated text. rehype-highlight
+// rewrites a highlighted `<code>` element's children into an array of
+// `<span class="hljs-*">` elements interleaved with text nodes, so the code
+// text is no longer reachable as a single string. Reading `children` directly
+// therefore only worked for blocks hljs left untouched (unknown language, or a
+// fence with no info string) — everything it actually highlighted produced an
+// empty copy payload. Walking the tree reassembles the original source.
+function flattenText(node: unknown): string {
+  if (node == null || typeof node === 'boolean') return '';
+  if (typeof node === 'string') return node;
+  if (typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(flattenText).join('');
+  const el = node as { props?: { children?: unknown }; children?: unknown };
+  if (el.props?.children !== undefined) return flattenText(el.props.children);
+  if (el.children !== undefined) return flattenText(el.children);
+  return '';
+}
+
 // react-markdown (via hast-util-to-jsx-runtime) hands every custom component a
 // `node` prop holding the hast node. Spreading the rest props straight onto a
 // DOM element therefore leaks `node="[object Object]"` into the markup. React
@@ -51,8 +69,10 @@ export const CopyButton = memo(CopyButtonInner);
 // pure noise in the DOM. Destructuring it out here keeps the spread clean.
 function PreBlockInner({ children, node: _node, ...props }: React.HTMLAttributes<HTMLPreElement> & { node?: unknown }) {
   const codeEl = (children as any)?.props;
-  const lang = codeEl?.className?.replace(/^language-/, '') || '';
-  const code = typeof codeEl?.children === 'string' ? codeEl.children.replace(/\n$/, '') : '';
+  // Class list is `hljs language-<lang>`; match the token instead of anchoring
+  // at the start, otherwise the label renders as "HLJS LANGUAGE-SQL".
+  const lang = /language-([\w+#.-]+)/.exec(codeEl?.className || '')?.[1] || '';
+  const code = flattenText(codeEl?.children).replace(/\n$/, '');
   return (
     <div className="not-prose relative group my-4">
       {lang && (
