@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   sessionsSignature, fileIsPreviewable, isMarkdown, isHtmlFile,
   isChatCommand, classifyInput, CHAT_COMMANDS, parseListItemText,
-  attachmentAccept, TEXT_EXTS,
+  attachmentAccept, TEXT_EXTS, relFromFilesHref, splitFileRel,
 } from './chatHelpers';
 import type { Session } from '@/api/sessions';
 
@@ -329,5 +329,50 @@ describe('parseListItemText', () => {
   it('does not treat a mid-text bold as a command', () => {
     // The bold pattern is anchored to the start.
     expect(parseListItemText('text **bold** more').cmd).toBe('text');
+  });
+});
+
+// ── relFromFilesHref ────────────────────────────────────────
+
+describe('relFromFilesHref', () => {
+  it('extracts a nested relative path', () => {
+    expect(relFromFilesHref('/api/v1/files/auto-bugfix/reports/20261008/daily.md', 'auto-bugfix'))
+      .toBe('reports/20261008/daily.md');
+  });
+
+  it('extracts a root-level file', () => {
+    expect(relFromFilesHref('/api/v1/files/proj/y.go', 'proj')).toBe('y.go');
+  });
+
+  it('decodes escaped segments (spaces, CJK)', () => {
+    expect(relFromFilesHref('/api/v1/files/proj/my%20docs/note.md', 'proj'))
+      .toBe('my docs/note.md');
+  });
+
+  it('returns null for another project, so the caller keeps the bare preview', () => {
+    expect(relFromFilesHref('/api/v1/files/other/y.go', 'proj')).toBeNull();
+  });
+
+  it('returns null for a non-file link', () => {
+    expect(relFromFilesHref('https://example.com/y.go', 'proj')).toBeNull();
+  });
+
+  it('returns null when the path is missing', () => {
+    expect(relFromFilesHref('/api/v1/files/proj', 'proj')).toBeNull();
+    expect(relFromFilesHref('/api/v1/files/proj/', 'proj')).toBeNull();
+  });
+});
+
+// ── splitFileRel ────────────────────────────────────────────
+
+describe('splitFileRel', () => {
+  it('splits a nested path', () => {
+    expect(splitFileRel('reports/20261008/daily.md'))
+      .toEqual({ dir: 'reports/20261008', name: 'daily.md' });
+  });
+
+  it('treats a root-level file as no directory', () => {
+    // '' is the project root — the browser's initial path, not '/'.
+    expect(splitFileRel('y.go')).toEqual({ dir: '', name: 'y.go' });
   });
 });

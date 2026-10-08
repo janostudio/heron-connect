@@ -134,3 +134,38 @@ export function classifyInput(content: string, knownCommands: Set<string>): {
   const isKnown = knownCommands.has(token);
   return { token, isKnown, goesToPanel: isKnown && !CHAT_COMMANDS.has(token) };
 }
+
+// ── File link → project-relative path ───────────────────────
+
+const FILES_PREFIX = '/api/v1/files/';
+
+/** Split a project-relative path into its parent dir and its file name. */
+export function splitFileRel(rel: string): { dir: string; name: string } {
+  const i = rel.lastIndexOf('/');
+  return i === -1 ? { dir: '', name: rel } : { dir: rel.slice(0, i), name: rel.slice(i + 1) };
+}
+
+// decodeURIComponent throws on a malformed sequence; a raw segment is still a
+// usable path, so failures fall back to the undecoded text.
+function safeDecode(seg: string): string {
+  try {
+    return decodeURIComponent(seg);
+  } catch {
+    return seg;
+  }
+}
+
+/**
+ * Extract the project-relative path from a `/api/v1/files/<project>/<rel>` URL
+ * — the link form the engine emits for local file references. Returns null when
+ * the URL is not a file link for `projectName`: only then does the caller fall
+ * back to the standalone preview, which has no directory context to show.
+ */
+export function relFromFilesHref(href: string, projectName: string): string | null {
+  if (!href.startsWith(FILES_PREFIX)) return null;
+  const parts = href.slice(FILES_PREFIX.length).split('/').filter(p => p !== '');
+  // project name + at least one path segment
+  if (parts.length < 2) return null;
+  if (safeDecode(parts[0]) !== projectName) return null;
+  return parts.slice(1).map(safeDecode).join('/');
+}

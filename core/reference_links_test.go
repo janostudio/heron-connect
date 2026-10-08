@@ -148,3 +148,49 @@ func TestTransformLocalRefsToLinks_BasenameNoMatchNotLinked(t *testing.T) {
 		t.Fatalf("TransformLocalRefsToLinks() = %q, unmatched basename should not be linkified", got)
 	}
 }
+
+// Interactive messages reach the engine with an empty workspaceDir (see
+// processInteractiveMessage), which used to leave every local reference
+// unresolved and silently disabled linkification on the web. The bridge branch
+// now falls back to the agent's work dir.
+func TestRenderOutgoingContent_BridgeFallsBackToAgentWorkDir(t *testing.T) {
+	dir := setupDemoDir(t)
+	p := &stubPlatformEngine{n: "bridge"}
+	a := &stubWorkDirAgent{workDir: dir}
+	e := NewEngine("proj", a, []Platform{p}, "", LangEnglish)
+
+	got := e.renderOutgoingContentForWorkspace(p, "check out src/app.ts", "")
+	want := "check out [src/app.ts](/api/v1/files/proj/src/app.ts)"
+	if got != want {
+		t.Fatalf("renderOutgoingContentForWorkspace() = %q, want %q", got, want)
+	}
+}
+
+// An explicitly passed workspaceDir must win over the fallback: a caller that
+// knows the turn's workspace (multi-workspace routing, cron) must not have it
+// overridden by the agent's current dir.
+func TestRenderOutgoingContent_ExplicitWorkspaceDirWins(t *testing.T) {
+	dir := setupDemoDir(t)
+	p := &stubPlatformEngine{n: "bridge"}
+	a := &stubWorkDirAgent{workDir: dir}
+	e := NewEngine("proj", a, []Platform{p}, "", LangEnglish)
+
+	// Empty dir: nothing to resolve against, so the relative path stays raw.
+	in := "check out src/app.ts"
+	if got := e.renderOutgoingContentForWorkspace(p, in, t.TempDir()); got != in {
+		t.Fatalf("renderOutgoingContentForWorkspace() = %q, want the explicit workspace honored (%q)", got, in)
+	}
+}
+
+// An agent without a work dir (no WorkDirSwitcher) must not break rendering:
+// the fallback is a type assertion, so it degrades to the previous behaviour
+// (nothing linkified) instead of panicking.
+func TestRenderOutgoingContent_BridgeWithoutWorkDirSupport(t *testing.T) {
+	p := &stubPlatformEngine{n: "bridge"}
+	e := NewEngine("proj", &stubAgent{}, []Platform{p}, "", LangEnglish)
+
+	in := "check out src/app.ts"
+	if got := e.renderOutgoingContentForWorkspace(p, in, ""); got != in {
+		t.Fatalf("renderOutgoingContentForWorkspace() = %q, want unchanged when agent has no work dir", got)
+	}
+}

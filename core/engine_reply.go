@@ -333,6 +333,20 @@ func (e *Engine) renderOutgoingContentForWorkspace(p Platform, content, workspac
 	// frontend can preview/download files the agent generated on disk. This is a
 	// web-only capability; other platforms keep the existing reference rendering.
 	if p.Name() == "bridge" {
+		// Interactive messages arrive with an empty workspaceDir (see
+		// processInteractiveMessage), which would leave every local reference
+		// unresolved and silently disable linkification on the web. Fall back to
+		// the agent's current work dir — it is the same root the management
+		// files API serves (RegisterProjectWorkDir), so the emitted relative
+		// paths resolve to real files. Only the bridge branch falls back: other
+		// platforms deliberately keep their references disabled unless a
+		// workspace was passed, and gaining one would add 📄/📁 markers to
+		// WeCom/Feishu output.
+		if strings.TrimSpace(workspaceDir) == "" {
+			if wd, ok := e.agent.(interface{ GetWorkDir() string }); ok {
+				workspaceDir = wd.GetWorkDir()
+			}
+		}
 		return TransformLocalRefsToLinks(content, e.Name(), workspaceDir)
 	}
 	return TransformLocalReferences(content, e.references, e.agent.Name(), p.Name(), workspaceDir)

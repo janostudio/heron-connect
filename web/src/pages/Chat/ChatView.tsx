@@ -29,7 +29,7 @@ import type { ChatMsg, PickItem } from './chatMessage';
 import { SequenceGuard } from '@/lib/sequenceGuard';
 import {
   sessionsSignature, fileIsPreviewable, isMarkdown, isHtmlFile,
-  CHAT_COMMANDS, classifyInput,
+  CHAT_COMMANDS, classifyInput, relFromFilesHref, splitFileRel,
 } from './chatHelpers';
 import { cn, loadLS, saveLS, copyText } from '@/lib/utils';
 import { createShare, revokeShare, absoluteShareURL, type ShareInfo } from '@/api/share';
@@ -396,7 +396,7 @@ function encodeRelPath(rel: string): string {
   return rel.split('/').map((s) => encodeURIComponent(s)).join('/');
 }
 
-function ProjectFileBrowser({ open, projectName, onClose, onInsertFile, previewWidth, isDesktop, onResizeStart }: {
+function ProjectFileBrowser({ open, projectName, onClose, onInsertFile, previewWidth, isDesktop, onResizeStart, targetFile }: {
   open: boolean;
   projectName: string;
   onClose: () => void;
@@ -404,6 +404,11 @@ function ProjectFileBrowser({ open, projectName, onClose, onInsertFile, previewW
   previewWidth: number;
   isDesktop: boolean;
   onResizeStart: (e: React.MouseEvent) => void;
+  // A file to jump to, requested from outside (clicking a file link in the
+  // transcript). `seq` is bumped per request so repeating the same click still
+  // re-runs the jump — without it, React would see an unchanged prop and the
+  // browser would stay where the user last browsed.
+  targetFile?: { rel: string; seq: number } | null;
 }) {
   // Remember the last browsed directory + selected file per project so the
   // browser re-opens where the user left off instead of the project root.
@@ -411,8 +416,14 @@ function ProjectFileBrowser({ open, projectName, onClose, onInsertFile, previewW
   const browseKey = useMemo(() => `cc_file_browser:${projectName}`, [projectName]);
   const remembered = useMemo(() => loadLS<{ path?: string; fileName?: string }>(browseKey), [browseKey]);
 
-  const [currentPath, setCurrentPath] = useState(remembered?.path || '');
-  const [rememberedFileName] = useState(remembered?.fileName || '');
+  const [currentPath, setCurrentPath] = useState(() => (
+    targetFile ? splitFileRel(targetFile.rel).dir : remembered?.path || ''
+  ));
+  // File to select once the directory listing arrives. Seeded from the jump
+  // target when there is one, otherwise from the remembered position.
+  const [preferredFileName, setPreferredFileName] = useState(() => (
+    targetFile ? splitFileRel(targetFile.rel).name : remembered?.fileName || ''
+  ));
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [currentIndex, setCurrentIndex] = useState(-1);
   // Closed by default: the directory dropdown is opt-in — open the browser
@@ -487,6 +498,18 @@ function ProjectFileBrowser({ open, projectName, onClose, onInsertFile, previewW
     }
   }, [share]);
 
+  // Jump to a file requested from outside (a file link clicked in the
+  // transcript): move to its directory and select it. The directory dropdown
+  // stays closed — the body shows the file, and the breadcrumb above it already
+  // gives the directory context the dropdown would.
+  useEffect(() => {
+    if (!targetFile) return;
+    const { dir, name } = splitFileRel(targetFile.rel);
+    setCurrentPath(dir);
+    setPreferredFileName(name);
+    setDropdownOpen(false);
+  }, [targetFile]);
+
   // Load the directory listing whenever the current dir changes. We do NOT
   // force the dropdown open here — openDir/goParent set it true at the call
   // site, and the initial mount intentionally leaves it closed.
@@ -502,8 +525,8 @@ function ProjectFileBrowser({ open, projectName, onClose, onInsertFile, previewW
       // Restore the remembered file selection by name; fall back to the
       // first file when the remembered file no longer exists in this dir.
       let idx = 0;
-      if (rememberedFileName) {
-        const found = files.findIndex((f) => f.name === rememberedFileName);
+      if (preferredFileName) {
+        const found = files.findIndex((f) => f.name === preferredFileName);
         if (found >= 0) idx = found;
       }
       setCurrentIndex(files.length > 0 ? idx : -1);
@@ -516,7 +539,7 @@ function ProjectFileBrowser({ open, projectName, onClose, onInsertFile, previewW
       setLoading(false);
     });
     return () => { alive = false; };
-  }, [open, currentPath, projectName, rememberedFileName]);
+  }, [open, currentPath, projectName, preferredFileName]);
 
   // Persist the current dir + selected file so the browser restores position.
   useEffect(() => {
@@ -823,6 +846,10 @@ export default function ChatView() {
   const [previewFile, setPreviewFile] = useState<{ path: string; fileName: string } | null>(null);
   // Project file browser drawer
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
+  // File the browser should jump to when opened from a transcript link. The
+  // seq bumps per request so clicking the same link twice re-runs the jump.
+  const [browserTarget, setBrowserTarget] = useState<{ rel: string; seq: number } | null>(null);
+  const browserTargetSeq = useRef(0);
 
   // Resizable preview column width (shared by FilePreview + ProjectFileBrowser).
   // Persisted globally — a UI preference that should carry across projects.
@@ -1516,9 +1543,23 @@ export default function ChatView() {
   // Stable file-open handler. Must NOT be an inline arrow at the call site:
   // a new function identity on every render would defeat the React.memo on
   // MessageRow / RenderMarkdown / Transcript.
+  //
+  // Links the engine emits for files in this project open the directory browser
+  // on that file: it shows the same content as the standalone preview plus the
+  // directory around it (sibling navigation, breadcrumb, share/insert).
+  // Anything else — a link for another project, say — keeps the standalone
+  // preview, which needs no directory context.
   const handleOpenFile = useCallback((path: string, fileName: string) => {
-    setPreviewFile({ path, fileName });
-  }, []);
+    const rel = projectName ? relFromFilesHref(path, projectName) : null;
+    if (rel === null) {
+      setPreviewFile({ path, fileName });
+      return;
+    }
+    setPreviewFile(null);
+    browserTargetSeq.current += 1;
+    setBrowserTarget({ rel, seq: browserTargetSeq.current });
+    setFileBrowserOpen(true);
+  }, [projectName]);
 
   const handleCmdSelect = useCallback((cmd: SlashCommand) => {
     setCmdOpen(false);
@@ -1683,7 +1724,9 @@ export default function ChatView() {
           )}
           <button
             type="button"
-            onClick={() => setFileBrowserOpen(true)}
+            // No jump target: opening from here restores the remembered
+            // position, it does not reopen the last clicked file.
+            onClick={() => { setBrowserTarget(null); setFileBrowserOpen(true); }}
             className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
             aria-label="Browse project files"
             title="项目文件"
@@ -1792,6 +1835,7 @@ export default function ChatView() {
         <ProjectFileBrowser
           open
           projectName={projectName || ''}
+          targetFile={browserTarget}
           onClose={() => setFileBrowserOpen(false)}
           onInsertFile={(relPath) => {
             composerRef.current?.insert(relPath);
