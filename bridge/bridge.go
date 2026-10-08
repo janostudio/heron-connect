@@ -422,7 +422,7 @@ func (bp *BridgePlatform) ReconstructReplyCtx(sessionKey string) (any, error) {
 	}
 	a := bp.server.getFirstAdapter(platform)
 	if a == nil {
-		return nil, fmt.Errorf("bridge: adapter %q not connected", platform)
+		return nil, fmt.Errorf("bridge: adapter %q: %w", platform, core.ErrNotConnected)
 	}
 	if !a.capabilities["reconstruct_reply"] {
 		return nil, fmt.Errorf("bridge: adapter %q does not support reconstruct_reply", platform)
@@ -633,7 +633,14 @@ func (bp *BridgePlatform) UpdateMessage(ctx context.Context, replyCtx any, conte
 		// progress to standalone markdown messages.
 		a = bp.server.getFirstAdapter(rc.Platform)
 	}
-	if a == nil || !a.capabilities["update_message"] {
+	if a == nil {
+		// No client to route to at all — transient. The caller may retry once a
+		// client reconnects, so do NOT report this as a capability gap.
+		return core.ErrNotConnected
+	}
+	if !a.capabilities["update_message"] {
+		// A client IS connected but lacks the capability — permanent for this
+		// platform; retrying will not help.
 		return core.ErrNotSupported
 	}
 	return bp.server.sendToAdapter(rc.Platform, map[string]any{
@@ -657,7 +664,12 @@ func (bp *BridgePlatform) SendPreviewStart(ctx context.Context, replyCtx any, co
 		// still begin streaming instead of failing outright.
 		a = bp.server.getFirstAdapter(rc.Platform)
 	}
-	if a == nil || !a.capabilities["preview"] {
+	if a == nil {
+		// No connected client — transient; the caller may retry on reconnect.
+		return nil, core.ErrNotConnected
+	}
+	if !a.capabilities["preview"] {
+		// Connected but the platform lacks preview support — permanent.
 		return nil, core.ErrNotSupported
 	}
 
@@ -704,7 +716,10 @@ func (bp *BridgePlatform) DeletePreviewMessage(ctx context.Context, previewHandl
 		return fmt.Errorf("bridge: invalid preview handle")
 	}
 	a := bp.server.getAdapterForClient(rc.Platform, rc.ClientID)
-	if a == nil || !a.capabilities["delete_message"] {
+	if a == nil {
+		return core.ErrNotConnected
+	}
+	if !a.capabilities["delete_message"] {
 		return core.ErrNotSupported
 	}
 	return bp.server.sendToAdapter(rc.Platform, map[string]any{
@@ -1441,7 +1456,7 @@ func (bs *BridgeServer) sendToAdapter(platform string, msg map[string]any) error
 	clients := append([]*bridgeAdapter(nil), bs.adapters[platform]...)
 	bs.mu.RUnlock()
 	if len(clients) == 0 {
-		return fmt.Errorf("bridge: adapter %q not connected", platform)
+		return fmt.Errorf("bridge: adapter %q: %w", platform, core.ErrNotConnected)
 	}
 	var lastErr error
 	for _, a := range clients {
@@ -1458,7 +1473,7 @@ func (bs *BridgeServer) sendToAdapter(platform string, msg map[string]any) error
 func (bs *BridgeServer) sendToClient(platform, clientID string, msg map[string]any) error {
 	a := bs.getAdapterForClient(platform, clientID)
 	if a == nil {
-		return fmt.Errorf("bridge: client %q/%q not connected", platform, clientID)
+		return fmt.Errorf("bridge: client %q/%q: %w", platform, clientID, core.ErrNotConnected)
 	}
 	return writeJSON(a.conn, &a.writeMu, msg)
 }

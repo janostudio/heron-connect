@@ -18,6 +18,13 @@ type Platform interface {
 // ErrNotSupported indicates a platform doesn't support a particular operation.
 var ErrNotSupported = errors.New("operation not supported by this platform")
 
+// ErrNotConnected indicates an operation cannot be attempted right now because
+// the platform currently has no usable connection — e.g. the Web bridge has
+// zero connected clients. It is transient: the caller may succeed on a later
+// attempt once a client reconnects. Distinct from ErrNotSupported, which is a
+// permanent capability gap for the platform and must not be retried.
+var ErrNotConnected = errors.New("no connection available for this platform")
+
 // ReplyContextReconstructor is an optional interface for platforms that can
 // recreate a reply context from a session key. This is needed for cron jobs
 // to send messages to users without an incoming message.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/janostudio/heron-connect/core"
 )
@@ -57,6 +58,9 @@ func (p *WSPlatform) UpdateMessage(ctx context.Context, previewHandle any, conte
 	if h.replyCtx.streamID == "" {
 		return fmt.Errorf("wecom-ws: preview handle missing stream id")
 	}
+	// Roll over to a fresh stream before WeCom's 10-minute hard expiry, which
+	// would otherwise freeze the preview for the rest of this long turn.
+	p.rolloverIfExpired(ctx, h)
 	if !h.lockOpen() {
 		return nil
 	}
@@ -100,6 +104,83 @@ func (p *WSPlatform) FinalizePreviewMessage(ctx context.Context, previewHandle a
 	}
 	h.finishFinalization(true)
 	return nil
+}
+
+// rolloverIfExpired finalizes the handle's current stream and reopens it under a
+// fresh streamID when it has been open longer than wecomWSStreamMaxAge. This
+// avoids WeCom's hard 10-minute stream expiry (errcode 846608), which would
+// otherwise freeze the preview for the rest of a long-running turn. It returns
+// true when a rollover happened (h.replyCtx.streamID is replaced in place, so
+// the caller's subsequent sends land on the new stream). Called with h.mu NOT
+// held; it takes the lock itself.
+func (p *WSPlatform) rolloverIfExpired(ctx context.Context, h *wsPreviewHandle) bool {
+	h.mu.Lock()
+	// Only an open preview may roll over: a finalized/finalizing handle is at
+	// end-of-turn and must not be reopened into a new stream.
+	if h.phase != wsPreviewOpen {
+		h.mu.Unlock()
+		return false
+	}
+	rc := h.replyCtx
+	if rc.reqID == "" || rc.streamID == "" {
+		h.mu.Unlock()
+		return false // no stream open yet
+	}
+	h.mu.Unlock()
+
+	key := rc.reqID + ":" + rc.streamID
+	p.streamMu.Lock()
+	state := p.streamState[key]
+	p.streamMu.Unlock()
+	if state == nil {
+		return false
+	}
+	state.mu.Lock()
+	age := time.Since(state.openedAt)
+	state.mu.Unlock()
+	if age < wecomWSStreamMaxAge {
+		return false
+	}
+
+	slog.Info("wecom-ws: stream approaching expiry, rolling over to a new stream",
+		"req_id", rc.reqID, "stream_id", rc.streamID, "age", age)
+
+	// 1) Close out the current stream with a terminal frame. Best-effort: if it
+	//    fails (e.g. already expired) we still reopen so the turn keeps going.
+	if err := p.finalizeCurrentStream(ctx, rc); err != nil {
+		slog.Debug("wecom-ws: rollover finalize failed (continuing)", "req_id", rc.reqID, "error", err)
+	}
+
+	// 2) Reopen under a new streamID. The new key yields a fresh streamState
+	//    (fresh openedAt, empty lastAcked) — progress rebuilds from empty, which
+	//    matches "a new message continues the answer" semantics.
+	h.mu.Lock()
+	h.replyCtx.streamID = p.generateReqID("stream")
+	h.phase = wsPreviewOpen
+	h.mu.Unlock()
+	return true
+}
+
+// finalizeCurrentStream sends a terminal (finish=true) frame for rc's current
+// stream, using the assembler's rendered snapshot as the content (falling back
+// to nothing if no assembler/visible text exists).
+func (p *WSPlatform) finalizeCurrentStream(ctx context.Context, rc wsReplyContext) error {
+	content := ""
+	if rc.streamID != "" {
+		key := rc.reqID + ":" + rc.streamID
+		p.streamMu.Lock()
+		state := p.streamState[key]
+		p.streamMu.Unlock()
+		if state != nil {
+			if asm := state.wecomAssembler; asm != nil {
+				content = asm.snapshot()
+			}
+		}
+	}
+	if content == "" {
+		return nil
+	}
+	return p.sendStreamFrameAndWaitAck(ctx, rc, content, true)
 }
 
 func (p *WSPlatform) sendFinalReplyChunks(ctx context.Context, rc wsReplyContext, content string) error {
@@ -156,7 +237,7 @@ func (p *WSPlatform) streamStateFor(rc wsReplyContext) (string, *wsStreamState, 
 	}
 	state := p.streamState[key]
 	if state == nil {
-		state = &wsStreamState{}
+		state = newWSStreamState()
 		p.streamState[key] = state
 	}
 	return key, state, nil

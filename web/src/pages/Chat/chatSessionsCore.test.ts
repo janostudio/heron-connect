@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   emptySlice, applyFrame, mergeHistoryIntoSlice, historyToMessages,
-  isHistoryMessage, settledMessages, setServerRunning, type SessionSlice,
+  isHistoryMessage, settledMessages, setServerRunning, shouldRefetchOnReconnect, type SessionSlice,
 } from './chatSessionsCore';
 import type { ChatMsg } from './chatMessage';
 import type { BridgeIncoming } from '@/hooks/useBridgeSocket';
@@ -284,6 +284,41 @@ describe('mergeHistoryIntoSlice', () => {
     expect(msgs.map(m => m.id)).toEqual(['hist-0', 'hist-1']);
     expect(isHistoryMessage(msgs[0])).toBe(true);
     expect(msgs[1].historyAttachments).toHaveLength(1);
+  });
+
+  it('fills a reply lost to a mid-turn disconnect (history has it, live does not)', () => {
+    // The bug: the turn finished while the bridge was down, so its final reply
+    // is in history but its live push never arrived. A reconnect refetch merges
+    // history in and the reply appears.
+    const live = sliceWith(user('hist-0', 'q1'), assistant('stream-1', '', { streaming: false }));
+    const s = mergeHistoryIntoSlice(live, [
+      user('hist-0', 'q1'),
+      assistant('hist-1', 'the lost answer'),
+    ]);
+    expect(s.messages.map(m => m.content)).toEqual(['q1', 'the lost answer', '']);
+  });
+});
+
+// ── Reconnect history catch-up ───────────────────────────────
+
+describe('shouldRefetchOnReconnect', () => {
+  it('fires only on the connecting edge into connected', () => {
+    // The reconnect we must catch up on.
+    expect(shouldRefetchOnReconnect('disconnected', 'connected')).toBe(true);
+    expect(shouldRefetchOnReconnect('connecting', 'connected')).toBe(true);
+    expect(shouldRefetchOnReconnect('registering', 'connected')).toBe(true);
+    expect(shouldRefetchOnReconnect('error', 'connected')).toBe(true);
+  });
+
+  it('does not fire on the first mount (prev undefined) — initial fetch already seeds history', () => {
+    expect(shouldRefetchOnReconnect(undefined, 'connected')).toBe(false);
+  });
+
+  it('does not fire while already connected or on non-connected transitions', () => {
+    expect(shouldRefetchOnReconnect('connected', 'connected')).toBe(false);
+    expect(shouldRefetchOnReconnect('connected', 'disconnected')).toBe(false);
+    expect(shouldRefetchOnReconnect('connecting', 'registering')).toBe(false);
+    expect(shouldRefetchOnReconnect('disconnected', 'disconnected')).toBe(false);
   });
 });
 

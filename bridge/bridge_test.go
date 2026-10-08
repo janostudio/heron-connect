@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1104,5 +1105,52 @@ func TestBridge_MessageReplyCtxCarriesMaxEntriesHint(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("expected reply ctx to be captured")
+	}
+}
+
+// TestBridge_UpdateMessage_NoClientIsNotConnected verifies that when the Web
+// platform has zero connected clients, UpdateMessage/SendPreviewStart report a
+// transient ErrNotConnected (retryable on reconnect) rather than ErrNotSupported.
+// Getting this wrong made a mid-turn disconnect look like a permanent capability
+// gap and latched the progress writer's failed flag for the rest of the turn.
+func TestBridge_UpdateMessage_NoClientIsNotConnected(t *testing.T) {
+	bs, _ := startTestBridge(t, "")
+	bp := bs.NewPlatform("advisor-gemini")
+
+	rc := &bridgeReplyCtx{Platform: "bridge", ClientID: "gone", SessionKey: "bridge:s:relay", ReplyCtx: "h"}
+
+	if err := bp.UpdateMessage(context.Background(), rc, "update"); !errors.Is(err, core.ErrNotConnected) {
+		t.Fatalf("UpdateMessage() err = %v, want ErrNotConnected", err)
+	}
+	if _, err := bp.SendPreviewStart(context.Background(), rc, "start"); !errors.Is(err, core.ErrNotConnected) {
+		t.Fatalf("SendPreviewStart() err = %v, want ErrNotConnected", err)
+	}
+}
+
+// TestBridge_UpdateMessage_ConnectedButUnsupported verifies that a connected
+// client lacking the capability still reports the permanent ErrNotSupported.
+func TestBridge_UpdateMessage_ConnectedButUnsupported(t *testing.T) {
+	bs, wsURL := startTestBridge(t, "")
+	bp := bs.NewPlatform("advisor-gemini")
+
+	conn := dialWS(t, wsURL, nil)
+	register(t, conn, "bridge", []string{"text"}) // no update_message / preview
+
+	rc := &bridgeReplyCtx{Platform: "bridge", ClientID: "gone", SessionKey: "bridge:s:relay", ReplyCtx: "h"}
+
+	if err := bp.UpdateMessage(context.Background(), rc, "update"); !errors.Is(err, core.ErrNotSupported) {
+		t.Fatalf("UpdateMessage() err = %v, want ErrNotSupported", err)
+	}
+	if _, err := bp.SendPreviewStart(context.Background(), rc, "start"); !errors.Is(err, core.ErrNotSupported) {
+		t.Fatalf("SendPreviewStart() err = %v, want ErrNotSupported", err)
+	}
+}
+
+// TestBridge_SendToAdapter_NoClientIsNotConnected pins the sentinel on the
+// broadcast path too (it feeds every plain reply send).
+func TestBridge_SendToAdapter_NoClientIsNotConnected(t *testing.T) {
+	bs, _ := startTestBridge(t, "")
+	if err := bs.sendToAdapter("bridge", map[string]any{"type": "text"}); !errors.Is(err, core.ErrNotConnected) {
+		t.Fatalf("sendToAdapter() err = %v, want ErrNotConnected", err)
 	}
 }

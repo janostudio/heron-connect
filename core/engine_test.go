@@ -14686,6 +14686,34 @@ func TestEngine_InteractiveSessionTurnStates(t *testing.T) {
 	}
 }
 
+// TestShouldWarnDeadSession verifies the log-level split for the defensive
+// cleanup branch: only a present-but-dead agent session (real subprocess that
+// leaked) warrants WARN; a nil session is the expected-rebuild placeholder and
+// must stay at Debug to avoid spamming one WARN per message.
+func TestShouldWarnDeadSession(t *testing.T) {
+	dead := newControllableSession("dead")
+	dead.alive = false
+	alive := newControllableSession("alive")
+
+	cases := []struct {
+		name  string
+		state *interactiveState
+		want  bool
+	}{
+		{"nil state", nil, false},
+		{"nil agent session (placeholder)", &interactiveState{}, false},
+		{"dead agent session", &interactiveState{agentSession: dead}, true},
+		{"alive agent session", &interactiveState{agentSession: alive}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldWarnDeadSession(tc.state); got != tc.want {
+				t.Errorf("shouldWarnDeadSession = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestProcessInteractiveEvents_UnrecoverableErrorDetachesAgentSession verifies
 // the self-heal for poisoned agent_session_id bindings: when an adapter marks
 // an EventError as session_unrecoverable (e.g. codebuddy exited silently

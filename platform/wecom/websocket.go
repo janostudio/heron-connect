@@ -56,6 +56,17 @@ type wsStreamState struct {
 	wecomAssembler *wecomStreamAssembler
 	terminalQueued bool
 	completed      bool
+	// openedAt is when this stream (identified by reqID:streamID) was created.
+	// Used to roll the stream over before WeCom's hard 10-minute expiry.
+	openedAt time.Time
+}
+
+// newWSStreamState builds a stream state with its open timestamp set. All
+// creation sites MUST go through this so openedAt is never the zero value —
+// a zero openedAt would look maximally expired and trigger an immediate,
+// pointless rollover on every frame.
+func newWSStreamState() *wsStreamState {
+	return &wsStreamState{openedAt: time.Now()}
 }
 
 type wsStreamSend struct {
@@ -137,6 +148,13 @@ const (
 	wecomWSStreamContentMaxBytes = 20480
 	// Keep room for tool-hold progress rows added by the WeCom stream assembler.
 	wecomWSPreviewTextMaxBytes = 16384
+	// wecomWSStreamMaxAge is how long a single stream may stay open before we
+	// proactively roll it over. WeCom hard-expires a stream after 10 minutes
+	// (errcode 846608 "stream message update expired"), after which no further
+	// update is accepted and the preview freezes. Rolling over well before that
+	// keeps long-running turns streaming continuously; the 3-minute margin
+	// absorbs rate-limit sleeps and ack retry backoffs on the send queue.
+	wecomWSStreamMaxAge = 7 * time.Minute
 )
 
 // --- WebSocket protocol frame types (matching official SDK) ---

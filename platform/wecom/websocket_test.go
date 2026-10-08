@@ -2048,3 +2048,117 @@ func TestIsErrCode(t *testing.T) {
 		t.Fatal("expected isErrCode to return false for nil error")
 	}
 }
+
+// TestNewWSStreamState_StampsOpenedAt guards the highest-risk detail of the
+// time-based rollover: every creation site must stamp openedAt, otherwise a
+// zero value looks maximally expired and would roll over on every frame.
+func TestNewWSStreamState_StampsOpenedAt(t *testing.T) {
+	st := newWSStreamState()
+	if st.openedAt.IsZero() {
+		t.Fatal("openedAt must be set by newWSStreamState")
+	}
+}
+
+// TestStreamStateFor_StampsOpenedAt covers the creation path used by the sending
+// code (streamStateFor), which previously constructed a bare &wsStreamState{}.
+func TestStreamStateFor_StampsOpenedAt(t *testing.T) {
+	p := &WSPlatform{}
+	rc := wsReplyContext{reqID: "req-open", streamID: "stream-open"}
+	_, state, err := p.streamStateFor(rc)
+	if err != nil {
+		t.Fatalf("streamStateFor: %v", err)
+	}
+	if state.openedAt.IsZero() {
+		t.Fatal("streamStateFor must stamp openedAt on creation")
+	}
+}
+
+// TestWecomAssemblerFor_StampsOpenedAt covers the OTHER creation path (assembler
+// lazy-init), which must stamp openedAt too.
+func TestWecomAssemblerFor_StampsOpenedAt(t *testing.T) {
+	p := &WSPlatform{}
+	rc := wsReplyContext{reqID: "req-asm", streamID: "stream-asm"}
+	if _, err := p.wecomAssemblerFor(rc); err != nil {
+		t.Fatalf("wecomAssemblerFor: %v", err)
+	}
+	p.streamMu.Lock()
+	state := p.streamState["req-asm:stream-asm"]
+	p.streamMu.Unlock()
+	if state == nil {
+		t.Fatal("assembler path should have created stream state")
+	}
+	if state.openedAt.IsZero() {
+		t.Fatal("wecomAssemblerFor must stamp openedAt on creation")
+	}
+}
+
+// TestRolloverIfExpired_NotExpiredIsNoop verifies a young stream is left alone.
+func TestRolloverIfExpired_NotExpiredIsNoop(t *testing.T) {
+	var frames []map[string]any
+	p := &WSPlatform{writeJSONFn: captureWSFrames(&frames)}
+	rc := wsReplyContext{reqID: "req-young", streamID: "stream-young"}
+	_, state, _ := p.streamStateFor(rc)
+	handle := &wsPreviewHandle{replyCtx: rc}
+
+	if p.rolloverIfExpired(context.Background(), handle) {
+		t.Fatal("young stream should not roll over")
+	}
+	if handle.replyCtx.streamID != "stream-young" {
+		t.Fatalf("streamID changed on a non-rollover: %q", handle.replyCtx.streamID)
+	}
+	if len(frames) != 0 {
+		t.Fatalf("no frame should be written for a young stream, got %d", len(frames))
+	}
+	_ = state
+}
+
+// TestRolloverIfExpired_ReopensStream verifies an aged stream reopens under a
+// fresh streamID so the preview keeps flowing past WeCom's 10-minute expiry.
+// The aged state has no assembler, so finalizeCurrentStream finds no content and
+// emits nothing — keeping the test hermetic (no async queue involvement).
+func TestRolloverIfExpired_ReopensStream(t *testing.T) {
+	p := &WSPlatform{writeJSONFn: captureWSFrames(&[]map[string]any{})}
+	rc := wsReplyContext{reqID: "req-old", streamID: "stream-old"}
+	_, state, _ := p.streamStateFor(rc)
+	state.mu.Lock()
+	state.openedAt = time.Now().Add(-wecomWSStreamMaxAge - time.Minute)
+	state.mu.Unlock()
+	handle := &wsPreviewHandle{replyCtx: rc, phase: wsPreviewOpen}
+
+	if !p.rolloverIfExpired(context.Background(), handle) {
+		t.Fatal("aged stream should roll over")
+	}
+	if handle.replyCtx.streamID == "stream-old" || handle.replyCtx.streamID == "" {
+		t.Fatalf("streamID not replaced on rollover: %q", handle.replyCtx.streamID)
+	}
+	if handle.phase != wsPreviewOpen {
+		t.Fatalf("handle phase = %v, want open after rollover", handle.phase)
+	}
+	// The reopened stream gets a fresh state with a current timestamp.
+	p.streamMu.Lock()
+	newState := p.streamState[rc.reqID+":"+handle.replyCtx.streamID]
+	p.streamMu.Unlock()
+	if newState != nil && newState.openedAt.IsZero() {
+		t.Fatal("reopened stream state must be stamped")
+	}
+}
+
+// TestRolloverIfExpired_NoStreamIsNoop covers handles that have no stream yet.
+func TestRolloverIfExpired_NoStreamIsNoop(t *testing.T) {
+	p := &WSPlatform{}
+	handle := &wsPreviewHandle{replyCtx: wsReplyContext{reqID: "req-none"}}
+	if p.rolloverIfExpired(context.Background(), handle) {
+		t.Fatal("handle without a stream should not roll over")
+	}
+}
+
+// TestWecomStreamMaxAge_LeavesSafetyMarginBelowHardLimit pins the margin against
+// WeCom's documented 10-minute stream TTL.
+func TestWecomStreamMaxAge_LeavesSafetyMarginBelowHardLimit(t *testing.T) {
+	if wecomWSStreamMaxAge >= 10*time.Minute {
+		t.Fatalf("stream max age %v must stay below WeCom's 10-minute hard limit", wecomWSStreamMaxAge)
+	}
+	if 10*time.Minute-wecomWSStreamMaxAge < 2*time.Minute {
+		t.Fatalf("safety margin %v too small", 10*time.Minute-wecomWSStreamMaxAge)
+	}
+}

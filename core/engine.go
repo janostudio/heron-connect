@@ -2429,9 +2429,23 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 		// overwritten below and Close() would never be called on the old
 		// agent session — leaking the subprocess (issue: orphaned --acp
 		// processes accumulating as PPID=1).
-		slog.Warn("found dead agent session on new message, cleaning up defensively",
-			"session_key", sessionKey,
-			"agent_session_nil", state.agentSession == nil)
+		//
+		// Two distinct situations reach here and must be logged differently:
+		//   - agentSession != nil but !Alive(): a real subprocess died without
+		//     cleanup — this leaks if unhandled, so WARN.
+		//   - agentSession == nil: an expected-rebuild path.
+		//     getOrCreateInteractiveStateWith intentionally writes back a
+		//     placeholder state with a nil agentSession when the context was
+		//     cancelled or StartSession failed. Hitting this on the next message
+		//     is routine, not a leak — Debug, or every message would spam WARN.
+		if shouldWarnDeadSession(state) {
+			slog.Warn("found dead agent session on new message, cleaning up defensively",
+				"session_key", sessionKey,
+				"agent_session_nil", false)
+		} else {
+			slog.Debug("recycling placeholder session state on new message",
+				"session_key", sessionKey)
+		}
 		e.stopUnsolicitedReader(state)
 		state.markStopped()
 		state.mu.Lock()
@@ -2604,6 +2618,16 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 	return state
 }
 
+// shouldWarnDeadSession reports whether hitting the "found dead agent session"
+// defensive-cleanup branch warrants a WARN. It is true only when a real agent
+// session object is present but no longer Alive() — a subprocess that died
+// without cleanup. When agentSession is nil the state is a placeholder written
+// back by the expected-rebuild path (context cancelled / StartSession failed),
+// which is routine and logged at Debug instead.
+func shouldWarnDeadSession(state *interactiveState) bool {
+	return state != nil && state.agentSession != nil
+}
+
 // cleanupInteractiveState removes the interactive state for the given session key
 // and closes its agent session. When an expected state is provided, cleanup is
 // skipped if the map entry has been replaced by a different state — this prevents
@@ -2613,8 +2637,7 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 // IMPORTANT: The state is deleted from the map AFTER the agent session is closed
 // to avoid race conditions where concurrent requests see an empty map while the
 // agent session is still being shut down (which can take up to 130s for Stop hooks).
-func (e *Engine) cleanupInteractiveState(sessionKey string, expected ...*interactiveState) {
-	e.interactiveMu.Lock()
+func (e *Engine) cleanupInteractiveState(sessionKey string, expected ...*interactiveState) {	e.interactiveMu.Lock()
 	state, ok := e.interactiveStates[sessionKey]
 	if len(expected) > 0 && expected[0] != nil && state != expected[0] {
 		// Another turn has already replaced the state — skip cleanup.

@@ -501,3 +501,118 @@ func TestCompactProgressWriter_NoHintKeepsDefaultCap(t *testing.T) {
 		t.Fatalf("maxEntries = %d, want default 10 without hint", w.maxEntries)
 	}
 }
+
+// flakyPreviewPlatform fails its first N SendPreviewStart / UpdateMessage calls
+// with a configurable error, then succeeds. Used to prove that a transient
+// ErrNotConnected does not latch the writer's `failed` flag.
+type flakyPreviewPlatform struct {
+	previewCapturePlatform
+	failStartErr  error
+	failStartLeft int
+	failUpdErr    error
+	failUpdLeft   int
+	startCalls    int
+	updCalls      int
+}
+
+func (p *flakyPreviewPlatform) SendPreviewStart(_ context.Context, _ any, content string) (any, error) {
+	p.startCalls++
+	if p.failStartLeft > 0 {
+		p.failStartLeft--
+		return nil, p.failStartErr
+	}
+	p.started = append(p.started, content)
+	return "preview-1", nil
+}
+
+func (p *flakyPreviewPlatform) UpdateMessage(_ context.Context, _ any, content string) error {
+	p.updCalls++
+	if p.failUpdLeft > 0 {
+		p.failUpdLeft--
+		return p.failUpdErr
+	}
+	p.updated = append(p.updated, content)
+	return nil
+}
+
+// TestCompactProgressWriter_NotConnectedDoesNotLatchFailed is the regression
+// for the Web-disconnect bug: a transient ErrNotConnected must leave the writer
+// retryable so in-place progress resumes once the client reconnects.
+func TestCompactProgressWriter_NotConnectedDoesNotLatchFailed(t *testing.T) {
+	p := &flakyPreviewPlatform{failStartErr: ErrNotConnected, failStartLeft: 1}
+	w := newCompactProgressWriter(context.Background(), p, "ctx", "cc", LangEnglish, nil)
+	if !w.enabled {
+		t.Fatal("writer should be enabled for compact-capable platform")
+	}
+
+	// First append: SendPreviewStart returns ErrNotConnected → no content sent,
+	// but the writer must NOT latch failed.
+	if w.AppendEvent(ProgressEntryToolUse, "step-1", "", "") {
+		t.Fatal("first append should report false while not connected")
+	}
+	if w.failed {
+		t.Fatal("writer latched failed on ErrNotConnected; it must stay retryable")
+	}
+
+	// Second append: client is back, the same writer must now succeed.
+	if !w.AppendEvent(ProgressEntryToolUse, "step-2", "", "") {
+		t.Fatal("second append should succeed after reconnect")
+	}
+	if w.failed {
+		t.Fatal("writer unexpectedly failed after successful retry")
+	}
+	if p.startCalls != 2 {
+		t.Fatalf("SendPreviewStart calls = %d, want 2 (retried)", p.startCalls)
+	}
+	if len(p.getPreviewEdits()) == 0 && len(p.started) == 0 {
+		t.Fatal("expected content to be delivered after reconnect")
+	}
+}
+
+// TestCompactProgressWriter_NotSupportedLatchesFailed confirms the permanent
+// case is unchanged: a capability gap sets failed and stops further attempts.
+func TestCompactProgressWriter_NotSupportedLatchesFailed(t *testing.T) {
+	p := &flakyPreviewPlatform{failStartErr: ErrNotSupported, failStartLeft: 100}
+	w := newCompactProgressWriter(context.Background(), p, "ctx", "cc", LangEnglish, nil)
+
+	if w.AppendEvent(ProgressEntryToolUse, "step-1", "", "") {
+		t.Fatal("append should report false when unsupported")
+	}
+	if !w.failed {
+		t.Fatal("writer must latch failed on ErrNotSupported")
+	}
+	callsAfterFail := p.startCalls
+	if w.AppendEvent(ProgressEntryToolUse, "step-2", "", "") {
+		t.Fatal("append should stay false once failed")
+	}
+	if p.startCalls != callsAfterFail {
+		t.Fatalf("writer kept calling the platform after latching failed (%d → %d)", callsAfterFail, p.startCalls)
+	}
+}
+
+// TestCompactProgressWriter_NotConnectedOnUpdateRetries covers the UpdateMessage
+// path (handle already established): a transient disconnect mid-turn must not
+// latch failed.
+func TestCompactProgressWriter_NotConnectedOnUpdateRetries(t *testing.T) {
+	p := &flakyPreviewPlatform{failUpdErr: ErrNotConnected, failUpdLeft: 1}
+	w := newCompactProgressWriter(context.Background(), p, "ctx", "cc", LangEnglish, nil)
+
+	// Establish the handle (first append = SendPreviewStart succeeds).
+	if !w.AppendEvent(ProgressEntryToolUse, "step-1", "", "") {
+		t.Fatal("first append should succeed (connected)")
+	}
+	// Next append goes through UpdateMessage, which fails once with ErrNotConnected.
+	if w.AppendEvent(ProgressEntryToolUse, "step-2", "", "") {
+		t.Fatal("append should report false while disconnected mid-turn")
+	}
+	if w.failed {
+		t.Fatal("writer latched failed on transient ErrNotConnected during update")
+	}
+	// Client reconnects: the next update must go through.
+	if !w.AppendEvent(ProgressEntryToolUse, "step-3", "", "") {
+		t.Fatal("append should succeed after reconnect")
+	}
+	if w.failed {
+		t.Fatal("writer unexpectedly failed after successful update retry")
+	}
+}

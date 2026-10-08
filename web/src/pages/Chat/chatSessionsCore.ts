@@ -20,8 +20,27 @@
 
 import type { ChatMsg } from './chatMessage';
 import type { CommandResult } from './CommandResultPanel';
-import type { BridgeIncoming } from '@/hooks/useBridgeSocket';
+import type { BridgeIncoming, BridgeStatus } from '@/hooks/useBridgeSocket';
 import { nowStamp } from './messageTime';
+
+/**
+ * Whether a bridge-status transition should trigger a history refetch.
+ *
+ * The bridge only pushes frames while a client is connected. If the connection
+ * drops mid-turn, the turn's final reply is written to the session history but
+ * its live push is lost (the engine's send fails with "not connected" and is
+ * dropped). Reconnecting therefore must re-pull the persisted history, whose
+ * idempotent merge (mergeHistoryIntoSlice) fills the gap without duplicating
+ * live content.
+ *
+ * Only the CONNECTING edge counts — from a real previous non-connected state
+ * into 'connected'. The very first mount (prev === undefined) is excluded
+ * because the initial data fetch already seeds history; firing here too would
+ * issue a redundant request on every page load.
+ */
+export function shouldRefetchOnReconnect(prev: BridgeStatus | undefined, next: BridgeStatus): boolean {
+  return next === 'connected' && prev !== undefined && prev !== 'connected';
+}
 
 // Local copy of ProgressCard.parseProgressCard so this module stays free of
 // component imports (react-markdown et al) when unit-tested. Must stay in sync

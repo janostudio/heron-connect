@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -520,6 +521,15 @@ func (w *compactProgressWriter) AppendStructured(item ProgressCardEntry, fallbac
 	return w.renderAndUpdate()
 }
 
+// isTransientConnErr reports whether err means "no client is connected right
+// now" (ErrNotConnected). Such a failure is retryable on a later event and must
+// NOT latch the writer's `failed` flag — otherwise a mid-turn Web disconnect
+// would permanently degrade the rest of the turn to legacy per-event messages,
+// even after the client reconnects.
+func isTransientConnErr(err error) bool {
+	return errors.Is(err, ErrNotConnected)
+}
+
 // renderAndUpdate sends the current w.content to the platform as the in-place
 // progress message, creating the handle on first send and updating it after.
 // Shared by the append path and the in-place row-merge path.
@@ -534,6 +544,11 @@ func (w *compactProgressWriter) renderAndUpdate() bool {
 			handle, err := w.starter.SendPreviewStart(callCtx, w.replyCtx, w.content)
 			cancel()
 			if err != nil || handle == nil {
+				if isTransientConnErr(err) {
+					// No client connected right now — retry on a later event.
+					slog.Debug("progress writer: preview start deferred (no client connected)", "platform", w.platform.Name(), "style", w.style)
+					return false
+				}
 				slog.Warn("progress writer: SendPreviewStart failed", "platform", w.platform.Name(), "style", w.style, "error", err, "handle_nil", handle == nil)
 				w.failed = true
 				return false
@@ -547,6 +562,10 @@ func (w *compactProgressWriter) renderAndUpdate() bool {
 		err := w.platform.Send(callCtx, w.replyCtx, w.content)
 		cancel()
 		if err != nil {
+			if isTransientConnErr(err) {
+				slog.Debug("progress writer: initial send deferred (no client connected)", "platform", w.platform.Name(), "style", w.style)
+				return false
+			}
 			slog.Warn("progress writer: initial Send failed", "platform", w.platform.Name(), "style", w.style, "error", err)
 			w.failed = true
 			return false
@@ -565,6 +584,10 @@ func (w *compactProgressWriter) renderAndUpdate() bool {
 	err := w.updater.UpdateMessage(callCtx, w.handle, w.content)
 	cancel()
 	if err != nil {
+		if isTransientConnErr(err) {
+			slog.Debug("progress writer: UpdateMessage deferred (no client connected)", "platform", w.platform.Name(), "style", w.style)
+			return false
+		}
 		slog.Warn("progress writer: UpdateMessage failed", "platform", w.platform.Name(), "style", w.style, "error", err)
 		w.failed = true
 		return false
@@ -607,6 +630,13 @@ func (w *compactProgressWriter) Finalize(state ProgressCardState) bool {
 	err := w.updater.UpdateMessage(callCtx, w.handle, w.content)
 	cancel()
 	if err != nil {
+		if isTransientConnErr(err) {
+			// Turn is ending and no client is connected to finalize the card on.
+			// The final reply message carries the content anyway; just freeze the
+			// progress card rather than latching failed.
+			slog.Debug("progress writer: finalize deferred (no client connected)", "platform", w.platform.Name(), "style", w.style)
+			return false
+		}
 		slog.Warn("progress writer: Finalize UpdateMessage failed", "platform", w.platform.Name(), "style", w.style, "error", err)
 		w.failed = true
 		return false

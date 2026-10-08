@@ -12,7 +12,13 @@ import (
 // together (instead of a standalone tool-only frame that would flicker).
 func (p *WSPlatform) OnToolStart(ctx context.Context, previewHandle any, toolName, explainArg, rawArg string) error {
 	h, ok := previewHandle.(*wsPreviewHandle)
-	if !ok || h == nil || !h.lockOpen() {
+	if !ok || h == nil {
+		return nil
+	}
+	// Roll over before WeCom's 10-minute stream expiry. Must run BEFORE lockOpen
+	// (it takes h.mu itself) so a long tool-heavy turn keeps streaming.
+	p.rolloverIfExpired(ctx, h)
+	if !h.lockOpen() {
 		return nil
 	}
 	defer h.unlock()
@@ -33,7 +39,13 @@ func (p *WSPlatform) OnToolStart(ctx context.Context, previewHandle any, toolNam
 // to progressLines without touching visibleText, then sends a merged preview.
 func (p *WSPlatform) OnToolComplete(ctx context.Context, previewHandle any, toolName, resultSummary string) error {
 	h, ok := previewHandle.(*wsPreviewHandle)
-	if !ok || h == nil || !h.lockOpen() {
+	if !ok || h == nil {
+		return nil
+	}
+	// Roll over before WeCom's 10-minute stream expiry (see OnToolStart). Runs
+	// before lockOpen because rolloverIfExpired takes h.mu itself.
+	p.rolloverIfExpired(ctx, h)
+	if !h.lockOpen() {
 		return nil
 	}
 	defer h.unlock()
@@ -63,6 +75,9 @@ func (p *WSPlatform) sendMergedPreview(ctx context.Context, h *wsPreviewHandle, 
 	if !hasVisible {
 		return nil
 	}
+	// NOTE: rollover is handled by the callers (OnToolStart/OnToolComplete)
+	// BEFORE they take h.mu. It must NOT run here: this function is called with
+	// h.mu held, and rolloverIfExpired takes h.mu itself (would deadlock).
 	return p.sendStreamFrameAndWaitAck(ctx, h.replyCtx, rendered, false)
 }
 
@@ -85,7 +100,7 @@ func (p *WSPlatform) wecomAssemblerFor(rc wsReplyContext) (*wecomStreamAssembler
 	}
 	state := p.streamState[key]
 	if state == nil {
-		state = &wsStreamState{}
+		state = newWSStreamState()
 		p.streamState[key] = state
 	}
 	if state.wecomAssembler == nil {

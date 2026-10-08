@@ -23,6 +23,7 @@ import MessageRow from './MessageRow';
 import ChatComposer, { type ChatComposerHandle } from './ChatComposer';
 import { RenderMarkdown } from './markdownBlocks';
 import { useChatSessions, historyToMessages } from './useChatSessions';
+import { shouldRefetchOnReconnect } from './chatSessionsCore';
 import { nowStamp } from './messageTime';
 import type { ChatMsg, PickItem } from './chatMessage';
 import { SequenceGuard } from '@/lib/sequenceGuard';
@@ -1364,6 +1365,38 @@ export default function ChatView() {
       settleAll();
     }
   }, [bridgeStatus, settleAll]);
+
+  // Reconnect catch-up: while the bridge is down no frames arrive, so a turn
+  // that finished during the outage had its final reply written to history but
+  // its live push dropped. On the connecting edge, re-pull the VIEWED
+  // conversation's history and merge it in (seedHistory is idempotent, so live
+  // content is preserved). Background conversations need no special handling:
+  // switching to one runs fetchData, which seeds it from history anyway.
+  const prevBridgeStatusRef = useRef<BridgeStatus | undefined>(undefined);
+  const draftKeyRef = useRef(draftKey);
+  draftKeyRef.current = draftKey;
+  const refetchViewedHistory = useCallback(async () => {
+    if (!projectName) return;
+    const openId = viewedIdRef.current;
+    // No conversation open, or an unsaved draft (nothing persisted to fetch).
+    if (!openId || openId === draftKeyRef.current) return;
+    try {
+      const detail = await getSession(projectName, openId, 200);
+      // The user may have switched away while the request was in flight.
+      if (viewedIdRef.current !== openId) return;
+      seedHistory(openId, historyToMessages(detail.history || []));
+      setServerRunning(openId, !!detail.running);
+    } catch {
+      /* transient — the 5s status poll and the next frame will catch up */
+    }
+  }, [projectName, seedHistory, setServerRunning]);
+  useEffect(() => {
+    const prev = prevBridgeStatusRef.current;
+    prevBridgeStatusRef.current = bridgeStatus;
+    if (shouldRefetchOnReconnect(prev, bridgeStatus)) {
+      void refetchViewedHistory();
+    }
+  }, [bridgeStatus, refetchViewedHistory]);
 
   // True while the VIEWED conversation is actively producing a reply. Scoped to
   // the conversation on screen: a background conversation running in parallel
