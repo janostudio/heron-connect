@@ -76,6 +76,8 @@ func (e *Engine) stopUnsolicitedReader(state *interactiveState) {
 	done := state.unsolicitedDone
 	state.unsolicitedCancel = nil
 	state.unsolicitedDone = nil
+	// Ownership is being taken back, so any in-flight background turn is over.
+	state.backgroundActive = false
 	state.mu.Unlock()
 
 	if cancel == nil {
@@ -163,6 +165,8 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 			state.unsolicitedCancel = nil
 			state.unsolicitedDone = nil
 		}
+		// Reader is gone: it can no longer be relaying anything.
+		state.backgroundActive = false
 		state.mu.Unlock()
 	}()
 
@@ -239,6 +243,11 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 			// Mark workspace active on first event.
 			if !turnActive {
 				turnActive = true
+				// A background turn is now actually in progress — this (not the
+				// reader's existence) is what should light the "running" state.
+				state.mu.Lock()
+				state.backgroundActive = true
+				state.mu.Unlock()
 				if workspaceDir != "" && e.workspacePool != nil {
 					if ws := e.workspacePool.Get(workspaceDir); ws != nil {
 						ws.BeginTurn()
@@ -309,6 +318,7 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 				// Mark clean exit so next foreground turn preserves events.
 				state.mu.Lock()
 				state.eventsNeedResync = false
+				state.backgroundActive = false
 				state.mu.Unlock()
 
 				slog.Info("unsolicited turn complete",

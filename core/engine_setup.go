@@ -730,7 +730,10 @@ func (e *Engine) IsSessionLive(sessionKey string) bool {
 // per-session execution status (multiple sessions may run in parallel).
 type SessionTurnState struct {
 	// Running is true while a foreground turn is in progress (cancelCh set)
-	// or the unsolicited background reader is consuming agent events.
+	// or the unsolicited reader is actively relaying an agent-initiated turn
+	// (backgroundActive). It is NOT true merely because the background reader
+	// goroutine exists — that goroutine lives through every idle period, and
+	// counting it would pin the Web UI's 「执行中」 indicator between turns.
 	Running bool
 	// WaitingPermission is true while the turn is blocked on a user
 	// permission/AskUserQuestion response.
@@ -758,7 +761,7 @@ func (e *Engine) InteractiveSessionTurnStates() map[string]SessionTurnState {
 	for i, state := range states {
 		state.mu.Lock()
 		m[keys[i]] = SessionTurnState{
-			Running:           state.cancelCh != nil || state.unsolicitedCancel != nil,
+			Running:           state.cancelCh != nil || state.backgroundActive,
 			WaitingPermission: state.pending != nil,
 			TurnStartedAt:     state.turnStartTime,
 		}

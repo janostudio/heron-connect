@@ -399,6 +399,14 @@ type interactiveState struct {
 	unsolicitedCancel context.CancelFunc // nil when no reader is running
 	unsolicitedDone   chan struct{}      // closed when the reader goroutine exits
 
+	// backgroundActive is true only while the unsolicited reader is actually
+	// relaying an agent-initiated turn (set on the first relayed event, cleared
+	// on EventResult/exit). The reader goroutine itself lives for the entire
+	// idle period after every clean turn, so its mere existence must NOT count
+	// as "running" — otherwise the Web UI shows a permanent 「执行中」 indicator
+	// between turns. Guarded by mu.
+	backgroundActive bool
+
 	// eventsNeedResync is true when buffered events should be drained before
 	// the next turn (e.g. after an abnormal exit). Defaults to true (safe);
 	// cleared to false only after a clean EventResult.

@@ -14652,22 +14652,29 @@ func TestEngine_InteractiveSessionTurnStates(t *testing.T) {
 
 	idle := &interactiveState{platform: p}
 	turn := &interactiveState{platform: p, cancelCh: make(chan struct{}), turnStartTime: time.Now()}
-	background := &interactiveState{platform: p, unsolicitedCancel: func() {}}
+	// background is a reader that is ACTIVELY relaying a background turn.
+	background := &interactiveState{platform: p, unsolicitedCancel: func() {}, backgroundActive: true}
+	// readerIdle is the common steady state: the reader goroutine exists (so
+	// unsolicitedCancel is set) but is NOT relaying anything. This must NOT be
+	// reported as running, or the Web UI pins 「执行中」 between every turn.
+	readerIdle := &interactiveState{platform: p, unsolicitedCancel: func() {}}
 	waiting := &interactiveState{platform: p, cancelCh: make(chan struct{}), pending: &pendingPermission{Resolved: make(chan struct{})}}
 	e.interactiveStates["web:chat:idle"] = idle
 	e.interactiveStates["web:chat:turn"] = turn
 	e.interactiveStates["web:chat:background"] = background
+	e.interactiveStates["web:chat:reader_idle"] = readerIdle
 	e.interactiveStates["web:chat:waiting"] = waiting
 	defer func() {
 		delete(e.interactiveStates, "web:chat:idle")
 		delete(e.interactiveStates, "web:chat:turn")
 		delete(e.interactiveStates, "web:chat:background")
+		delete(e.interactiveStates, "web:chat:reader_idle")
 		delete(e.interactiveStates, "web:chat:waiting")
 	}()
 
 	states := e.InteractiveSessionTurnStates()
-	if len(states) != 4 {
-		t.Fatalf("states = %d entries, want 4", len(states))
+	if len(states) != 5 {
+		t.Fatalf("states = %d entries, want 5", len(states))
 	}
 	if st := states["web:chat:idle"]; st.Running || st.WaitingPermission {
 		t.Errorf("idle session: running=%v waiting=%v, want false/false", st.Running, st.WaitingPermission)
@@ -14676,7 +14683,10 @@ func TestEngine_InteractiveSessionTurnStates(t *testing.T) {
 		t.Errorf("foreground turn: running=%v waiting=%v, want true/false", st.Running, st.WaitingPermission)
 	}
 	if st := states["web:chat:background"]; !st.Running || st.WaitingPermission {
-		t.Errorf("background reader: running=%v waiting=%v, want true/false", st.Running, st.WaitingPermission)
+		t.Errorf("active background relay: running=%v waiting=%v, want true/false", st.Running, st.WaitingPermission)
+	}
+	if st := states["web:chat:reader_idle"]; st.Running || st.WaitingPermission {
+		t.Errorf("idle reader (goroutine alive, not relaying): running=%v waiting=%v, want false/false", st.Running, st.WaitingPermission)
 	}
 	if st := states["web:chat:waiting"]; !st.Running || !st.WaitingPermission {
 		t.Errorf("permission-blocked turn: running=%v waiting=%v, want true/true", st.Running, st.WaitingPermission)
@@ -14684,6 +14694,70 @@ func TestEngine_InteractiveSessionTurnStates(t *testing.T) {
 	if st := states["web:chat:turn"]; st.TurnStartedAt.IsZero() {
 		t.Error("TurnStartedAt should be recorded for the foreground turn")
 	}
+}
+
+// TestUnsolicitedReader_IdleDoesNotReportRunning is the regression for the
+// reported Web bug "消息永远不停止": after a clean turn ends, the engine starts
+// the unsolicited reader and it stays alive for the whole idle period. That
+// goroutine's existence must NOT count as "running", otherwise the Web REST
+// poll reports Running=true forever and the UI pins 「执行中」 until the next
+// message happens to stop the reader.
+func TestUnsolicitedReader_IdleDoesNotReportRunning(t *testing.T) {
+	p := &stubPlatformEngine{n: "web"}
+	sess := newControllableSession("idle-run")
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+
+	sessions := e.sessions
+	key := "web:chat:idle-run"
+	session := sessions.GetOrCreateActive(key)
+	state := &interactiveState{
+		agentSession:     sess,
+		platform:         p,
+		replyCtx:         "ctx",
+		eventsNeedResync: false,
+	}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = state
+	e.interactiveMu.Unlock()
+
+	// Clean turn just ended → the reader is started and idles with no events.
+	e.startUnsolicitedReader(state, session, sessions, key, "")
+
+	// Give the reader a moment to be fully up (it should block on no events).
+	time.Sleep(20 * time.Millisecond)
+
+	states := e.InteractiveSessionTurnStates()
+	if st := states[key]; st.Running {
+		t.Fatal("idle unsolicited reader must not report Running=true (Web UI would pin 执行中)")
+	}
+
+	// A background event arriving flips it to running...
+	sess.events <- Event{Type: EventText, Content: "background output"}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if st := e.InteractiveSessionTurnStates()[key]; st.Running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("active background relay should report Running=true")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// ...and EventResult flips it back to not-running.
+	sess.events <- Event{Type: EventResult, Content: "done"}
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		if st := e.InteractiveSessionTurnStates()[key]; !st.Running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("completed background relay must return to Running=false")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	e.cleanupInteractiveState(key)
 }
 
 // TestShouldWarnDeadSession verifies the log-level split for the defensive
