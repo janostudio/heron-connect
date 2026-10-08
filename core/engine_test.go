@@ -12264,6 +12264,70 @@ func TestUnsolicitedReader_SetsResyncOnEventError(t *testing.T) {
 	}
 }
 
+// TestUnsolicitedReader_ClearsCancelOnSelfExit reproduces the Web "stuck in
+// 执行中" bug: when the reader exits by itself (channel close or EventError)
+// without stopUnsolicitedReader running, it must clear unsolicitedCancel/
+// unsolicitedDone. Otherwise InteractiveSessionTurnStates keeps reporting
+// Running=true forever, and the Web REST poll never clears its busy flag.
+func TestUnsolicitedReader_ClearsCancelOnSelfExit(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		drive func(*controllableAgentSession)
+	}{
+		{"channel_close", func(s *controllableAgentSession) { close(s.events) }},
+		{"event_error", func(s *controllableAgentSession) {
+			s.events <- Event{Type: EventError, Error: errors.New("resident process gone")}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &stubPlatformEngine{n: "test"}
+			sess := newControllableSession("unsol-clear")
+			e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+
+			sessions := e.sessions
+			session := sessions.GetOrCreateActive("test:clear:u1")
+			state := &interactiveState{
+				agentSession:     sess,
+				platform:         p,
+				replyCtx:         "ctx",
+				eventsNeedResync: false,
+			}
+
+			e.startUnsolicitedReader(state, session, sessions, "test:clear:u1", "")
+
+			state.mu.Lock()
+			doneCh := state.unsolicitedDone
+			state.mu.Unlock()
+
+			tc.drive(sess)
+
+			select {
+			case <-doneCh:
+			case <-time.After(5 * time.Second):
+				t.Fatal("unsolicited reader did not exit after self-exit trigger")
+			}
+
+			// The reader goroutine's deferred close(done) fires before the
+			// (fixed) defer that clears the fields, so poll briefly.
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				state.mu.Lock()
+				cancelSet := state.unsolicitedCancel != nil
+				doneSet := state.unsolicitedDone != nil
+				state.mu.Unlock()
+				if !cancelSet && !doneSet {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("reader self-exited but left unsolicitedCancel=%v unsolicitedDone=%v set; "+
+						"REST running will stay true forever", cancelSet, doneSet)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		})
+	}
+}
+
 // TestUnsolicitedReader_PermissionDeny verifies that unsolicited permission
 // requests are denied when approveAll is false.
 func TestUnsolicitedReader_PermissionDeny(t *testing.T) {

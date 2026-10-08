@@ -149,6 +149,23 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 	defer close(done)
 	defer cancel()
 
+	// Clear this reader's ownership when it exits on its OWN (channel closed
+	// or EventError) rather than via stopUnsolicitedReader. stopUnsolicitedReader
+	// already nils these fields; without this, a self-exit leaks the fields and
+	// InteractiveSessionTurnStates keeps reporting Running=true forever, which
+	// pins the Web UI's REST-sourced "执行中" indicator with no turn behind it.
+	// Guard on `done` so we never clobber a newer reader that has since taken
+	// over the state (stopUnsolicitedReader + startUnsolicitedReader replace
+	// both fields before this defer can run).
+	defer func() {
+		state.mu.Lock()
+		if state.unsolicitedDone == done {
+			state.unsolicitedCancel = nil
+			state.unsolicitedDone = nil
+		}
+		state.mu.Unlock()
+	}()
+
 	events := agentSession.Events()
 
 	var turnActive bool // true after first event, cleared on EventResult
