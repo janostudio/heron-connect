@@ -743,3 +743,43 @@ describe('frame events do not clobber the server busy flag', () => {
     expect(s.serverRunning).toBe(true);
   });
 });
+
+// ── Notices sent mid-turn must not clobber the streaming answer ──
+//
+// Sending while a turn runs makes the backend reply with a short notice
+// ("message queued", "queue full") on the ordinary `reply` channel. The
+// `reply` reducer treats any reply as the FINAL answer of the streaming row,
+// so without a guard the notice overwrote the half-streamed answer.
+
+describe('mid-turn notices', () => {
+  it('a reply while an answer is streaming does not overwrite the answer', () => {
+    const s = { ...sliceWith(assistant('a1', 'half-written answer', { streaming: true })), typing: true };
+    const next = applyFrame(s, frame({
+      type: 'reply', session_key: KEY_A, notice: true, content: '📬 消息已收到，将在当前任务完成后处理。',
+    } as any));
+
+    const streaming = next.messages.find(m => m.id === 'a1');
+    expect(streaming?.content).toBe('half-written answer');
+    expect(streaming?.streaming).toBe(true);
+    expect(next.typing).toBe(true);
+    // The notice is shown as its own row.
+    expect(next.messages.some(m => m.content.includes('消息已收到'))).toBe(true);
+  });
+
+  it('a non-notice reply still replaces the streaming answer (final answer path unchanged)', () => {
+    const s = { ...sliceWith(assistant('a1', 'half', { streaming: true })), typing: true };
+    const next = applyFrame(s, frame({ type: 'reply', session_key: KEY_A, content: 'full answer' } as any));
+    expect(next.messages).toHaveLength(1);
+    expect(next.messages[0].content).toBe('full answer');
+    expect(next.messages[0].streaming).toBe(false);
+    expect(next.typing).toBe(false);
+  });
+
+  it('a reply with nothing streaming still lands as a normal assistant message', () => {
+    const next = applyFrame(emptySlice(), frame({
+      type: 'reply', session_key: KEY_A, content: 'final',
+    } as any));
+    expect(next.messages).toHaveLength(1);
+    expect(next.messages[0].content).toBe('final');
+  });
+});

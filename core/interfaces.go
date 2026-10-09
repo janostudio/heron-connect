@@ -210,6 +210,17 @@ type FileSender interface {
 	SendFile(ctx context.Context, replyCtx any, file FileAttachment) error
 }
 
+// NoticeSender is an optional interface for platforms that can tell a transient
+// system notice (e.g. "message queued", "queue full") apart from the agent's
+// answer. Platforms that cannot simply receive the notice through Reply.
+//
+// Why it exists: a notice sent mid-turn travels on the same channel as the
+// final answer, so a client that treats every reply as "the answer" will
+// overwrite the half-streamed answer with the notice.
+type NoticeSender interface {
+	ReplyNotice(ctx context.Context, replyCtx any, content string) error
+}
+
 // MessageUpdater is an optional interface for platforms that support updating messages.
 type MessageUpdater interface {
 	UpdateMessage(ctx context.Context, replyCtx any, content string) error

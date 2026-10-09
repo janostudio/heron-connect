@@ -1154,3 +1154,40 @@ func TestBridge_SendToAdapter_NoClientIsNotConnected(t *testing.T) {
 		t.Fatalf("sendToAdapter() err = %v, want ErrNotConnected", err)
 	}
 }
+
+// A mid-turn notice must reach the client flagged notice:true (so it is not
+// mistaken for the turn's final answer), while an ordinary Reply must not carry
+// the flag.
+func TestBridge_ReplyNotice_FlagsFrame(t *testing.T) {
+	bs, wsURL := startTestBridge(t, "")
+	bp := bs.NewPlatform("test-proj")
+	e := core.NewEngine("test-proj", &stubAgent{}, []core.Platform{bp}, "", core.LangEnglish)
+	bs.RegisterEngine("test-proj", e, bp)
+	bp.handler = func(p core.Platform, msg *core.Message) {
+		if err := bp.ReplyNotice(context.TODO(), msg.ReplyCtx, "queued"); err != nil {
+			t.Errorf("ReplyNotice: %v", err)
+		}
+		if err := p.Reply(context.TODO(), msg.ReplyCtx, "answer"); err != nil {
+			t.Errorf("Reply: %v", err)
+		}
+	}
+
+	conn := dialWS(t, wsURL, nil)
+	register(t, conn, "rc", []string{"text"})
+	mustWriteJSON(t, conn, map[string]any{
+		"type": "message", "msg_id": "m1", "session_key": "rc:u1:u1",
+		"user_id": "u1", "content": "ping", "reply_ctx": "ctx-1",
+	})
+
+	notice := readMsg(t, conn)
+	if notice["type"] != "reply" || notice["content"] != "queued" || notice["notice"] != true {
+		t.Fatalf("notice frame = %v, want type=reply content=queued notice=true", notice)
+	}
+	answer := readMsg(t, conn)
+	if answer["content"] != "answer" {
+		t.Fatalf("answer frame = %v", answer)
+	}
+	if _, has := answer["notice"]; has {
+		t.Fatalf("ordinary reply must not carry the notice flag: %v", answer)
+	}
+}

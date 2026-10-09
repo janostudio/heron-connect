@@ -490,6 +490,24 @@ func (e *Engine) replyWithError(p Platform, replyCtx any, content string) error 
 	return nil
 }
 
+// replyNotice sends a transient system notice. Platforms implementing
+// NoticeSender get it flagged as a notice; all others receive it as a plain
+// reply, so behavior there is unchanged.
+func (e *Engine) replyNotice(p Platform, replyCtx any, content string) {
+	ns, ok := p.(NoticeSender)
+	if !ok {
+		e.reply(p, replyCtx, content)
+		return
+	}
+	if err := e.waitOutgoing(p); err != nil {
+		slog.Warn("outgoing rate limit: context cancelled", "platform", p.Name(), "error", err)
+		return
+	}
+	if err := ns.ReplyNotice(e.ctx, replyCtx, content); err != nil {
+		slog.Error("platform notice failed", "platform", p.Name(), "error", err, "content_len", len(content))
+	}
+}
+
 // reply wraps p.Reply with error logging, slow-operation warnings, and outgoing rate limiting.
 func (e *Engine) reply(p Platform, replyCtx any, content string) {
 	_ = e.replyWithError(p, replyCtx, content)

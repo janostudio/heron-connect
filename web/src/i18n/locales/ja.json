@@ -281,6 +281,8 @@
     "stop": "停止",
     "stopInterruptible": "現在の応答を停止（新しいメッセージは割り込みます）",
     "stopQueued": "現在の応答を停止（新しいメッセージはキューに入ります）",
+    "sendInterrupt": "送信して現在の応答を中断",
+    "sendQueued": "送信（現在の応答の終了後に処理）",
     "attach": "画像/ファイルを添付",
     "removeAttachment": "削除",
     "fileTooBig": "ファイルが大きすぎます（>10MB）",

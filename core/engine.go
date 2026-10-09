@@ -1385,7 +1385,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 			}
 			return
 		}
-		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPreviousProcessing))
+		e.replyNotice(p, msg.ReplyCtx, e.i18n.T(MsgPreviousProcessing))
 		return
 	}
 
@@ -1511,7 +1511,7 @@ func (e *Engine) queueMessageForBusySessionPrepend(p Platform, msg *Message, int
 	if len(state.pendingMessages) >= e.maxQueuedMessages {
 		depth := len(state.pendingMessages)
 		state.mu.Unlock()
-		e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgQueueFull), depth))
+		e.replyNotice(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgQueueFull), depth))
 		return true // handled: queue-full reply sent
 	}
 	entry := queuedMessage{
@@ -1543,7 +1543,7 @@ func (e *Engine) queueMessageForBusySessionPrepend(p Platform, msg *Message, int
 		"user", msg.UserName,
 		"queue_depth", queueDepth,
 	)
-	e.reply(p, msg.ReplyCtx, e.i18n.T(MsgMessageQueued))
+	e.replyNotice(p, msg.ReplyCtx, e.i18n.T(MsgMessageQueued))
 	return true
 }
 
@@ -1645,8 +1645,9 @@ func (e *Engine) interruptRunningTurn(interactiveKey string) bool {
 }
 
 // markTurnInterrupted appends the "(已中断)" marker to the turn that was just
-// interrupted. Sent through the same platform reply path as everything else, so
-// IM and Web show identical text.
+// interrupted. IM and Web show identical text; platforms that can distinguish
+// notices (Web) get it flagged so it is not taken for the turn's final answer
+// and does not overwrite the partial reply it is annotating.
 func (e *Engine) markTurnInterrupted(interactiveKey string, state *interactiveState) {
 	state.mu.Lock()
 	p := state.platform
@@ -1657,7 +1658,7 @@ func (e *Engine) markTurnInterrupted(interactiveKey string, state *interactiveSt
 		slog.Debug("interruptible: no platform to notify of the interruption", "session_key", interactiveKey)
 		return
 	}
-	e.reply(p, replyCtx, e.i18n.T(MsgTurnInterrupted))
+	e.replyNotice(p, replyCtx, e.i18n.T(MsgTurnInterrupted))
 }
 
 // takeQueuedBatchLocked pops the next batch of queued messages.

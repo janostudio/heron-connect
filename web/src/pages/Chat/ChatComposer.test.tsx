@@ -185,3 +185,56 @@ describe('ChatComposer stop button', () => {
     expect(container.querySelector('[data-testid="composer-send"]')).not.toBeNull();
   });
 });
+
+// ── Sending while a turn runs ────────────────────────────────
+//
+// The backend decides what a mid-turn message does (interrupt-and-run-first, or
+// queue). The composer must therefore let it through instead of swallowing it —
+// otherwise the interrupt path that IM platforms have is unreachable from Web.
+
+describe('ChatComposer sending while running', () => {
+  it('shows only Stop while running with an empty composer', () => {
+    renderInto({ onSend: () => {}, isRunning: true, interruptible: true });
+    expect(container.querySelector('[data-testid="composer-stop"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="composer-send"]')).toBeNull();
+  });
+
+  it('shows Send next to Stop once there is a draft, and sends it', () => {
+    const sent: string[] = [];
+    renderInto({ onSend: (t) => sent.push(t), isRunning: true, interruptible: true });
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+
+    act(() => { typeInto(textarea, 'actually, do X instead'); });
+
+    expect(container.querySelector('[data-testid="composer-stop"]')).not.toBeNull();
+    const send = container.querySelector('[data-testid="composer-send"]') as HTMLButtonElement;
+    expect(send).not.toBeNull();
+    act(() => { send.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+
+    expect(sent).toEqual(['actually, do X instead']);
+  });
+
+  it('Enter sends while running', () => {
+    const sent: string[] = [];
+    renderInto({ onSend: (t) => sent.push(t), isRunning: true, interruptible: false });
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+
+    act(() => { typeInto(textarea, 'queue me'); });
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    });
+
+    expect(sent).toEqual(['queue me']);
+  });
+
+  it('the Send tooltip says interrupt vs queue according to the agent', () => {
+    for (const [interruptible, re] of [[true, /interrupt/i], [false, /queue/i]] as const) {
+      renderInto({ onSend: () => {}, isRunning: true, interruptible });
+      const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+      act(() => { typeInto(textarea, 'x'); });
+      const send = container.querySelector('[data-testid="composer-send"]') as HTMLButtonElement;
+      expect(send.title).toMatch(re);
+      act(() => { typeInto(textarea, ''); });
+    }
+  });
+});

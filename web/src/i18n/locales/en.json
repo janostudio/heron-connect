@@ -281,6 +281,8 @@
     "stop": "Stop",
     "stopInterruptible": "Stop the current turn (a new message would interrupt it)",
     "stopQueued": "Stop the current turn (a new message would be queued)",
+    "sendInterrupt": "Send and interrupt the current turn",
+    "sendQueued": "Send (queued until the current turn ends)",
     "attach": "Attach image/file",
     "removeAttachment": "Remove",
     "fileTooBig": "File too large (>10MB)",

@@ -7,7 +7,7 @@ export type { BridgeConfig };
 
 export type BridgeIncoming =
   | { type: 'register_ack'; ok: boolean; error?: string }
-  | { type: 'reply'; session_key: string; session_id?: string; reply_ctx: string; content: string; format?: string }
+  | { type: 'reply'; session_key: string; session_id?: string; reply_ctx: string; content: string; format?: string; notice?: boolean }
   | { type: 'reply_stream'; session_key: string; session_id?: string; reply_ctx: string; delta: string; full_text: string; preview_handle?: string; done: boolean }
   | { type: 'card'; session_key: string; session_id?: string; reply_ctx: string; card: any }
   | { type: 'buttons'; session_key: string; session_id?: string; reply_ctx: string; content: string; buttons: { text: string; data: string }[][] }

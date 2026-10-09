@@ -411,6 +411,25 @@ func (bp *BridgePlatform) Reply(ctx context.Context, replyCtx any, content strin
 	})
 }
 
+// ReplyNotice implements core.NoticeSender. The frame is a normal reply plus
+// notice:true, so clients can render it as a standalone note instead of
+// treating it as the final answer of the turn in progress.
+func (bp *BridgePlatform) ReplyNotice(ctx context.Context, replyCtx any, content string) error {
+	rc, ok := replyCtx.(*bridgeReplyCtx)
+	if !ok {
+		return fmt.Errorf("bridge: invalid reply context type %T", replyCtx)
+	}
+	return bp.server.sendToAdapter(rc.Platform, map[string]any{
+		"type":        "reply",
+		"session_key": rc.SessionKey,
+		"session_id":  rc.SessionID,
+		"reply_ctx":   rc.ReplyCtx,
+		"content":     content,
+		"format":      "text",
+		"notice":      true,
+	})
+}
+
 func (bp *BridgePlatform) Send(ctx context.Context, replyCtx any, content string) error {
 	return bp.Reply(ctx, replyCtx, content)
 }

@@ -44,9 +44,10 @@ interface Props {
   isRunning: boolean;
   /**
    * Whether a message sent mid-turn interrupts the running turn (true) or is
-   * queued until it ends (false). Only used to pick the stop button's tooltip —
-   * the button itself stays clickable either way, because /stop must always be
-   * able to cancel a long-running turn.
+   * queued until it ends (false). Sending is allowed either way — the backend
+   * decides (core/engine.go: interrupt-and-inject vs. queue) — so this only
+   * picks the tooltip wording. The stop button stays clickable in both states,
+   * because /stop must always be able to cancel a long-running turn.
    */
   interruptible: boolean;
   onStop: () => void;
@@ -67,6 +68,7 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
 }, ref) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState('');
+  const hasContent = draft.trim().length > 0 || pickedFiles.length > 0;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cmdBtnRef = useRef<HTMLButtonElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -102,14 +104,16 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
     getValue: () => draft,
   }), [draft, autoGrow]);
 
+  // Sending is NOT blocked while a turn is running: the backend either
+  // interrupts the turn and runs this message first, or queues it. Blocking it
+  // here would hide the interrupt path that IM platforms already have.
   const submit = useCallback(() => {
-    if (isRunning) return;
     if (!draft.trim() || !canSend) return;
     onSend(draft.trim());
     setDraft('');
     // Collapse the textarea back to one row. Runs after the value commits.
     requestAnimationFrame(autoGrow);
-  }, [draft, isRunning, canSend, onSend, autoGrow]);
+  }, [draft, canSend, onSend, autoGrow]);
 
   // Paste handler: turn clipboard images into queued attachments (sent with
   // the message, not immediately). Plain text pastes fall through to the
@@ -266,8 +270,9 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
         />
       </div>
 
-      {/* Send / Stop button */}
-      {isRunning ? (
+      {/* Stop button: only while a turn runs. Stays available even with a draft
+          so the user can cancel without having to clear what they typed. */}
+      {isRunning && (
         <button
           type="button"
           data-testid="composer-stop"
@@ -277,12 +282,16 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
         >
           <Square size={16} className="fill-current" />
         </button>
-      ) : (
+      )}
+      {/* Send button: always present when idle; while running it appears only
+          once there is something to send, so an empty composer shows just Stop. */}
+      {(!isRunning || hasContent) && (
         <button
           type="button"
           data-testid="composer-send"
           onClick={submit}
-          disabled={!draft.trim() && pickedFiles.length === 0}
+          disabled={!hasContent}
+          title={isRunning ? t(interruptible ? 'chat.sendInterrupt' : 'chat.sendQueued') : undefined}
           className="p-3 rounded-xl bg-accent text-black hover:bg-accent-dim transition-colors disabled:opacity-50 flex items-center"
         >
           <Send size={18} />

@@ -15531,3 +15531,53 @@ func TestInterruptRunningTurn_SendsInterruptedMarker(t *testing.T) {
 		t.Errorf("interruption marker %q not sent; platform received %v", want, p.getSent())
 	}
 }
+
+// noticePlatform records notices separately from ordinary replies, standing in
+// for the Web bridge, which flags mid-turn notices so the client does not
+// mistake them for the turn's final answer.
+type noticePlatform struct {
+	stubPlatformEngine
+	notices []string
+}
+
+func (p *noticePlatform) ReplyNotice(_ context.Context, _ any, content string) error {
+	p.mu.Lock()
+	p.notices = append(p.notices, content)
+	p.mu.Unlock()
+	return nil
+}
+
+func queueOnce(t *testing.T, p Platform) {
+	t.Helper()
+	sess := newQueuingSession("qs-notice")
+	agent := &controllableAgent{nextSession: sess}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	key := "test:user1"
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = &interactiveState{agentSession: sess, platform: p, replyCtx: "ctx1"}
+	e.interactiveMu.Unlock()
+	if !e.queueMessageForBusySession(p, &Message{SessionKey: key, Content: "m", ReplyCtx: "ctx"}, key) {
+		t.Fatal("expected message to be queued")
+	}
+}
+
+func TestQueueNotice_GoesThroughNoticeSender(t *testing.T) {
+	p := &noticePlatform{stubPlatformEngine: stubPlatformEngine{n: "bridge"}}
+	queueOnce(t, p)
+
+	if len(p.notices) != 1 {
+		t.Fatalf("notices = %v, want exactly one queued notice", p.notices)
+	}
+	if got := p.getSent(); len(got) != 0 {
+		t.Fatalf("queued notice must not also arrive as an ordinary reply, got %v", got)
+	}
+}
+
+func TestQueueNotice_PlainPlatformStillGetsOrdinaryReply(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	queueOnce(t, p)
+
+	if got := p.getSent(); len(got) != 1 {
+		t.Fatalf("platform without NoticeSender must still receive the notice as a reply, got %v", got)
+	}
+}

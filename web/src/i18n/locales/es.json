@@ -281,6 +281,8 @@
     "stop": "Detener",
     "stopInterruptible": "Detener la respuesta actual (un mensaje nuevo la interrumpiría)",
     "stopQueued": "Detener la respuesta actual (un mensaje nuevo se pondría en cola)",
+    "sendInterrupt": "Enviar e interrumpir la respuesta actual",
+    "sendQueued": "Enviar (en cola hasta que termine la respuesta actual)",
     "attach": "Adjuntar imagen/archivo",
     "removeAttachment": "Quitar",
     "fileTooBig": "Archivo demasiado grande (>10MB)",

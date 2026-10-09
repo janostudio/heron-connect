@@ -221,6 +221,22 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
     case 'reply': {
       const reply = msg as Extract<BridgeIncoming, { type: 'reply' }>;
       const format = (reply as any).format === 'markdown' ? 'markdown' : 'text';
+      // A system notice (queued / queue full) sent mid-turn is NOT the answer:
+      // append it as its own row and leave the turn's streaming state alone,
+      // otherwise it would replace the half-streamed answer and end the turn.
+      if (reply.notice) {
+        return {
+          ...slice,
+          messages: [...slice.messages, {
+            id: `notice-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            role: 'assistant',
+            content: reply.content,
+            format,
+            timestamp: stamp,
+            streaming: false,
+          }],
+        };
+      }
       const idx = slice.messages.findIndex(m => m.streaming && m.role === 'assistant' && !m.previewHandle);
       if (idx >= 0) {
         const prev = slice.messages[idx];

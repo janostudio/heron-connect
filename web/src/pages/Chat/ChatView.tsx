@@ -1512,8 +1512,11 @@ export default function ChatView() {
 
   // Send message. `content` comes from the composer (which owns the draft), so
   // this callback has no dependency on the text being typed.
+  //
+  // Sending while a turn is running is intentional: the backend interrupts the
+  // turn and runs this message first (interruptible agents) or queues it, and
+  // replies with a notice either way. Do not gate this on isRunning.
   const handleSend = useCallback((content: string) => {
-    if (isRunning) return;
     if (!content.trim() && pickedFiles.length === 0) return;
     if (bridgeStatus !== 'connected') return;
     const text = content.trim();
@@ -1551,7 +1554,7 @@ export default function ChatView() {
     bridgeSend(text, media, currentSession?.id);
     setPickedFiles([]);
     reattachToBottom();
-  }, [pickedFiles, bridgeStatus, bridgeSend, isRunning, stripDataUrlPrefix, currentSession?.id, ensureViewedId, ensureSlice, updateSlice, reattachToBottom]);
+  }, [pickedFiles, bridgeStatus, bridgeSend, stripDataUrlPrefix, currentSession?.id, ensureViewedId, ensureSlice, updateSlice, reattachToBottom]);
 
   // Stable file-open handler. Must NOT be an inline arrow at the call site:
   // a new function identity on every render would defeat the React.memo on
