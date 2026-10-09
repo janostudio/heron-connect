@@ -29,7 +29,7 @@ import type { ChatMsg, PickItem } from './chatMessage';
 import { SequenceGuard } from '@/lib/sequenceGuard';
 import {
   sessionsSignature, fileIsPreviewable, isMarkdown, isHtmlFile,
-  CHAT_COMMANDS, classifyInput, relFromFilesHref, splitFileRel,
+  CHAT_COMMANDS, classifyInput, relFromFilesHref, splitFileRel, fileBrowserKey,
 } from './chatHelpers';
 import { cn, loadLS, saveLS, copyText } from '@/lib/utils';
 import { createShare, revokeShare, absoluteShareURL, type ShareInfo } from '@/api/share';
@@ -396,9 +396,14 @@ function encodeRelPath(rel: string): string {
   return rel.split('/').map((s) => encodeURIComponent(s)).join('/');
 }
 
-function ProjectFileBrowser({ open, projectName, onClose, onInsertFile, previewWidth, isDesktop, onResizeStart, targetFile }: {
+function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFile, previewWidth, isDesktop, onResizeStart, targetFile }: {
   open: boolean;
   projectName: string;
+  // Conversation this browser belongs to: the remembered position is stored
+  // per conversation, so switching conversations shows that conversation's own
+  // file. The parent remounts the browser per conversation (see its `key`),
+  // which is what makes this take effect.
+  sessionId: string;
   onClose: () => void;
   onInsertFile?: (relPath: string) => void;
   previewWidth: number;
@@ -410,10 +415,10 @@ function ProjectFileBrowser({ open, projectName, onClose, onInsertFile, previewW
   // browser would stay where the user last browsed.
   targetFile?: { rel: string; seq: number } | null;
 }) {
-  // Remember the last browsed directory + selected file per project so the
+  // Remember the last browsed directory + selected file per conversation so the
   // browser re-opens where the user left off instead of the project root.
   const { t } = useTranslation();
-  const browseKey = useMemo(() => `cc_file_browser:${projectName}`, [projectName]);
+  const browseKey = useMemo(() => fileBrowserKey(projectName, sessionId), [projectName, sessionId]);
   const remembered = useMemo(() => loadLS<{ path?: string; fileName?: string }>(browseKey), [browseKey]);
 
   const [currentPath, setCurrentPath] = useState(() => (
@@ -1107,6 +1112,14 @@ export default function ChatView() {
   // routeSessionId), which loads the detail and seeds the slice. Doing the
   // fetch here as well produced two concurrent getSession+seedHistory calls
   // for the same conversation, with the slower one winning.
+  // A file jump belongs to the conversation whose transcript it was clicked
+  // in. Drop it when the conversation changes, so the browser — remounted per
+  // conversation via `key` — restores that conversation's own position instead
+  // of jumping to the previous one's file.
+  useEffect(() => {
+    setBrowserTarget(null);
+  }, [viewedId]);
+
   const switchToSession = useCallback((s: Session) => {
     if (!projectName) return;
     setDrawerOpen(false);
@@ -1830,11 +1843,16 @@ export default function ChatView() {
         />
       )}
 
-      {/* Project file browser drawer */}
+      {/* Project file browser drawer.
+          `key` remounts it per conversation: the remembered position is stored
+          per conversation, and a mounted component would otherwise keep
+          showing the previous conversation's directory. */}
       {fileBrowserOpen && (
         <ProjectFileBrowser
           open
+          key={viewedId || 'draft'}
           projectName={projectName || ''}
+          sessionId={viewedId}
           targetFile={browserTarget}
           onClose={() => setFileBrowserOpen(false)}
           onInsertFile={(relPath) => {

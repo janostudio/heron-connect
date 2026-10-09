@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   sessionsSignature, fileIsPreviewable, isMarkdown, isHtmlFile,
   isChatCommand, classifyInput, CHAT_COMMANDS, parseListItemText,
-  attachmentAccept, TEXT_EXTS, relFromFilesHref, splitFileRel,
+  attachmentAccept, TEXT_EXTS, relFromFilesHref, splitFileRel, fileBrowserKey,
 } from './chatHelpers';
 import type { Session } from '@/api/sessions';
 
@@ -360,6 +360,29 @@ describe('relFromFilesHref', () => {
   it('returns null when the path is missing', () => {
     expect(relFromFilesHref('/api/v1/files/proj', 'proj')).toBeNull();
     expect(relFromFilesHref('/api/v1/files/proj/', 'proj')).toBeNull();
+  });
+});
+
+// ── fileBrowserKey ──────────────────────────────────────────
+
+describe('fileBrowserKey', () => {
+  it('scopes the remembered position per conversation', () => {
+    // Two conversations in one project must not share a position.
+    const a = fileBrowserKey('proj', 'sess-a');
+    const b = fileBrowserKey('proj', 'sess-b');
+    expect(a).not.toBe(b);
+    expect(a).toContain('sess-a');
+    expect(b).toContain('sess-b');
+  });
+
+  it('does not reuse the old project-scoped key without a session', () => {
+    // Inheriting it would start every conversation on the last opened file —
+    // the behaviour being replaced. A draft keeps its own (empty-id) key.
+    expect(fileBrowserKey('proj', '')).not.toBe('cc_file_browser:proj');
+  });
+
+  it('separates the same conversation across projects', () => {
+    expect(fileBrowserKey('p1', 's1')).not.toBe(fileBrowserKey('p2', 's1'));
   });
 });
 

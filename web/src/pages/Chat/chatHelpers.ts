@@ -156,6 +156,22 @@ function safeDecode(seg: string): string {
 }
 
 /**
+ * localStorage key holding the file browser's remembered position (dir +
+ * selected file). Scoped per conversation: two conversations in the same
+ * project browse independently, so opening a report in one does not move the
+ * other to it.
+ *
+ * Deliberately NOT falling back to the project-scoped key that older versions
+ * wrote: inheriting it would make every conversation start on whichever file
+ * was last open — the very "one position for all conversations" behaviour this
+ * replaces. A conversation with no remembered position starts at the project
+ * root.
+ */
+export function fileBrowserKey(projectName: string, sessionId: string): string {
+  return `cc_file_browser:${projectName}:${sessionId}`;
+}
+
+/**
  * Extract the project-relative path from a `/api/v1/files/<project>/<rel>` URL
  * — the link form the engine emits for local file references. Returns null when
  * the URL is not a file link for `projectName`: only then does the caller fall
