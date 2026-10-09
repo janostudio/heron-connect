@@ -822,7 +822,11 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				}
 				preview := truncateIf(event.Content, display.ThinkingMaxLen)
 				thinkingMsg := fmt.Sprintf(e.i18n.T(MsgThinking), preview)
-				if !cp.AppendEvent(ProgressEntryThinking, preview, "", thinkingMsg) {
+				if !cp.AppendStructured(ProgressCardEntry{
+					Kind:     ProgressEntryThinking,
+					Text:     preview,
+					ParentID: event.ParentToolID,
+				}, thinkingMsg) {
 					sendWorkspace(p, replyCtx, thinkingMsg)
 				}
 			}
@@ -971,6 +975,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				Tool:           event.ToolName,
 				ID:             event.ToolID,
 				CorrelationKey: event.ToolID,
+				ParentID:       event.ParentToolID,
 			}, toolMsg) {
 					for _, chunk := range SplitMessageCodeFenceAware(toolMsg, maxPlatformMessageLen) {
 						sendWorkspace(p, replyCtx, chunk)
@@ -1041,6 +1046,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					Tool:           event.ToolName,
 					ID:             event.ToolID,
 					CorrelationKey: event.ToolID,
+					ParentID:       event.ParentToolID,
 					Text:           result,
 					Status:         event.ToolStatus,
 					ExitCode:       event.ToolExitCode,

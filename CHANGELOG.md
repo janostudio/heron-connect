@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.3.13 (2026-10-09)
+
+### Fixed
+
+- **Web 聊天里子 Agent 的工具调用不再和 Agent 平级展示**。此前 `Agent` 工具调起子 agent 后，子 agent 内部的 Read/Bash 等调用与 `Agent` 本身排在同一层，无法分辨哪些工具属于哪个子 agent；多个并行子 agent 时更是全部混在一起。根因：CodeBuddy 的 stream-json 协议在子 agent 产生的 `assistant`/`user` 帧上带 `parent_tool_use_id`（指向父 Agent 的 tool_use id），codebuddy 适配器没有解析，ACP 适配器也只保留了 `IsSubagent` 布尔值、丢掉了父子关系。
+  现在适配器把父 id 传到事件（`Event.ParentToolID`）和进度卡条目（`parent_id`），Web 按 `parent_id` 把子活动嵌套到对应 Agent 行下：每个子 agent 各自独立，行上显示 `↳ N` 徽标，展开后缩进列出其内部工具；Agent、工具各自的 `×N` 次数分别按层统计，顶部总调用数含嵌套层。支持多层嵌套；父 Agent 条目缺失时子条目回退到顶层，不会丢。
+- **嵌套层展开状态互相串扰**。展开状态共用一个集合，key 由工具名+输入+结果拼成；两个并行子 agent 各有一次相同的 `Read /x` 时 key 相同，点一个另一个也会展开。现在每层 key 带父调用 id 命名空间，整棵树内唯一。
+
+### Changed
+
+- 结构化进度卡的条目上限（`progress_max_entries`）改为只统计顶层条目：子 agent 活动不占上限，不会把自己的父 Agent 行挤掉；顶层条目被淘汰时其嵌套子条目一并淘汰（含之后才到达的）。Web 默认不限条数，此改动主要影响声明了上限的其他结构化 payload 适配器；降级成纯文本的平台行为不变。
+
 ## v1.3.12 (2026-10-09)
 
 ### Added

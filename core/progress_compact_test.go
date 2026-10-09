@@ -616,3 +616,94 @@ func TestCompactProgressWriter_NotConnectedOnUpdateRetries(t *testing.T) {
 		t.Fatal("writer unexpectedly failed after successful update retry")
 	}
 }
+
+func newPayloadWriterWithCap(t *testing.T, p *previewCapturePlatform, cap int) *compactProgressWriter {
+	t.Helper()
+	w := newCompactProgressWriter(context.Background(), p,
+		progressHintReplyCtx{style: ProgressStyleCard, payload: true}, "codebuddy", LangEnglish, nil)
+	if !w.usePayload {
+		t.Fatal("expected payload mode")
+	}
+	w.maxEntries = cap
+	return w
+}
+
+func lastPayload(t *testing.T, p *previewCapturePlatform) *ProgressCardPayload {
+	t.Helper()
+	content := ""
+	if n := len(p.updated); n > 0 {
+		content = p.updated[n-1]
+	} else if len(p.started) > 0 {
+		content = p.started[len(p.started)-1]
+	}
+	parsed, ok := ParseProgressCardPayload(content)
+	if !ok {
+		t.Fatalf("no parsable payload in %q", content)
+	}
+	return parsed
+}
+
+// Sub-agent entries must not count toward the cap: many parallel sub-agents
+// with lots of child calls may not evict their own parent Agent rows.
+func TestCompactProgressWriter_CapCountsTopLevelOnly(t *testing.T) {
+	p := &previewCapturePlatform{}
+	w := newPayloadWriterWithCap(t, p, 3)
+
+	for _, id := range []string{"a1", "a2"} {
+		w.AppendStructured(ProgressCardEntry{Kind: ProgressEntryToolUse, Tool: "Agent", Text: "go", ID: id, CorrelationKey: id}, "Agent")
+	}
+	for i := 0; i < 20; i++ {
+		parent := []string{"a1", "a2"}[i%2]
+		id := fmt.Sprintf("c%d", i)
+		w.AppendStructured(ProgressCardEntry{Kind: ProgressEntryToolUse, Tool: "Read", Text: id, ID: id, CorrelationKey: id, ParentID: parent}, "Read")
+	}
+
+	got := lastPayload(t, p)
+	if len(got.Items) != 22 {
+		t.Fatalf("items = %d, want 22 (2 agents + 20 children, none evicted)", len(got.Items))
+	}
+	if got.Truncated {
+		t.Fatal("must not be truncated: only 2 top-level entries vs cap 3")
+	}
+}
+
+// Evicting a top-level entry evicts its nested entries too, now and later,
+// so they never resurface as orphaned top-level rows.
+func TestCompactProgressWriter_EvictedParentTakesChildrenWithIt(t *testing.T) {
+	p := &previewCapturePlatform{}
+	w := newPayloadWriterWithCap(t, p, 2)
+
+	w.AppendStructured(ProgressCardEntry{Kind: ProgressEntryToolUse, Tool: "Agent", ID: "a1", CorrelationKey: "a1", Text: "first"}, "Agent")
+	w.AppendStructured(ProgressCardEntry{Kind: ProgressEntryToolUse, Tool: "Read", ID: "c1", CorrelationKey: "c1", ParentID: "a1", Text: "child"}, "Read")
+	w.AppendStructured(ProgressCardEntry{Kind: ProgressEntryToolUse, Tool: "Bash", ID: "b1", CorrelationKey: "b1", Text: "ls"}, "Bash")
+	w.AppendStructured(ProgressCardEntry{Kind: ProgressEntryToolUse, Tool: "Bash", ID: "b2", CorrelationKey: "b2", Text: "pwd"}, "Bash") // evicts a1 (+ c1)
+	// Late child of the evicted parent, plus a grandchild.
+	w.AppendStructured(ProgressCardEntry{Kind: ProgressEntryToolUse, Tool: "Agent", ID: "a2", CorrelationKey: "a2", ParentID: "a1", Text: "late"}, "Agent")
+	w.AppendStructured(ProgressCardEntry{Kind: ProgressEntryToolUse, Tool: "Grep", ID: "g1", CorrelationKey: "g1", ParentID: "a2", Text: "deep"}, "Grep")
+
+	got := lastPayload(t, p)
+	var ids []string
+	for _, it := range got.Items {
+		ids = append(ids, it.ID)
+	}
+	if strings.Join(ids, ",") != "b1,b2" {
+		t.Fatalf("ids = %v, want [b1 b2]", ids)
+	}
+	if !got.Truncated {
+		t.Fatal("should be marked truncated")
+	}
+}
+
+// items and entries are parallel slices; eviction must prune them together.
+func TestCompactProgressWriter_CapKeepsItemsAndEntriesAligned(t *testing.T) {
+	p := &previewCapturePlatform{}
+	w := newPayloadWriterWithCap(t, p, 2)
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("t%d", i)
+		w.AppendStructured(ProgressCardEntry{Kind: ProgressEntryToolUse, Tool: "Bash", ID: id, CorrelationKey: id, Text: id}, id)
+		w.AppendStructured(ProgressCardEntry{Kind: ProgressEntryToolUse, Tool: "Read", ID: "k" + id, CorrelationKey: "k" + id, ParentID: id, Text: "k"}, "k"+id)
+	}
+	if len(w.items) != len(w.entries) {
+		t.Fatalf("items=%d entries=%d: parallel slices drifted", len(w.items), len(w.entries))
+	}
+}

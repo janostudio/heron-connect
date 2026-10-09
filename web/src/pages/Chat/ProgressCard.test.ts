@@ -213,3 +213,80 @@ describe('buildUnits', () => {
     expect(keysOf(grown).slice(0, 2)).toEqual(keysOf(first));
   });
 });
+
+// ── sub-agent nesting ────────────────────────────────────────
+
+describe('buildUnits sub-agent nesting', () => {
+  const e = (over: Partial<ProgressCardEntry>): ProgressCardEntry =>
+    ({ kind: 'tool_use', text: '', ...over });
+
+  it('nests child entries under the parent Agent call, not beside it', () => {
+    const units = buildUnits([
+      e({ tool: 'Agent', id: 'a1', text: 'explore' }),
+      e({ tool: 'Read', id: 'c1', parent_id: 'a1', text: '/x' }),
+      e({ kind: 'tool_result', tool: 'Read', id: 'c1', parent_id: 'a1', text: 'body' }),
+      e({ kind: 'tool_result', tool: 'Agent', id: 'a1', text: 'done' }),
+      e({ tool: 'Bash', id: 'b1', text: 'ls' }),
+    ]);
+    // top level: Agent group + Bash group only
+    expect(units.map((u) => (u.type === 'group' ? u.group.tool : 'entry'))).toEqual(['Agent', 'Bash']);
+    const agent = (units[0] as Extract<RenderUnit, { type: 'group' }>).group.calls[0];
+    expect(agent.result).toBe('done');
+    expect(agent.children).toHaveLength(1);
+    const child = (agent.children[0] as Extract<RenderUnit, { type: 'group' }>).group.calls[0];
+    expect(child.tool).toBe('Read');
+    expect(child.result).toBe('body');
+    expect(child.running).toBe(false);
+  });
+
+  it('keeps orphaned children top-level when the parent was trimmed', () => {
+    const units = buildUnits([e({ tool: 'Read', id: 'c1', parent_id: 'gone', text: '/x' })]);
+    expect(units).toHaveLength(1);
+    expect((units[0] as Extract<RenderUnit, { type: 'group' }>).group.tool).toBe('Read');
+  });
+
+  it('supports nested sub-agents', () => {
+    const units = buildUnits([
+      e({ tool: 'Agent', id: 'a1' }),
+      e({ tool: 'Agent', id: 'a2', parent_id: 'a1' }),
+      e({ tool: 'Grep', id: 'g1', parent_id: 'a2' }),
+    ]);
+    expect(units).toHaveLength(1);
+    const a1 = (units[0] as Extract<RenderUnit, { type: 'group' }>).group.calls[0];
+    const a2 = (a1.children[0] as Extract<RenderUnit, { type: 'group' }>).group.calls[0];
+    expect(a2.children).toHaveLength(1);
+  });
+
+  it('gives identical calls under different parents distinct keys', () => {
+    const units = buildUnits([
+      e({ tool: 'Agent', id: 'a1' }),
+      e({ tool: 'Agent', id: 'a2' }),
+      e({ tool: 'Read', id: 'c1', parent_id: 'a1', text: '/x' }),
+      e({ tool: 'Read', id: 'c2', parent_id: 'a2', text: '/x' }),
+    ]);
+    const keys: string[] = [];
+    const walk = (us: RenderUnit[]) => {
+      for (const u of us) {
+        keys.push(u.key);
+        if (u.type === 'group') for (const c of u.group.calls) { keys.push(c.key); walk(c.children); }
+      }
+    };
+    walk(units);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('counts repeated tools inside an Agent as a group, and repeated Agents as a group', () => {
+    const units = buildUnits([
+      e({ tool: 'Agent', id: 'a1' }),
+      e({ tool: 'Agent', id: 'a2' }),
+      e({ tool: 'Read', id: 'c1', parent_id: 'a1', text: '/1' }),
+      e({ tool: 'Read', id: 'c2', parent_id: 'a1', text: '/2' }),
+    ]);
+    expect(units).toHaveLength(1);
+    const g = (units[0] as Extract<RenderUnit, { type: 'group' }>).group;
+    expect(g.tool).toBe('Agent');
+    expect(g.calls).toHaveLength(2);
+    const inner = (g.calls[0].children[0] as Extract<RenderUnit, { type: 'group' }>).group;
+    expect(inner.calls).toHaveLength(2);
+  });
+});

@@ -14,17 +14,20 @@ type sessionUpdateMapper struct {
 }
 
 func (m *sessionUpdateMapper) mapSessionUpdate(sessionID string, params json.RawMessage) []core.Event {
-	isSubagent := m.isSubagentUpdate(params)
+	parentID := m.subagentParentID(params)
 	events := mapSessionUpdate(sessionID, params)
-	if isSubagent {
+	if parentID != "" {
 		for i := range events {
 			events[i].IsSubagent = true
+			events[i].ParentToolID = parentID
 		}
 	}
 	return events
 }
 
-func (m *sessionUpdateMapper) isSubagentUpdate(params json.RawMessage) bool {
+// subagentParentID returns the parent Agent tool id when params belongs to a
+// sub-agent stream, or "" for top-level updates.
+func (m *sessionUpdateMapper) subagentParentID(params json.RawMessage) string {
 	var notification struct {
 		Meta struct {
 			ParentToolCallID string `json:"codebuddy.ai/parentToolCallId"`
@@ -46,7 +49,7 @@ func (m *sessionUpdateMapper) isSubagentUpdate(params json.RawMessage) bool {
 		} `json:"update"`
 	}
 	if json.Unmarshal(params, &notification) != nil {
-		return false
+		return ""
 	}
 
 	// Prefer params.update._meta (ACP protocol places parentToolCallId here),
@@ -74,7 +77,10 @@ func (m *sessionUpdateMapper) isSubagentUpdate(params json.RawMessage) bool {
 		}
 		m.subagentParentToolIDs[notification.Update.ToolCallID] = struct{}{}
 	}
-	return parentToolID != "" && isSubagentEvent
+	if parentToolID != "" && isSubagentEvent {
+		return parentToolID
+	}
+	return ""
 }
 
 // mapSessionUpdate turns one ACP session/update payload into zero or more core events.

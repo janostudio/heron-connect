@@ -33,6 +33,8 @@ export interface ProgressCardEntry {
   text: string;
   tool?: string;
   id?: string;
+  /** tool_use id of the Agent (sub-agent) call that produced this entry. */
+  parent_id?: string;
   status?: string;
   exit_code?: number | null;
   success?: boolean | null;
@@ -80,6 +82,9 @@ export function stableKey(item: ProgressCardEntry, idx: number): string {
 
 export interface ToolCall {
   key: string;
+  id?: string; // tool_use id; children reference it via parent_id
+  /** Entries produced inside this call (sub-agent activity), nested one level down. */
+  children: RenderUnit[];
   seq: number; // first-seen order, stable across payload updates modulo head truncation
   tool: string;
   input: string; // tool_use text (input preview)
@@ -110,6 +115,37 @@ export function callKey(tool: string, input: string, result: string, idx: number
  * calls. Non-tool entries (thinking/info/error) pass through untouched.
  */
 export function buildUnits(items: ProgressCardEntry[]): RenderUnit[] {
+  // Pass 0 — split off sub-agent entries. An entry nests under its parent
+  // Agent call only when that call's tool_use is present in this payload;
+  // otherwise (parent trimmed by the backend's entry cap) it stays top-level
+  // so it is never silently lost.
+  const knownIds = new Set<string>();
+  for (const item of items) {
+    if (item.kind === 'tool_use' && item.id) knownIds.add(item.id);
+  }
+  const childrenByParent = new Map<string, ProgressCardEntry[]>();
+  const topLevel: ProgressCardEntry[] = [];
+  for (const item of items) {
+    if (item.parent_id && knownIds.has(item.parent_id) && item.id !== item.parent_id) {
+      const list = childrenByParent.get(item.parent_id);
+      if (list) list.push(item);
+      else childrenByParent.set(item.parent_id, [item]);
+    } else {
+      topLevel.push(item);
+    }
+  }
+  return buildLevel(topLevel, childrenByParent, '');
+}
+
+function buildLevel(
+  items: ProgressCardEntry[],
+  childrenByParent: Map<string, ProgressCardEntry[]>,
+  // Namespace for every key generated at this level. Expanded state lives in
+  // one shared Set, so keys must be unique across the whole tree: two parallel
+  // sub-agents may each run an identical `Read /x`, which would otherwise
+  // produce the same content-based key and toggle together.
+  ns: string,
+): RenderUnit[] {
   // Pass 1 — pair use/result by id, keep first-seen order.
   const calls: ToolCall[] = [];
   const pending = new Map<string, ToolCall>();
@@ -118,7 +154,9 @@ export function buildUnits(items: ProgressCardEntry[]): RenderUnit[] {
   for (const item of items) {
     if (item.kind === 'tool_use') {
       const call: ToolCall = {
-        key: callKey(item.tool || '', item.text || '', '', seq),
+        key: ns + callKey(item.tool || '', item.text || '', '', seq),
+        id: item.id,
+        children: [],
         seq,
         tool: item.tool || '',
         input: item.text || '',
@@ -137,11 +175,13 @@ export function buildUnits(items: ProgressCardEntry[]): RenderUnit[] {
         matched.exit_code = item.exit_code;
         matched.success = item.success;
         matched.running = false;
-        matched.key = callKey(matched.tool, matched.input, matched.result, matched.seq);
+        matched.key = ns + callKey(matched.tool, matched.input, matched.result, matched.seq);
         pending.delete(item.id!);
       } else {
         const call: ToolCall = {
-          key: callKey(item.tool || '', '', item.text || '', seq),
+          key: ns + callKey(item.tool || '', '', item.text || '', seq),
+          id: item.id,
+          children: [],
           seq,
           tool: item.tool || '',
           input: '',
@@ -160,6 +200,14 @@ export function buildUnits(items: ProgressCardEntry[]): RenderUnit[] {
     }
   }
 
+  // Pass 1.5 — attach nested sub-agent activity to its parent call.
+  for (const call of calls) {
+    const kids = call.id ? childrenByParent.get(call.id) : undefined;
+    if (kids && kids.length > 0) {
+      call.children = buildLevel(kids, childrenByParent, `${ns}${call.id}>`);
+    }
+  }
+
   // Pass 2 — walk the ordered stream, grouping consecutive same-tool calls.
   const units: RenderUnit[] = [];
   let current: ToolGroup | null = null;
@@ -168,7 +216,7 @@ export function buildUnits(items: ProgressCardEntry[]): RenderUnit[] {
   for (const step of passthrough) {
     if ('entry' in step) {
       current = null;
-      units.push({ type: 'entry', entry: step.entry, key: stableKey(step.entry, entryIdx) });
+      units.push({ type: 'entry', entry: step.entry, key: ns + stableKey(step.entry, entryIdx) });
       entryIdx++;
     } else {
       const call = step.call;
@@ -318,14 +366,17 @@ function GroupBadge({ group, isLive }: { group: ToolGroup; isLive: boolean }) {
 
 /** One invocation inside a group (or a standalone single-call group). */
 function CallRow({
-  call, expanded, onToggle, isLast, isLive,
+  call, expanded, onToggle, isLast, isLive, nested,
 }: {
   call: ToolCall;
   expanded: boolean;
   onToggle: () => void;
   isLast: boolean;
   isLive: boolean;
+  /** Rendered (indented) under the row when expanded: sub-agent activity. */
+  nested?: React.ReactNode;
 }) {
+  const childCount = countCalls(call.children);
   const previewText = call.input || call.result;
   const preview = useMemo(() => {
     const text = (previewText || '').replace(/\n+/g, ' ').trim();
@@ -385,6 +436,11 @@ function CallRow({
         <span className="text-xs font-medium text-gray-700 dark:text-gray-200 truncate flex-1 min-w-0">
           {call.tool}
         </span>
+        {childCount > 0 && (
+          <span className="text-[10px] font-medium tabular-nums text-violet-600 dark:text-violet-300 bg-violet-50 dark:bg-violet-900/20 px-1.5 py-0.5 rounded shrink-0">
+            ↳ {childCount}
+          </span>
+        )}
         {badge}
         {!expanded && preview && (
           <span className="hidden sm:inline text-[11px] text-gray-400 dark:text-gray-500 truncate max-w-[40%]">
@@ -393,12 +449,29 @@ function CallRow({
         )}
       </button>
       {expanded && (
-        <pre className="mx-3 mb-2 px-3 py-2 rounded-md bg-[#fafafa] dark:bg-[#0d1117] border border-gray-200 dark:border-gray-700/60 text-[12px] leading-[1.55] font-mono whitespace-pre-wrap break-words text-gray-800 dark:text-gray-100 max-h-[60vh] overflow-auto">
-          {detail}
-        </pre>
+        <>
+          <pre className="mx-3 mb-2 px-3 py-2 rounded-md bg-[#fafafa] dark:bg-[#0d1117] border border-gray-200 dark:border-gray-700/60 text-[12px] leading-[1.55] font-mono whitespace-pre-wrap break-words text-gray-800 dark:text-gray-100 max-h-[60vh] overflow-auto">
+            {detail}
+          </pre>
+          {nested && (
+            <div className="ml-4 mb-2 mr-3 border-l-2 border-violet-300/60 dark:border-violet-400/30 rounded-bl overflow-hidden">
+              {nested}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
+}
+
+/** Total tool calls under a unit list, including deeper nesting. */
+function countCalls(units: RenderUnit[]): number {
+  let n = 0;
+  for (const u of units) {
+    if (u.type !== 'group') continue;
+    for (const c of u.group.calls) n += 1 + countCalls(c.children);
+  }
+  return n;
 }
 
 /** Collapsed representation of N consecutive same-tool invocations. */
@@ -443,10 +516,83 @@ function GroupRow({
               onToggle={() => onToggleDetail(call.key)}
               isLast={i === group.calls.length - 1}
               isLive={isLive && isLastUnit}
+              nested={call.children.length > 0 ? (
+                <UnitList
+                  units={call.children}
+                  isLive={isLive && isLastUnit}
+                  expanded={detailExpanded}
+                  toggle={onToggleDetail}
+                />
+              ) : undefined}
             />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Renders a list of units; used for the top level and, recursively, for sub-agent activity. */
+function UnitList({
+  units, isLive, expanded, toggle,
+}: {
+  units: RenderUnit[];
+  isLive: boolean;
+  expanded: Set<string>;
+  toggle: (key: string) => void;
+}) {
+  return (
+    <div>
+      {units.map((unit, i) => {
+        const isLastUnit = i === units.length - 1;
+        if (unit.type === 'entry') {
+          return (
+            <BlockRow
+              key={unit.key}
+              item={unit.entry}
+              expanded={expanded.has(unit.key)}
+              onToggle={() => toggle(unit.key)}
+              isLast={isLastUnit}
+              isLive={isLive}
+            />
+          );
+        }
+        const { group } = unit;
+        // Single-call groups render as one directly expandable row.
+        if (group.calls.length === 1) {
+          const call = group.calls[0];
+          return (
+            <CallRow
+              key={unit.key}
+              call={call}
+              expanded={expanded.has(call.key)}
+              onToggle={() => toggle(call.key)}
+              isLast
+              isLive={isLive && isLastUnit}
+              nested={call.children.length > 0 ? (
+                <UnitList
+                  units={call.children}
+                  isLive={isLive && isLastUnit}
+                  expanded={expanded}
+                  toggle={toggle}
+                />
+              ) : undefined}
+            />
+          );
+        }
+        return (
+          <GroupRow
+            key={unit.key}
+            group={group}
+            expanded={expanded.has(unit.key)}
+            onToggle={() => toggle(unit.key)}
+            isLastUnit={isLastUnit}
+            isLive={isLive}
+            detailExpanded={expanded}
+            onToggleDetail={toggle}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -479,10 +625,7 @@ export default function ProgressCard({ payload }: ProgressCardProps) {
     });
   }, []);
 
-  const totalCalls = useMemo(
-    () => units.reduce((n, u) => (u.type === 'group' ? n + u.group.calls.length : n), 0),
-    [units],
-  );
+  const totalCalls = useMemo(() => countCalls(units), [units]);
 
   const headerLabel = payload.agent
     ? t('progress.progressFor', 'Progress · {{agent}}', { agent: payload.agent })
@@ -515,49 +658,7 @@ export default function ProgressCard({ payload }: ProgressCardProps) {
           {t('progress.truncatedHint', 'Older entries trimmed; showing latest only.')}
         </div>
       )}
-      <div>
-        {units.map((unit, i) => {
-          const isLastUnit = i === units.length - 1;
-          if (unit.type === 'entry') {
-            return (
-              <BlockRow
-                key={unit.key}
-                item={unit.entry}
-                expanded={expanded.has(unit.key)}
-                onToggle={() => toggle(unit.key)}
-                isLast={isLastUnit}
-                isLive={isLive}
-              />
-            );
-          }
-          const { group } = unit;
-          // Single-call groups render as one directly expandable row.
-          if (group.calls.length === 1) {
-            return (
-              <CallRow
-                key={unit.key}
-                call={group.calls[0]}
-                expanded={expanded.has(group.calls[0].key)}
-                onToggle={() => toggle(group.calls[0].key)}
-                isLast
-                isLive={isLive && isLastUnit}
-              />
-            );
-          }
-          return (
-            <GroupRow
-              key={unit.key}
-              group={group}
-              expanded={expanded.has(unit.key)}
-              onToggle={() => toggle(unit.key)}
-              isLastUnit={isLastUnit}
-              isLive={isLive}
-              detailExpanded={expanded}
-              onToggleDetail={toggle}
-            />
-          );
-        })}
-      </div>
+      <UnitList units={units} isLive={isLive} expanded={expanded} toggle={toggle} />
     </div>
   );
 }

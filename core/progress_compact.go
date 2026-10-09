@@ -56,7 +56,11 @@ type ProgressCardEntry struct {
 	// when a real ToolID exists — never derived from the tool name, which would
 	// wrongly collapse two parallel same-name tools.
 	CorrelationKey string `json:"correlation_key,omitempty"`
-	Status         string `json:"status,omitempty"`
+	// ParentID is the tool_use id of the Agent (sub-agent) call that produced
+	// this entry. Clients nest such entries under that call instead of showing
+	// them at the same level as the Agent row itself.
+	ParentID string `json:"parent_id,omitempty"`
+	Status   string `json:"status,omitempty"`
 	ExitCode       *int   `json:"exit_code,omitempty"`
 	Success        *bool  `json:"success,omitempty"`
 }
@@ -115,6 +119,7 @@ func BuildProgressCardPayloadV2(items []ProgressCardEntry, truncated bool, agent
 			Tool:           strings.TrimSpace(item.Tool),
 			ID:             strings.TrimSpace(item.ID),
 			CorrelationKey: strings.TrimSpace(item.CorrelationKey),
+			ParentID:       strings.TrimSpace(item.ParentID),
 			Status:         strings.TrimSpace(item.Status),
 			ExitCode:       item.ExitCode,
 			Success:        item.Success,
@@ -235,6 +240,10 @@ type compactProgressWriter struct {
 	// markdown fallback can number visible entries with their true sequence
 	// position instead of restarting at 1 after a trim.
 	entriesDropped int
+	// droppedParents holds ids of tool calls evicted by the cap. Sub-agent
+	// entries parented (transitively) to them are dropped with them, including
+	// ones that arrive later, so they never resurface as orphaned top-level rows.
+	droppedParents map[string]struct{}
 	state      ProgressCardState
 	agentName  string
 	lang       Language
@@ -465,7 +474,19 @@ func (w *compactProgressWriter) AppendStructured(item ProgressCardEntry, fallbac
 	item.Tool = strings.TrimSpace(item.Tool)
 	item.ID = strings.TrimSpace(item.ID)
 	item.CorrelationKey = strings.TrimSpace(item.CorrelationKey)
+	item.ParentID = strings.TrimSpace(item.ParentID)
 	item.Status = strings.TrimSpace(item.Status)
+
+	// A child of an already-evicted parent has nowhere to nest; drop it (and
+	// remember its own id in case it parents further descendants).
+	if item.ParentID != "" {
+		if _, gone := w.droppedParents[item.ParentID]; gone {
+			if item.ID != "" {
+				w.droppedParents[item.ID] = struct{}{}
+			}
+			return true
+		}
+	}
 
 	// Row-level in-place merge: when the entry carries a correlation key that
 	// already matches an existing row, replace that row instead of appending.
@@ -485,7 +506,12 @@ func (w *compactProgressWriter) AppendStructured(item ProgressCardEntry, fallbac
 		w.items = append(w.items, item)
 		w.entries = append(w.entries, fallback)
 		truncated := false
-		if w.maxEntries > 0 && len(w.items) > w.maxEntries {
+		if w.usePayload {
+			// Structured payload: the cap counts top-level entries only, so
+			// sub-agent activity nests under its parent without crowding it out.
+			w.trimTopLevel()
+			truncated = w.entriesDropped > 0
+		} else if w.maxEntries > 0 && len(w.items) > w.maxEntries {
 			w.items = w.items[len(w.items)-w.maxEntries:]
 			if len(w.entries) > w.maxEntries {
 				w.entriesDropped += len(w.entries) - w.maxEntries
@@ -519,6 +545,55 @@ func (w *compactProgressWriter) AppendStructured(item ProgressCardEntry, fallbac
 	}
 
 	return w.renderAndUpdate()
+}
+
+// trimTopLevel enforces maxEntries against top-level entries only (those
+// without a ParentID). Evicting a top-level entry also evicts everything nested
+// under it; nested entries never count toward the cap. items and entries are
+// parallel slices and are pruned together.
+func (w *compactProgressWriter) trimTopLevel() {
+	if w.maxEntries <= 0 {
+		return
+	}
+	top := 0
+	for _, it := range w.items {
+		if it.ParentID == "" {
+			top++
+		}
+	}
+	excess := top - w.maxEntries
+	if excess <= 0 {
+		return
+	}
+	if w.droppedParents == nil {
+		w.droppedParents = make(map[string]struct{})
+	}
+	keptItems := make([]ProgressCardEntry, 0, len(w.items))
+	keptEntries := make([]string, 0, len(w.entries))
+	for i, it := range w.items {
+		drop := false
+		if it.ParentID == "" {
+			if excess > 0 {
+				excess--
+				drop = true
+			}
+		} else if _, gone := w.droppedParents[it.ParentID]; gone {
+			drop = true
+		}
+		if drop {
+			if it.ID != "" {
+				w.droppedParents[it.ID] = struct{}{}
+			}
+			w.entriesDropped++
+			continue
+		}
+		keptItems = append(keptItems, it)
+		if i < len(w.entries) {
+			keptEntries = append(keptEntries, w.entries[i])
+		}
+	}
+	w.items = keptItems
+	w.entries = keptEntries
 }
 
 // isTransientConnErr reports whether err means "no client is connected right

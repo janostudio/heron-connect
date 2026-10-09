@@ -310,6 +310,7 @@ type Event struct {
 	Metadata     map[string]any // optional metadata from agent (e.g. compaction_continue)
 	Synthetic    bool           // true if this is a synthetic/generated message (not from real user)
 	IsSubagent   bool           // true if this event originates from a child-agent stream
+	ParentToolID string         // tool_use id of the Agent call this child-stream event belongs to (empty for top-level events)
 
 	// TurnEpoch identifies which turn produced this event. The engine stamps a
 	// fresh epoch on each turn and drops events stamped with a DIFFERENT epoch,

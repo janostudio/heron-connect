@@ -1920,3 +1920,45 @@ func TestAnnotateUnsupportedImages(t *testing.T) {
 		}
 	})
 }
+
+func TestSubagentFrames_CarryParentToolID(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	asst, _ := json.Marshal([]contentItem{
+		{Type: "tool_use", ID: "child-1", Name: "Read", Input: json.RawMessage(`{"file_path":"/a"}`)},
+		{Type: "thinking", Thinking: "child thought"},
+	})
+	cs.handleAssistant(&streamEvent{
+		Type: "assistant", ParentToolUseID: "agent-1",
+		Message: &streamMessage{StopReason: "tool_use", Content: asst},
+	}, "")
+	resultText, _ := json.Marshal([]contentItem{{Type: "text", Text: "ok"}})
+	user, _ := json.Marshal([]contentItem{{Type: "tool_result", ToolUseID: "child-1", Content: resultText}})
+	cs.handleUser(&streamEvent{Type: "user", ParentToolUseID: "agent-1", Message: &streamMessage{Content: user}})
+
+	for i := 0; i < 3; i++ {
+		select {
+		case ev := <-cs.events:
+			if !ev.IsSubagent || ev.ParentToolID != "agent-1" {
+				t.Fatalf("event %d (%s): IsSubagent=%v ParentToolID=%q, want true/agent-1", i, ev.Type, ev.IsSubagent, ev.ParentToolID)
+			}
+		default:
+			t.Fatalf("expected 3 events, got %d", i)
+		}
+	}
+}
+
+func TestTopLevelFrames_HaveNoParentToolID(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	asst, _ := json.Marshal([]contentItem{{Type: "tool_use", ID: "agent-1", Name: "Agent"}})
+	cs.handleAssistant(&streamEvent{
+		Type: "assistant", Message: &streamMessage{StopReason: "tool_use", Content: asst},
+	}, "")
+	ev := <-cs.events
+	if ev.IsSubagent || ev.ParentToolID != "" {
+		t.Fatalf("top-level event wrongly marked subagent: %+v", ev)
+	}
+}

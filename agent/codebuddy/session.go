@@ -756,6 +756,11 @@ type streamEvent struct {
 	IsError   bool           `json:"is_error"`
 	Message   *streamMessage `json:"message"`
 
+	// ParentToolUseID is set on assistant/user frames produced inside a
+	// sub-agent: it holds the tool_use id of the parent Agent call. Null/empty
+	// for top-level frames.
+	ParentToolUseID string `json:"parent_tool_use_id"`
+
 	// RequestID and Request carry control_request frames. The CLI blocks on
 	// stdin until a matching control_response arrives, so these must be
 	// surfaced to the engine as a permission prompt rather than ignored —
@@ -810,6 +815,17 @@ type contentItem struct {
 
 // ── event handling ───────────────────────────────────────────
 
+// subagentEvent marks ev as originating from a sub-agent when parentToolID
+// (the frame's parent_tool_use_id) is non-empty, so the engine/Web can nest it
+// under the parent Agent call instead of showing it at the top level.
+func subagentEvent(ev core.Event, parentToolID string) core.Event {
+	if parentToolID != "" {
+		ev.IsSubagent = true
+		ev.ParentToolID = parentToolID
+	}
+	return ev
+}
+
 // handleAssistant processes an assistant message event.
 // For complete messages (stop_reason present), emits EventText/EventToolUse.
 // Returns any pending text from delta fragments (not used by codebuddy but kept for consistency).
@@ -817,6 +833,7 @@ func (cs *codebuddySession) handleAssistant(ev *streamEvent, pendingText string)
 	if ev.Message == nil {
 		return pendingText
 	}
+	parentID := ev.ParentToolUseID
 
 	// Only emit on complete messages (stop_reason set) to avoid partial output
 	if ev.Message.StopReason == "" {
@@ -832,7 +849,7 @@ func (cs *codebuddySession) handleAssistant(ev *streamEvent, pendingText string)
 		switch item.Type {
 		case "text":
 			if item.Text != "" {
-				cs.emit(core.Event{Type: core.EventText, Content: item.Text})
+				cs.emit(subagentEvent(core.Event{Type: core.EventText, Content: item.Text}, parentID))
 			}
 
 		case "tool_use":
@@ -843,7 +860,7 @@ func (cs *codebuddySession) handleAssistant(ev *streamEvent, pendingText string)
 			if item.ID != "" && item.Name != "" {
 				cs.toolNameByID.Store(item.ID, item.Name)
 			}
-			cs.emit(core.Event{Type: core.EventToolUse, ToolName: item.Name, ToolID: item.ID, ToolInput: inputPreview})
+			cs.emit(subagentEvent(core.Event{Type: core.EventToolUse, ToolName: item.Name, ToolID: item.ID, ToolInput: inputPreview}, parentID))
 
 		case "thinking":
 			// Accept either the Anthropic-style "thinking" field or a "text"
@@ -854,7 +871,7 @@ func (cs *codebuddySession) handleAssistant(ev *streamEvent, pendingText string)
 				thinking = item.Text
 			}
 			if thinking != "" {
-				cs.emit(core.Event{Type: core.EventThinking, Content: thinking})
+				cs.emit(subagentEvent(core.Event{Type: core.EventThinking, Content: thinking}, parentID))
 			}
 		}
 	}
@@ -890,13 +907,13 @@ func (cs *codebuddySession) handleUser(ev *streamEvent) {
 				toolName = name
 			}
 		}
-		cs.emit(core.Event{
+		cs.emit(subagentEvent(core.Event{
 			Type:      core.EventToolResult,
 			ToolName:  toolName,
 			ToolID:    item.ToolUseID,
 			Content:   resultText,
 			SessionID: cs.CurrentSessionID(),
-		})
+		}, ev.ParentToolUseID))
 	}
 }
 
