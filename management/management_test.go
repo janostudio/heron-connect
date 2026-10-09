@@ -2924,3 +2924,105 @@ func TestMgmt_CCSwitchProviders_MethodNotAllowed(t *testing.T) {
 		t.Fatal("expected DELETE on cc-switch to fail")
 	}
 }
+
+// listSessionNames fetches the sessions list (optionally with a query) and
+// returns the set of session names in the response.
+func listSessionNames(t *testing.T, url, query string) map[string]bool {
+	t.Helper()
+	u := url + "/api/v1/projects/test-project/sessions"
+	if query != "" {
+		u += "?q=" + query
+	}
+	r := mgmtGet(t, u, "tok")
+	if !r.OK {
+		t.Fatalf("sessions list failed: %s", r.Error)
+	}
+	var data struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	if err := json.Unmarshal(r.Data, &data); err != nil {
+		t.Fatalf("unmarshal sessions: %v", err)
+	}
+	names := map[string]bool{}
+	for _, s := range data.Sessions {
+		n, _ := s["name"].(string)
+		names[n] = true
+	}
+	return names
+}
+
+func TestMgmt_SessionsQuery_FiltersByHistory(t *testing.T) {
+	_, ts, e := testManagementServer(t, "tok")
+
+	alpha := e.GetSessions().GetOrCreateActive("sess-alpha")
+	alpha.SetName("alpha-task")
+	alpha.AddHistory("user", "please fix the login timeout bug")
+
+	beta := e.GetSessions().GetOrCreateActive("sess-beta")
+	beta.SetName("beta-task")
+	beta.AddHistory("user", "unrelated work on the docs")
+
+	// No query: both sessions returned.
+	all := listSessionNames(t, ts.URL, "")
+	if !all["alpha-task"] || !all["beta-task"] {
+		t.Fatalf("expected both sessions without query, got %v", all)
+	}
+
+	// Query matching only alpha's history content.
+	hit := listSessionNames(t, ts.URL, "timeout")
+	if !hit["alpha-task"] {
+		t.Fatalf("expected alpha-task to match history, got %v", hit)
+	}
+	if hit["beta-task"] {
+		t.Fatalf("beta-task should not match 'timeout', got %v", hit)
+	}
+
+	// Query matching a session name (metadata path).
+	byName := listSessionNames(t, ts.URL, "beta")
+	if !byName["beta-task"] || byName["alpha-task"] {
+		t.Fatalf("expected only beta-task for name query, got %v", byName)
+	}
+
+	// Case-insensitive.
+	upper := listSessionNames(t, ts.URL, "TIMEOUT")
+	if !upper["alpha-task"] {
+		t.Fatalf("expected case-insensitive match, got %v", upper)
+	}
+}
+
+func TestMgmt_SessionsQuery_ReturnsMatchSnippet(t *testing.T) {
+	_, ts, e := testManagementServer(t, "tok")
+	s := e.GetSessions().GetOrCreateActive("sess-snippet")
+	s.SetName("snippet-task")
+	s.AddHistory("user", strings.Repeat("x", 60)+" needle "+strings.Repeat("y", 60))
+
+	r := mgmtGet(t, ts.URL+"/api/v1/projects/test-project/sessions?q=needle", "tok")
+	if !r.OK {
+		t.Fatalf("sessions list failed: %s", r.Error)
+	}
+	var data struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	if err := json.Unmarshal(r.Data, &data); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(data.Sessions) != 1 {
+		t.Fatalf("expected 1 match, got %d", len(data.Sessions))
+	}
+	snippet, _ := data.Sessions[0]["match_snippet"].(string)
+	if !strings.Contains(snippet, "needle") {
+		t.Fatalf("expected snippet to contain match, got %q", snippet)
+	}
+	if !strings.HasPrefix(snippet, "…") || !strings.HasSuffix(snippet, "…") {
+		t.Fatalf("expected ellipsis on both sides for a mid-content match, got %q", snippet)
+	}
+}
+
+func TestSnippetAround_HandlesMultibyte(t *testing.T) {
+	content := "中文前缀内容" + "命中关键词" + "中文后缀内容"
+	idx := strings.Index(content, "命中关键词")
+	got := snippetAround(content, idx, len("命中关键词"))
+	if !strings.Contains(got, "命中关键词") {
+		t.Fatalf("snippet dropped the match or split a rune: %q", got)
+	}
+}

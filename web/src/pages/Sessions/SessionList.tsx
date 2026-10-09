@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
 import { MessageSquare, Circle, Filter, Search, Plus, User, Bot, Loader2, Clock, Pin, PinOff, Pencil } from 'lucide-react';
@@ -25,6 +25,29 @@ function timeAgo(iso: string, t: (k: string) => string): string {
   return `${days}d`;
 }
 
+// highlight wraps every case-insensitive occurrence of `query` in `text` with
+// a <mark>, so a history-text hit visibly shows why it matched. Returns the
+// plain string when the query is empty.
+function highlight(text: string, query: string) {
+  const q = query.trim();
+  if (!q) return text;
+  const lower = text.toLowerCase();
+  const lq = q.toLowerCase();
+  const parts: ReactNode[] = [];
+  let from = 0;
+  for (let at = lower.indexOf(lq); at !== -1; at = lower.indexOf(lq, from)) {
+    if (at > from) parts.push(text.slice(from, at));
+    parts.push(
+      <mark key={at} className="bg-amber-200/70 dark:bg-amber-400/30 text-inherit rounded-sm">
+        {text.slice(at, at + q.length)}
+      </mark>,
+    );
+    from = at + q.length;
+  }
+  if (from < text.length) parts.push(text.slice(from));
+  return parts;
+}
+
 export default function SessionList() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -33,6 +56,10 @@ export default function SessionList() {
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+
+  // Latest debounced query, read by the poll / refresh paths (which must not
+  // be re-created every keystroke). Kept in a ref so fetchData stays stable.
+  const searchRef = useRef('');
 
   // New session modal state
   const [showCreate, setShowCreate] = useState(false);
@@ -44,7 +71,7 @@ export default function SessionList() {
   // Rename modal state
   const [renameTarget, setRenameTarget] = useState<FlatSession | null>(null);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (q: string) => {
     setLoading(true);
     try {
       const { projects: projs } = await listProjects();
@@ -52,7 +79,7 @@ export default function SessionList() {
       const results = await Promise.all(
         (projs || []).map(async (p) => {
           try {
-            const { sessions } = await listSessions(p.name);
+            const { sessions } = await listSessions(p.name, q || undefined);
             return { project: p.name, sessions: sessions || [] };
           } catch {
             return { project: p.name, sessions: [] };
@@ -70,21 +97,31 @@ export default function SessionList() {
     const next = !s.pinned;
     try {
       await updateSession(s._project, s.id, { pinned: next });
-      await fetchData();
+      await fetchData(searchRef.current);
     } catch { /* transient */ }
   }, [fetchData]);
 
   useEffect(() => {
-    fetchData();
-    const handler = () => fetchData();
+    fetchData('');
+    const handler = () => fetchData(searchRef.current);
     window.addEventListener('cc:refresh', handler);
     return () => window.removeEventListener('cc:refresh', handler);
   }, [fetchData]);
 
-  // Poll so execution-status badges (running / waiting permission) stay
-  // current while sessions run in parallel.
+  // Debounce the search box into the backend full-text query. The list endpoint
+  // is polled, so a full history scan must never run on every keystroke.
   useEffect(() => {
-    const timer = setInterval(fetchData, 5000);
+    const q = search.trim();
+    searchRef.current = q;
+    const timer = setTimeout(() => { fetchData(q); }, 250);
+    return () => clearTimeout(timer);
+  }, [search, fetchData]);
+
+  // Poll so execution-status badges (running / waiting permission) stay
+  // current while sessions run in parallel. Carries the active query along so
+  // a poll tick doesn't silently drop the search filter.
+  useEffect(() => {
+    const timer = setInterval(() => fetchData(searchRef.current), 5000);
     return () => clearInterval(timer);
   }, [fetchData]);
 
@@ -93,18 +130,8 @@ export default function SessionList() {
       ? allData.filter((d) => d.project === selectedProject)
       : allData;
     const flat = src.flatMap((d) => d.sessions.map((s) => ({ ...s, _project: d.project })));
-    const query = search.trim().toLowerCase();
-    const matched = query
-      ? flat.filter((s) => {
-          const haystack = [
-            s.name, s.user_name, s.chat_name, s._project,
-            s.last_message?.content,
-          ].filter(Boolean).join(' ').toLowerCase();
-          return haystack.includes(query);
-        })
-      : flat;
-    return sortSessions(matched);
-  }, [allData, selectedProject, search]);
+    return sortSessions(flat);
+  }, [allData, selectedProject]);
 
   const openCreateModal = () => {
     setNewProject(selectedProject || projects[0]?.name || '');
@@ -230,16 +257,22 @@ export default function SessionList() {
                   </div>
                 </div>
 
-                {/* Last message preview */}
+                {/* Preview: a history-match excerpt when searching content,
+                    otherwise the latest message */}
                 <div className="mb-2.5 min-h-[2.5rem]">
-                  {s.last_message ? (
+                  {s.match_snippet ? (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
+                      <Search size={10} className="inline mr-1 -mt-0.5 opacity-60" />
+                      {highlight(s.match_snippet, search)}
+                    </p>
+                  ) : s.last_message ? (
                     <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
                       {s.last_message.role === 'user' ? (
                         <User size={10} className="inline mr-1 -mt-0.5 opacity-60" />
                       ) : (
                         <Bot size={10} className="inline mr-1 -mt-0.5 opacity-60" />
                       )}
-                      {s.last_message.content.replace(/\n/g, ' ').slice(0, 100)}
+                      {highlight(s.last_message.content.replace(/\n/g, ' ').slice(0, 100), search)}
                     </p>
                   ) : (
                     <p className="text-xs text-gray-400 dark:text-gray-500 italic">{t('sessions.noMessages')}</p>
@@ -301,7 +334,7 @@ export default function SessionList() {
           project={renameTarget._project}
           session={{ id: renameTarget.id, name: renameTarget.name }}
           onClose={() => setRenameTarget(null)}
-          onSaved={async () => { await fetchData(); }}
+          onSaved={async () => { await fetchData(searchRef.current); }}
         />
       )}
     </div>

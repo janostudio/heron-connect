@@ -467,6 +467,65 @@ func normalizeSessionName(name string) string {
 	return name
 }
 
+// matchSessionQuery reports whether a session matches a lowercased query, and
+// returns a short snippet around the first history match when the hit came
+// from message content rather than metadata.
+//
+// Metadata is matched first (cheap); only on miss do we scan the full history.
+// The scan is linear over every entry — fine for this data model (a JSON
+// snapshot, no index), but it is why the caller must keep this off the empty
+// query path.
+func matchSessionQuery(info map[string]any, snap core.SessionSnapshot, query string) (bool, string) {
+	fields := make([]string, 0, 5)
+	for _, k := range []string{"name", "user_name", "chat_name", "platform", "agent_type"} {
+		if v, ok := info[k].(string); ok && v != "" {
+			fields = append(fields, v)
+		}
+	}
+	if strings.Contains(strings.ToLower(strings.Join(fields, "\n")), query) {
+		return true, ""
+	}
+
+	for _, h := range snap.History {
+		content := h.Content
+		if content == "" {
+			continue
+		}
+		if idx := strings.Index(strings.ToLower(content), query); idx >= 0 {
+			return true, snippetAround(content, idx, len(query))
+		}
+	}
+	return false, ""
+}
+
+// snippetAround extracts a single-line excerpt of content centered on a match
+// at byte offset idx (matching a query of queryLen bytes), with an ellipsis on
+// either side when truncated. Operates on runes so it never splits a multi-byte
+// character (the query is ASCII/UTF-8 and Index offsets land on rune starts).
+func snippetAround(content string, idx, queryLen int) string {
+	const radius = 40
+	runes := []rune(content)
+	// Convert byte offset to rune offset, since we slice by runes below.
+	runeStart := len([]rune(content[:idx]))
+	runeEnd := runeStart + len([]rune(content[idx:idx+queryLen]))
+	start := runeStart - radius
+	if start < 0 {
+		start = 0
+	}
+	end := runeEnd + radius
+	if end > len(runes) {
+		end = len(runes)
+	}
+	snippet := strings.ReplaceAll(string(runes[start:end]), "\n", " ")
+	if start > 0 {
+		snippet = "…" + snippet
+	}
+	if end < len(runes) {
+		snippet += "…"
+	}
+	return snippet
+}
+
 func mgmtError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -1595,6 +1654,12 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 		// per session, so resolve it once instead of per iteration.
 		interruptible := e.AgentInterruptible()
 
+		// Optional full-text query. When set, only sessions whose metadata or
+		// full history matches are returned. Empty query keeps the original
+		// fast path untouched — the list endpoint is polled every 5s, so we
+		// must never pay the history-scan cost on the hot path.
+		query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+
 		idToKey, activeIDs := e.GetSessions().SessionKeyMap()
 		stored := e.GetSessions().AllSessions()
 		sessions := make([]map[string]any, 0, len(stored))
@@ -1650,6 +1715,19 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 			if meta := e.GetSessions().GetUserMeta(sessionKey); meta != nil {
 				info["user_name"] = meta.UserName
 				info["chat_name"] = meta.ChatName
+			}
+
+			if query != "" {
+				hit, snippet := matchSessionQuery(info, snap, query)
+				if !hit {
+					continue
+				}
+				// Surface where the match came from: the list UI folds this in
+				// so a hit on an old message doesn't look inexplicable when the
+				// preview line shows unrelated recent text.
+				if snippet != "" {
+					info["match_snippet"] = snippet
+				}
 			}
 
 			sessions = append(sessions, info)

@@ -33,6 +33,12 @@ export interface Session {
   last_message: LastMessage | null;
   user_name?: string;
   chat_name?: string;
+  /**
+   * Present only when the list was fetched with a `q` query and the match came
+   * from message history rather than metadata: a short excerpt around the hit,
+   * shown instead of the last-message preview so the result makes sense.
+   */
+  match_snippet?: string;
 }
 
 export interface SessionDetail extends Session {
@@ -64,8 +70,14 @@ export function sessionSource(s: Pick<Session, 'user_name' | 'chat_name'>): stri
   return s.user_name || s.chat_name || '';
 }
 
-export const listSessions = (project: string) =>
-  api.get<{ sessions: Session[]; active_keys: Record<string, string> }>(`/projects/${project}/sessions`);
+// listSessions fetches the session list. When `q` is set the backend filters
+// server-side against metadata AND full message history (returning
+// `match_snippet` for history hits); omit it for the plain, poll-friendly list.
+export const listSessions = (project: string, q?: string) =>
+  api.get<{ sessions: Session[]; active_keys: Record<string, string> }>(
+    `/projects/${project}/sessions`,
+    q ? { q } : undefined,
+  );
 export const getSession = (project: string, id: string, historyLimit?: number) =>
   api.get<SessionDetail>(`/projects/${project}/sessions/${id}`, historyLimit ? { history_limit: String(historyLimit) } : undefined);
 export const createSession = (project: string, body: { session_key: string; name?: string }) =>
