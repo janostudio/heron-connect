@@ -1679,6 +1679,34 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 					"timestamp": last.Timestamp,
 				}
 			}
+
+			// firstUserMsg backs the card preview: it shows what the session is
+			// ABOUT (the user's opening message) rather than the latest line,
+			// which is often an assistant reply or tool output.
+			// lastUserAt is the list sort key: the user's most recent message.
+			// UpdatedAt is NOT usable for ordering — it is stamped when the
+			// whole turn finishes (assistant + every tool call), so a long turn
+			// makes a session look "newer" than it is. Falls back to UpdatedAt
+			// when the session has no user message yet, so the key is never zero.
+			var firstUserMsg string
+			var lastUserAt time.Time
+			for i := range snap.History {
+				if snap.History[i].Role != "user" {
+					continue
+				}
+				if firstUserMsg == "" {
+					c := snap.History[i].Content
+					if len(c) > 200 {
+						c = c[:200]
+					}
+					firstUserMsg = c
+				}
+				lastUserAt = snap.History[i].Timestamp
+			}
+			if lastUserAt.IsZero() {
+				lastUserAt = snap.UpdatedAt
+			}
+
 		info := map[string]any{
 			"id":            snap.ID,
 			"name":          normalizeSessionName(snap.Name),
@@ -1691,6 +1719,8 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 				"created_at":    snap.CreatedAt,
 				"updated_at":    snap.UpdatedAt,
 				"last_message":  lastMsg,
+				"first_user_message": firstUserMsg,
+				"last_user_at":       lastUserAt,
 			}
 
 			sessionKey := isolateLegacyWebSessionKey(idToKey[snap.ID], snap.ID)

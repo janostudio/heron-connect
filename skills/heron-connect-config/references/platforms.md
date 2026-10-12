@@ -30,6 +30,28 @@
 - `thread_isolation`：按话题/根消息隔离会话（每个 thread/root 一个会话）。例如 Discord
   论坛帖、飞书话题场景，`thread_isolation = true` 后同一频道里不同帖子各自独立会话，互不串号。
 
+## 文件分享（免登录只读链接，跨平台通用）
+
+把 agent 工作目录下的某个文件生成一条**免登录、只读**的分享链接，发给任何人（含非 heron-connect 用户）
+即可在浏览器阅读。v1.2.0 起提供，三种创建方式：
+
+- **Web 界面**：文件旁点分享按钮。
+- **CLI**：
+  ```bash
+  heron-connect share <project> <path>        # 生成链接并打印（可直接 | pbcopy）
+  heron-connect share list [project]          # 列出所有分享
+  heron-connect share revoke <token|url>      # 立即失效（接受完整链接，带尾斜杠/?download=1 也能识别）
+  ```
+
+**安全边界（重要）**：
+- 公开接口是 `GET /api/v1/share/<token>`，**只读、只针对生成时的那一个文件**。
+  持有链接者**不能**列举目录、不能读同目录其他文件、不能调用任何其他 API。
+- 创建 / 列出 / 撤销分享**仍需管理 token**（匿名调用一律 401）。
+- 分享记录持久化在 `<data_dir>/shares/shares.json`（原子写）；重启后链接依然有效、
+  已撤销的保持失效；文件损坏时容错加载而非阻塞启动。
+- 阅读页是**独立前端入口**（Vite 第二入口 `share.html`），不含路由/auth store/WebSocket/`cc_token`，
+  因此不会把匿名收件人踢到登录页；`-tags no_web` 构建或前端产物缺失时优雅降级为返回原始文件字节。
+
 ## 虚拟 `type = "web"` 平台（Web 管理后台专用）
 
 `web` 是一个**不建立真实连接**的虚拟平台类型（由 `platform/webnoop` 注册），它不连接任何

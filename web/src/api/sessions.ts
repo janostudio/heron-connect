@@ -29,6 +29,21 @@ export interface Session {
   pinned?: boolean;
   created_at: string;
   updated_at: string;
+  /**
+   * Timestamp of the user's most recent message — the list sort key.
+   *
+   * Deliberately not `updated_at`: that is stamped when the whole turn
+   * finishes (assistant reply + every tool call), so a long-running turn
+   * makes a session look newer than the user's actual last message.
+   * Falls back to `updated_at` server-side when there is no user message yet.
+   */
+  last_user_at?: string;
+  /**
+   * Content of the session's FIRST user message, used as the card preview so
+   * a card says what the session is about rather than showing the latest line
+   * (often an assistant reply or tool output). Empty when there is no message.
+   */
+  first_user_message?: string;
   history_count: number;
   last_message: LastMessage | null;
   user_name?: string;
@@ -90,15 +105,19 @@ export const switchSession = (project: string, body: { session_key: string; sess
 export const sendMessage = (project: string, body: { session_key: string; message: string }) =>
   api.post(`/projects/${project}/send`, body);
 
-// sortSessions orders sessions with pinned ones first, then by most-recently
-// updated (falling back to created). Used consistently across chat and list views.
-export function sortSessions<T extends { pinned?: boolean; updated_at: string; created_at: string }>(list: T[]): T[] {
+// sortSessions orders sessions with pinned ones first, then by the user's
+// most recent message (`last_user_at`) — NOT `updated_at`, which is stamped
+// at turn completion and would float long-running sessions to the top even
+// though the user has not said anything new. Both fall back to `created_at`
+// so a session with no user message yet still sorts deterministically. Used
+// consistently across chat and list views.
+export function sortSessions<T extends { pinned?: boolean; last_user_at?: string; updated_at: string; created_at: string }>(list: T[]): T[] {
   return [...list].sort((a, b) => {
     const aPin = a.pinned ? 1 : 0;
     const bPin = b.pinned ? 1 : 0;
     if (aPin !== bPin) return bPin - aPin;
-    const aTime = a.updated_at || a.created_at;
-    const bTime = b.updated_at || b.created_at;
+    const aTime = a.last_user_at || a.updated_at || a.created_at;
+    const bTime = b.last_user_at || b.updated_at || b.created_at;
     return (bTime > aTime ? 1 : bTime < aTime ? -1 : 0);
   });
 }

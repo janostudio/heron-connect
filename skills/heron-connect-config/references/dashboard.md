@@ -139,6 +139,24 @@ cron 任务只需产出文件、不需向任何群发消息时，用 `no_deliver
 
 `/dashboard [today|week|yesterday|lastweek]` —— 卡片平台渲染卡片，其他平台 Markdown。
 
+## 引擎统计的采集（metrics JSONL）
+
+「引擎统计区」的数据来自 connect 自动落盘的 per-turn 记录，排查统计缺失时可据此定位：
+
+- **落盘路径**：`<data_dir>/metrics/turns-YYYY-MM-DD.jsonl`，**append-only，每轮一行**。
+- **TurnRecord 字段**：`ts` / `kind`(turn|session_created) / `project` / `session_key` /
+  `session_id` / `agent_session_id` / `platform` / `user` / `duration_ms` /
+  `input_tokens` / `output_tokens` / `tool_calls` / `tools` / `response_chars` /
+  `silent` / `error`。
+- **隐私**：只含维度计数，**不含消息正文**（`include_message_excerpt` 只影响大盘展示的会话行摘要）。
+- **记录点**：turn 完成时、新会话创建时各记一条。
+- **保留清理**：按 `[dashboard].retention_days`（默认 90 天）清理。
+- **聚合**：纯函数 `StatsAggregator` → versioned `DashboardReport` JSON。
+- **消费方**：REST `GET /api/v1/dashboard`、`/api/v1/reports`；IM `/dashboard`；cron `{{dashboard.*}}`。
+
+> 排查「大盘无数据」：先确认 `[dashboard].enabled` 与 `collect` 均为 true，再看
+> `<data_dir>/metrics/` 下是否生成了当天的 `turns-*.jsonl`。
+
 ## 统计口径说明
 
 insights.json 是业务口径；`{{dashboard.*}}` 是引擎入口口径（只含经平台进来的轮次），两者互补可并列引用。

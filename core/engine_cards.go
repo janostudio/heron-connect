@@ -64,7 +64,11 @@ func (e *Engine) renderModelCard(sessionKey string) *Card {
 		return e.simpleCard(e.i18n.T(MsgCardTitleModel), "indigo", e.i18n.T(MsgModelNotSupported))
 	}
 
-	fetchCtx, cancel := context.WithTimeout(e.ctx, 3*time.Second)
+	// 10s (not 3s): the first probe spawns the CLI for a full ACP handshake,
+	// which can exceed 3s on a cold node start and would truncate the list to
+	// the offline fallback. Matches the timeout used by cmdModel and
+	// handleModelCardAction.
+	fetchCtx, cancel := context.WithTimeout(e.ctx, 10*time.Second)
 	defer cancel()
 	models := switcher.AvailableModels(fetchCtx)
 	current := switcher.GetModel()

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
-import { MessageSquare, Circle, Filter, Search, Plus, User, Bot, Loader2, Clock, Pin, PinOff, Pencil } from 'lucide-react';
+import { MessageSquare, Circle, Filter, Search, Plus, User, Loader2, Clock, Pin, PinOff, Pencil } from 'lucide-react';
 import { Badge, Button, EmptyState, Input, Modal } from '@/components/ui';
 import { listProjects, type ProjectSummary } from '@/api/projects';
 import { listSessions, createSession, updateSession, sortSessions, sessionTitle, sessionSource, type Session } from '@/api/sessions';
@@ -258,21 +258,19 @@ export default function SessionList() {
                 </div>
 
                 {/* Preview: a history-match excerpt when searching content,
-                    otherwise the latest message */}
+                    otherwise the session's FIRST user message — so the card
+                    says what the session is about rather than echoing the
+                    latest line (often an assistant reply or tool output). */}
                 <div className="mb-2.5 min-h-[2.5rem]">
                   {s.match_snippet ? (
                     <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
                       <Search size={10} className="inline mr-1 -mt-0.5 opacity-60" />
                       {highlight(s.match_snippet, search)}
                     </p>
-                  ) : s.last_message ? (
+                  ) : s.first_user_message ? (
                     <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
-                      {s.last_message.role === 'user' ? (
-                        <User size={10} className="inline mr-1 -mt-0.5 opacity-60" />
-                      ) : (
-                        <Bot size={10} className="inline mr-1 -mt-0.5 opacity-60" />
-                      )}
-                      {highlight(s.last_message.content.replace(/\n/g, ' ').slice(0, 100), search)}
+                      <User size={10} className="inline mr-1 -mt-0.5 opacity-60" />
+                      {highlight(s.first_user_message.replace(/\n/g, ' ').slice(0, 100), search)}
                     </p>
                   ) : (
                     <p className="text-xs text-gray-400 dark:text-gray-500 italic">{t('sessions.noMessages')}</p>

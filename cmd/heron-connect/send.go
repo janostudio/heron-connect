@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"mime"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -42,15 +41,23 @@ func runSend(args []string) {
 		os.Exit(1)
 	}
 
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", sockPath)
-			},
-		},
-	}
+	// Bound the whole request. Without a Timeout, a server that never answers
+	// (e.g. a platform Send blocked on a dead socket) leaves this CLI blocked
+	// forever, holding the agent turn open — observed in production as a
+	// process stuck for days. The agent typically wraps this in `timeout`, but
+	// the CLI must not depend on that: it self-terminates. See unixhttp.go.
+	client := newUnixHTTPClient(sockPath)
 
-	resp, err := client.Post("http://unix/send", "application/json", bytes.NewReader(payload))
+	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout())
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/send", bytes.NewReader(payload))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to build request: %v\n", err)
+		os.Exit(1)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to connect: %v\n", err)
 		os.Exit(1)
@@ -64,6 +71,12 @@ func runSend(args []string) {
 	}
 
 	fmt.Println("Message sent successfully.")
+}
+
+// newSendClient is kept as a thin alias so existing tests and callers keep
+// working; it now delegates to the shared unix-socket client.
+func newSendClient(sockPath string) *http.Client {
+	return newUnixHTTPClient(sockPath)
 }
 
 var errSendUsage = errors.New("show send usage")

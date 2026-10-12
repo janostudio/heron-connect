@@ -67,7 +67,7 @@ name = "my-project"                # 项目名，唯一标识
 type = "claudecode"                # 见 references/project-agent.md 的 agent type 表
 
 [projects.agent.options]
-work_dir = "/absolute/path/to/your/project"   # 必填：代码目录绝对路径
+work_dir = "/absolute/path/to/your/project"   # 代码目录；推荐绝对路径（相对路径按 config 目录锚定，见 project-agent.md）
 mode = "default"                   # default | acceptEdits | plan | auto | bypassPermissions | dontAsk
 
 [[projects.platforms]]

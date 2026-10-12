@@ -2017,3 +2017,132 @@ func TestAgentToolUse_CarriesSubagentType(t *testing.T) {
 		t.Fatalf("SubagentType = %q, want Explore", ev.SubagentType)
 	}
 }
+
+// ── model-probe cache tests ─────────────────────────────────
+//
+// Opening /model used to spawn `codebuddy --acp` on every call, and the
+// engine's probe timeout is short — so each open blocked for seconds and
+// often fell back to a degraded list. AvailableModels now reuses the raw
+// probe result for codebuddyModelsCacheTTL.
+
+// countingFakeCLI installs a fake codebuddy that appends one line to a count
+// file per invocation, so tests can assert how many probes were spawned.
+func countingFakeCLI(t *testing.T, countFile string) string {
+	t.Helper()
+	return writeFakeCLI(t, `
+echo x >> '`+countFile+`'
+read -r line
+read -r line
+printf '%s\n' '`+modelUpdateLine("gpt-5.6-terra",
+		[2]string{"claude-sonnet-5", "Claude-Sonnet-5"},
+		[2]string{"gpt-5.6-terra", "GPT-5.6-Terra"})+`'
+sleep 0.1
+`)
+}
+
+// countProbes returns how many times the fake CLI was invoked.
+func countProbes(t *testing.T, countFile string) int {
+	t.Helper()
+	b, err := os.ReadFile(countFile)
+	if os.IsNotExist(err) {
+		return 0
+	}
+	if err != nil {
+		t.Fatalf("read probe count: %v", err)
+	}
+	return strings.Count(string(b), "\n")
+}
+
+// A second AvailableModels call must reuse the cache instead of spawning the
+// CLI again — this is the whole point of the fix.
+func TestAgent_AvailableModels_CachesProbe(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	countFile := filepath.Join(t.TempDir(), "probe-count")
+	t.Setenv("PATH", countingFakeCLI(t, countFile))
+
+	a := &Agent{workDir: t.TempDir()}
+	first := a.AvailableModels(context.Background())
+	second := a.AvailableModels(context.Background())
+
+	if got := countProbes(t, countFile); got != 1 {
+		t.Errorf("probe spawned %d times, want 1 (second call must hit the cache)", got)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Errorf("cached result differs:\nfirst  = %+v\nsecond = %+v", first, second)
+	}
+}
+
+// Once the TTL lapses the next call must probe again rather than serve stale
+// data forever.
+func TestAgent_AvailableModels_CacheExpires(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	countFile := filepath.Join(t.TempDir(), "probe-count")
+	t.Setenv("PATH", countingFakeCLI(t, countFile))
+
+	a := &Agent{workDir: t.TempDir()}
+	a.AvailableModels(context.Background())
+
+	// Age the cache past the TTL.
+	a.mu.Lock()
+	a.modelsCacheAt = time.Now().Add(-(codebuddyModelsCacheTTL + time.Minute))
+	a.mu.Unlock()
+
+	a.AvailableModels(context.Background())
+
+	if got := countProbes(t, countFile); got != 2 {
+		t.Errorf("probe spawned %d times, want 2 (expired cache must re-probe)", got)
+	}
+}
+
+// A failed probe must NOT be cached: the fallback list still gets served
+// (correctly, without spawning seconds of nothing), but the cache stays empty
+// so the next call after the cooldown can recover.
+func TestAgent_AvailableModels_ProbeFailureNotCached(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir()) // no codebuddy binary
+
+	a := &Agent{workDir: t.TempDir()}
+	models := a.AvailableModels(context.Background())
+	if len(models) == 0 {
+		t.Fatal("AvailableModels() returned empty list; fallback must still serve")
+	}
+
+	a.mu.Lock()
+	cachedLen := len(a.modelsCache)
+	a.mu.Unlock()
+	if cachedLen != 0 {
+		t.Errorf("modelsCache has %d entries after a failed probe, want 0 (must not pin the fallback)", cachedLen)
+	}
+}
+
+// The cache stores only the RAW probe result, so a models.json override must
+// still be applied on a cache hit — someone editing models.json should see it
+// without waiting out the TTL.
+func TestAgent_AvailableModels_CacheRespectsModelsJSON(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	countFile := filepath.Join(t.TempDir(), "probe-count")
+	t.Setenv("PATH", countingFakeCLI(t, countFile))
+
+	workDir := t.TempDir()
+	writeModelsJSON(t, workDir, `{"models":[{"id":"claude-sonnet-5","name":"My Sonnet"}]}`)
+
+	a := &Agent{workDir: workDir}
+	a.AvailableModels(context.Background()) // primes the cache
+
+	// Edit models.json AFTER the cache was primed.
+	writeModelsJSON(t, workDir, `{"models":[{"id":"claude-sonnet-5","name":"Renamed"}]}`)
+
+	models := a.AvailableModels(context.Background())
+	if got := countProbes(t, countFile); got != 1 {
+		t.Errorf("probe spawned %d times, want 1 (override must not force a re-probe)", got)
+	}
+	for _, m := range models {
+		if m.Name == "claude-sonnet-5" {
+			if m.Desc != "Renamed" {
+				t.Errorf("cache hit ignored the models.json edit: desc = %q, want %q", m.Desc, "Renamed")
+			}
+			return
+		}
+	}
+	t.Errorf("claude-sonnet-5 missing from %+v", models)
+}

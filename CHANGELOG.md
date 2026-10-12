@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.3.19 (2026-10-12)
+
+### Fixed
+
+- **`/sessions` 页面的会话排序与卡片预览都不符预期**。① 排序键原先用 `updated_at`，而它的唯一写入点是 `Session.unlock(true)`（`core/session.go`），在**整个回合结束**（assistant 回复 + 所有工具调用跑完）时才打戳 —— 于是一个跑了两分钟的长回合会让会话看起来"刚有新消息"，实际用户早已不再发言。现列表新增 `last_user_at`（该会话**用户**最近一条消息的时间戳，`management/mgmt_server.go` 从 history 反向取；无用户消息时回退 `updated_at`，保证键非零），`sortSessions`（`web/src/api/sessions.ts`）改用它与 `updated_at`/`created_at` 逐级回退排序；置顶优先不变。② 卡片预览行原先显示**最后一条**消息，而那条常是 assistant 回复或工具输出，读起来不像"这个会话在聊什么"。现新增 `first_user_message` 字段（该会话**第一条**用户消息，截断 200 字），预览行改为 `match_snippet`（搜索命中）→ `first_user_message` → 空态，图标固定为用户。搜索命中片段的展示逻辑不变。新增回归测试：后端 `TestMgmt_SessionList_FirstUserMessage` / `NoUserMessage` / `LastUserAtTracksUserMessage`（含"`last_user_at` 不得等于 `updated_at`"的防回归断言），前端 `web/src/api/sessions.test.ts` 6 例（置顶优先、按 `last_user_at` 倒序、`last_user_at` 存在时忽略 `updated_at`、逐级回退、不改动入参）。
+- **Web 点击 `/model` 每次都要等约 3 秒才弹出卡片**。`renderModelCard`（`core/engine_cards.go`）用 `3s` 超时同步调用 `AvailableModels`，而 CodeBuddy 的实现是**每次** spawn 一个 `codebuddy --acp` 子进程做完整 ACP 握手来发现模型列表（`agent/codebuddy/probe.go`，自带 15s 上限）。冷启动 node + 握手通常 >3s，于是 3s 被完整耗尽，卡片才返回 —— 日志中每次 `/model` 到 `handled` 都稳定在 3.02~3.03s 可复现。同时超时会让探测返回空、模型列表退化成内置 fallback（列表不准）。现给探测结果加 **1 天内存缓存**（`codebuddyModelsCacheTTL`，模型列表随账号登录态变化且变动极少），命中即秒回；**只缓存原始探测结果**，`models.json` 覆盖与 `availableModels` allow-list 每次重新应用，改了配置无需等 TTL 过期。探测失败**不写缓存**，只进入 30s 冷却（`codebuddyModelsFailCooldown`），避免一次抖动把 fallback 钉死一整天、也避免 CLI 不可用时每次点击都各等数秒。另将 `renderModelCard` 的首次探测超时由 `3s` 提至 `10s`，与 `cmdModel` / `handleModelCardAction` 两处调用一致。新增回归测试 4 个（缓存命中不重复探测、TTL 过期重探、失败不入缓存、缓存路径仍应用 `models.json`）。
+- **所有访问本机实例的 CLI 子命令统一加上请求超时（`heron-connect send` 实测有进程存活 3 天）**。`send` / `share` / `cron` / `relay` 的 HTTP client 原先**都没有 `Timeout`、也不带 context 超时**，只 `client.Post` / `client.Get` 一把梭。一旦服务端迟迟不返回（例如平台发送阻塞在一个已死的 socket 上），该 CLI 进程就无限期阻塞 —— 而 `send` 通常由 agent 在回合内调用，于是**整个回合被拖住不结束**，实测有进程存活 3 天。现抽出共享的 `newUnixHTTPClient()`（`cmd/heron-connect/unixhttp.go`，`Timeout = 30s`），5 处 client 构造全部改走它；`send` 另加 `http.NewRequestWithContext` 双保险。30s 对本地 socket 足够宽松（正常毫秒级），又低于企微自身 30s 的 HTTP 预算。新增回归测试：`TestNewUnixHTTPClient_HasTimeout`（断言超时存在）、`TestCLISubcommandClients_HaveTimeout`（覆盖 send/share 构造路径）、`TestUnixHTTPClient_GivesUpOnHungServer`（对"只接受连接、永不响应"的 unix socket 验证客户端会放弃；已验证移除 Timeout 时前两者失败、后者挂死）。
+
+### Changed
+
+- **`skills/heron-connect-config` 同步至 v1.3.18 的能力面**。该 skill 内容此前停在 v1.1.36，与代码跨约 40 个版本，现补齐：文件分享（免登录只读链接及其安全边界）、引擎统计采集（metrics JSONL 路径/字段/聚合/消费方）、codebuddy `mode = "bypassPermissions"` 必须显式声明（headless 不读 `.codebuddy/settings.json`）、`interruptible`（忙时打断语义）、`work_dir` 相对路径按 config 目录锚定（v1.3.15 起，修正旧的「相对 cwd/必须绝对路径」描述）、聊天命令表与源码 `builtinCommands` 对齐（`/ps` 是 P.S. 追加输入而非进程列表；特权命令收紧为 shell/show/dir/restart/upgrade/web/diff 共 7 个；补 `/doctor`、`/delete` 批量语法）。
+- **`gotchas.md` 扩写为完整「故障排查手册」**（66 → 231 行）。新增：第一步先确认部署版本（含后台脚本走 PATH 取全局二进制、导致「改了没用」的坑）；日志读法与关键关键字速查表；分场景 playbook——消息无回复（按断点定位）、**连续发消息后会话卡死**（现象/根因/为何 `/cancel`、`/stop` 救不回/只能 `/new` 或重启）、权限一直弹（mode 归一 + 版本 + `work_dir` 漂移三条支线）、Web 显示异常对照表、平台断连重连与代理变量坑。
+- **skill 副本复制到 auto_bugfix**（`.codebuddy/skills/heron-connect-config`），使其会话可直接加载。源头仍在 `projects/heron-connect/skills/`，后续更新需手动同步两份。
+
 ## v1.3.18 (2026-10-12)
 
 ### Fixed

@@ -2,11 +2,9 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -56,13 +54,7 @@ func newShareClient(dataDir string) (*shareClient, error) {
 		return nil, fmt.Errorf("heron-connect is not running (socket not found: %s)", sockPath)
 	}
 	return &shareClient{
-		http: &http.Client{
-			Transport: &http.Transport{
-				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-					return net.Dial("unix", sockPath)
-				},
-			},
-		},
+		http: newUnixHTTPClient(sockPath),
 	}, nil
 }
 

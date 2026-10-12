@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/janostudio/heron-connect/bridge"
 	"github.com/janostudio/heron-connect/core"
@@ -3025,4 +3026,133 @@ func TestSnippetAround_HandlesMultibyte(t *testing.T) {
 	if !strings.Contains(got, "命中关键词") {
 		t.Fatalf("snippet dropped the match or split a rune: %q", got)
 	}
+}
+
+// ── session list: first-user-message preview + user-time sort key ──
+
+// The card preview shows the session's FIRST user message (what the session is
+// about), not the latest history line — which is often an assistant reply.
+func TestMgmt_SessionList_FirstUserMessage(t *testing.T) {
+	_, ts, e := testManagementServer(t, "tok")
+	s := e.GetSessions().GetOrCreateActive("user1")
+	s.AddHistory("user", "帮我看看这个 bug")
+	s.AddHistory("assistant", "好的，我来分析")
+	s.AddHistory("user", "另外再看看日志")
+
+	r := mgmtGet(t, ts.URL+"/api/v1/projects/test-project/sessions", "tok")
+	if !r.OK {
+		t.Fatalf("list failed: %s", r.Error)
+	}
+	var data struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	if err := json.Unmarshal(r.Data, &data); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var got map[string]any
+	for _, sess := range data.Sessions {
+		if sess["id"] == s.ID {
+			got = sess
+		}
+	}
+	if got == nil {
+		t.Fatal("session not found in list")
+	}
+	if v, _ := got["first_user_message"].(string); v != "帮我看看这个 bug" {
+		t.Errorf("first_user_message = %q, want the first USER message", v)
+	}
+	// last_message must stay the LATEST history line (assistant here) — the
+	// two fields describe different things and must not be conflated.
+	lm, _ := got["last_message"].(map[string]any)
+	if lm == nil {
+		t.Fatal("last_message missing")
+	}
+	if v, _ := lm["content"].(string); v != "另外再看看日志" {
+		t.Errorf("last_message.content = %q, want the latest line", v)
+	}
+}
+
+// A session with no user message gets an empty preview (the UI falls back to
+// its "no messages" text) and still receives a sort key.
+func TestMgmt_SessionList_NoUserMessage(t *testing.T) {
+	_, ts, e := testManagementServer(t, "tok")
+	s := e.GetSessions().GetOrCreateActive("user1")
+	s.AddHistory("assistant", "一条没有用户输入的记录")
+
+	r := mgmtGet(t, ts.URL+"/api/v1/projects/test-project/sessions", "tok")
+	if !r.OK {
+		t.Fatalf("list failed: %s", r.Error)
+	}
+	var data struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	if err := json.Unmarshal(r.Data, &data); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, sess := range data.Sessions {
+		if sess["id"] != s.ID {
+			continue
+		}
+		if v, _ := sess["first_user_message"].(string); v != "" {
+			t.Errorf("first_user_message = %q, want empty", v)
+		}
+		// last_user_at falls back to updated_at so the key is never zero.
+		if v, _ := sess["last_user_at"].(string); v == "" {
+			t.Error("last_user_at missing; must fall back to updated_at")
+		}
+		return
+	}
+	t.Fatal("session not found in list")
+}
+
+// last_user_at must track the user's most recent message, NOT the turn's
+// completion time — the whole point of the field.
+func TestMgmt_SessionList_LastUserAtTracksUserMessage(t *testing.T) {
+	_, ts, e := testManagementServer(t, "tok")
+	s := e.GetSessions().GetOrCreateActive("user1")
+	s.AddHistory("user", "第一条")
+	time.Sleep(10 * time.Millisecond)
+	s.AddHistory("assistant", "回复")
+	time.Sleep(10 * time.Millisecond)
+	s.AddHistory("user", "最后一条用户消息")
+
+	snap := s.Snapshot()
+	var want time.Time
+	for i := range snap.History {
+		if snap.History[i].Role == "user" {
+			want = snap.History[i].Timestamp
+		}
+	}
+
+	r := mgmtGet(t, ts.URL+"/api/v1/projects/test-project/sessions", "tok")
+	if !r.OK {
+		t.Fatalf("list failed: %s", r.Error)
+	}
+	var data struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	if err := json.Unmarshal(r.Data, &data); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, sess := range data.Sessions {
+		if sess["id"] != s.ID {
+			continue
+		}
+		raw, _ := sess["last_user_at"].(string)
+		got, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			t.Fatalf("last_user_at = %q, not a timestamp: %v", raw, err)
+		}
+		if !got.Equal(want) {
+			t.Errorf("last_user_at = %v, want the last USER message time %v", got, want)
+		}
+		// Sanity: the last user message predates the turn's updated_at, so the
+		// two keys must differ — otherwise we silently regressed to updated_at.
+		upd, _ := sess["updated_at"].(string)
+		if up, err := time.Parse(time.RFC3339Nano, upd); err == nil && got.Equal(up) {
+			t.Error("last_user_at equals updated_at; sort key regressed to turn-completion time")
+		}
+		return
+	}
+	t.Fatal("session not found in list")
 }

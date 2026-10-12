@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/janostudio/heron-connect/core"
 )
@@ -52,8 +53,28 @@ type Agent struct {
 	// footer/status card stay O(1) and never spawn a probe.
 	discoveredModel string
 
+	// modelsCache holds the raw ACP probe result so opening /model does not
+	// spawn `codebuddy --acp` (a full handshake, seconds long) on every click.
+	// Only the RAW discovered list is stored — models.json overrides and the
+	// availableModels allow-list are re-applied on every read, so a user
+	// editing models.json sees the change without waiting out the TTL.
+	modelsCache    []core.ModelOption
+	modelsCacheCur string    // current model the CLI reported at probe time
+	modelsCacheAt  time.Time // when modelsCache was last written/attempted
+
 	mu sync.Mutex
 }
+
+// codebuddyModelsCacheTTL bounds how long a successful ACP probe is reused.
+// The account's model list changes only when CodeBuddy adds/retires models,
+// which is rare, so a long TTL is safe and keeps /model instant.
+const codebuddyModelsCacheTTL = 24 * time.Hour
+
+// codebuddyModelsFailCooldown is how long a FAILED probe suppresses retries.
+// Without it, an unreachable CLI makes every /model click wait out the probe
+// timeout again. A failed probe is never written into modelsCache, so the
+// fallback list is not pinned for the whole TTL — only the retry is delayed.
+const codebuddyModelsFailCooldown = 30 * time.Second
 
 func New(opts map[string]any) (core.Agent, error) {
 	workDir, _ := opts["work_dir"].(string)
@@ -206,16 +227,61 @@ func (a *Agent) GetModel() string {
 //
 // Offline fallbacks, in order: models.json alone, then a small built-in
 // list, so the picker is never empty.
+//
+// The probe spawns a whole `codebuddy --acp` subprocess (a full handshake,
+// seconds long), and /model calls this on every open. The raw probe result
+// is therefore cached for codebuddyModelsCacheTTL so repeat opens are
+// instant; steps 2–4 still run on every call so a models.json edit takes
+// effect immediately. A failed probe is NOT cached — it only starts a short
+// cooldown so an unreachable CLI does not make every click wait out the
+// timeout again.
 func (a *Agent) AvailableModels(ctx context.Context) []core.ModelOption {
 	a.mu.Lock()
 	workDir := a.workDir
 	extraArgs := append([]string(nil), a.args...)
 	extraEnv := append([]string(nil), a.sessionEnv...)
+
+	// Cache hit: reuse the last successful probe. Refresh discoveredModel
+	// from it so GetModel stays in sync with what the CLI reported.
+	if len(a.modelsCache) > 0 && time.Since(a.modelsCacheAt) < codebuddyModelsCacheTTL {
+		a.discoveredModel = a.modelsCacheCur
+		cached := a.modelsCache
+		a.mu.Unlock()
+		return a.buildModels(cached)
+	}
+	// A recent probe FAILED: serve the fallback path without spawning the
+	// CLI again until the cooldown elapses.
+	if len(a.modelsCache) == 0 && !a.modelsCacheAt.IsZero() &&
+		time.Since(a.modelsCacheAt) < codebuddyModelsFailCooldown {
+		a.mu.Unlock()
+		return a.buildModels(nil)
+	}
 	a.mu.Unlock()
 
 	current, discovered := probeCodeBuddyModels(ctx, "codebuddy", workDir, extraArgs, extraEnv)
 
-	user, project, projectHasFile := core.LoadCodeBuddyModelsConfig(workDir)
+	a.mu.Lock()
+	a.modelsCacheAt = time.Now()
+	if len(discovered) > 0 {
+		a.modelsCache = discovered
+		a.modelsCacheCur = current
+	}
+	// Refresh the cached discovery so GetModel can answer without probing.
+	if current != "" {
+		a.discoveredModel = current
+	}
+	cached := a.modelsCache
+	a.mu.Unlock()
+
+	return a.buildModels(cached)
+}
+
+// buildModels applies the models.json layer on top of a raw probe result
+// (which may be nil) and guarantees the current model is present. Kept
+// separate so the cache stores only the RAW discovery — overrides and the
+// allow-list are re-evaluated on every call.
+func (a *Agent) buildModels(discovered []core.ModelOption) []core.ModelOption {
+	user, project, projectHasFile := core.LoadCodeBuddyModelsConfig(a.GetWorkDir())
 	configuredEmpty := core.CodeBuddyModelsConfigEmpty(user, project)
 
 	var models []core.ModelOption
@@ -228,13 +294,6 @@ func (a *Agent) AvailableModels(ctx context.Context) []core.ModelOption {
 	default:
 		models = codeBuddyFallbackModels()
 	}
-
-	// Refresh the cached discovery so GetModel can answer without probing.
-	a.mu.Lock()
-	if current != "" {
-		a.discoveredModel = current
-	}
-	a.mu.Unlock()
 
 	return ensureModelPresent(models, a.GetModel())
 }
