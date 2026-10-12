@@ -575,6 +575,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	resolveEnvInConfig(cfg)
+	anchorProjectWorkDirs(cfg, path)
 
 	if cfg.DataDir == "" {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -594,6 +595,43 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// anchorProjectWorkDirs resolves relative projects[].agent.options.work_dir
+// values against the config file's own directory, so a relative work_dir means
+// the same thing regardless of the process cwd at load time. Without this, a
+// relative work_dir like "../.." is re-resolved by the OS at every exec.Cmd.Dir
+// assignment (agent/codebuddy/session.go:377 and friends), and its meaning
+// drifts whenever heron-connect is started from a different directory.
+//
+// MUST run after resolveEnvInConfig so that values like "${ROOT}/repo" are
+// expanded first — otherwise an absolute path could be mistaken for relative.
+func anchorProjectWorkDirs(cfg *Config, configPath string) {
+	base := filepath.Dir(configPath)
+	if abs, err := filepath.Abs(base); err == nil {
+		base = abs
+	}
+	for i := range cfg.Projects {
+		opts := cfg.Projects[i].Agent.Options
+		if opts == nil {
+			continue
+		}
+		raw, ok := opts["work_dir"].(string)
+		if !ok {
+			continue
+		}
+		wd := strings.TrimSpace(raw)
+		if wd == "" || filepath.IsAbs(wd) {
+			continue
+		}
+		resolved := filepath.Join(base, wd)
+		if abs, err := filepath.Abs(resolved); err == nil {
+			resolved = abs
+		}
+		opts["work_dir"] = resolved
+		slog.Warn("config: relative work_dir resolved against config directory — prefer an absolute path",
+			"project", cfg.Projects[i].Name, "configured", raw, "resolved", resolved)
+	}
 }
 
 var envPlaceholderPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)

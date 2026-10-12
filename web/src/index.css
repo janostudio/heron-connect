@@ -106,3 +106,33 @@ html {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(128, 128, 128, 0.5);
 }
+
+/* Mermaid diagram host. Centred with horizontal scroll for diagrams wider than
+   the message bubble; `not-prose` on the wrapper keeps typography's max-width
+   and svg rules off it. Background stays transparent — mermaid's own 'dark'
+   theme paints the diagram surface. */
+.mmd-svg {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+  background: transparent;
+}
+.mmd-svg svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Mermaid diagram host. Centred with horizontal scroll for diagrams wider than
+   the message bubble; `not-prose` on the wrapper keeps typography's max-width
+   and svg rules off it. Background stays transparent — mermaid's own 'dark'
+   theme paints the diagram surface. */
+.mmd-svg {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+  background: transparent;
+}
+.mmd-svg svg {
+  max-width: 100%;
+  height: auto;
+}

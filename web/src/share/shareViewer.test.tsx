@@ -55,6 +55,20 @@ describe('markdown rendering in the share viewer', () => {
     expect(html).not.toContain('**bold**');
   });
 
+  it('renders a mermaid fence as escaped source text without injecting markup', async () => {
+    // A mermaid block on a public share page has to stay inert. Under
+    // renderToStaticMarkup the async render effect never runs, so the block
+    // falls back to showing its source — and the page must contain no injected
+    // script or SVG that an anonymous visitor's browser would execute.
+    const { RenderMarkdown } = await import('@/pages/Chat/markdownBlocks');
+    const source = '```mermaid\ngraph TD; A-->B;\n```';
+    const html = renderToStaticMarkup(<RenderMarkdown content={source} />);
+    // Source is present but HTML-escaped (`>` became `&gt;`), i.e. it stayed text.
+    expect(html).toContain('graph TD; A--&gt;B;');
+    expect(html).not.toMatch(/<script[\s>]/i);
+    expect(html).not.toMatch(/<svg[^>]*class="[^"]*mermaid/i);
+  });
+
   it('does not interpret raw HTML embedded in the markdown', async () => {
     // react-markdown's safe default: no rehype-raw, so injected markup is
     // escaped into inert text. Enabling rehype-raw would be an XSS hole on a

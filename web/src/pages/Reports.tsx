@@ -3,20 +3,13 @@ import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router-dom';
 import { FileText, FileType2, ArrowLeft, ExternalLink, X } from 'lucide-react';
 import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeHighlight from 'rehype-highlight';
+import { REMARK_PLUGINS, REHYPE_PLUGINS } from '@/components/markdownConfig';
+import { MD_BASE_COMPONENTS } from '@/pages/Chat/markdownBlocks';
 import { Card, Badge, Button, EmptyState } from '@/components/ui';
 import { listReports, type ReportEntry } from '@/api/dashboard';
 import { listProjects, type ProjectSummary } from '@/api/projects';
 import { useAuthStore } from '@/store/auth';
 import { formatTime } from '@/lib/utils';
-
-// Module-level so the arrays keep one identity for the process lifetime.
-// Passing fresh `[remarkGfm]` / `[rehypeHighlight]` literals on every render
-// defeats react-markdown's internal memoization and re-runs the whole unified
-// pipeline (parse + remark + rehype + serialize) on every render.
-const REMARK_PLUGINS = [remarkGfm];
-const REHYPE_PLUGINS = [rehypeHighlight];
 
 // ── Report list ───────────────────────────────────────────────────────────
 
@@ -208,7 +201,7 @@ export function ReportPreview() {
           <p className="text-xs text-gray-400 p-8 text-center">{t('common.loading')}</p>
         ) : (
           <div className="prose prose-sm max-w-none dark:prose-invert p-6 max-h-[75vh] overflow-y-auto">
-            <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+            <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MD_BASE_COMPONENTS}>
               {mdText}
             </Markdown>
           </div>

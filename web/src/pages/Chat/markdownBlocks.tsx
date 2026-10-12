@@ -1,13 +1,14 @@
-import React, { useState, useMemo, memo } from 'react';
+import React, { useState, useMemo, memo, useContext } from 'react';
 import { Copy, Check, X, FileText } from 'lucide-react';
 import api from '@/api/client';
 import { cn, copyText } from '@/lib/utils';
 import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeHighlight from 'rehype-highlight';
 import SelectList from './SelectList';
 import type { HistoryAttachment } from './chatMessage';
 import { parseListItemText } from './chatHelpers';
+import { MermaidBlock } from '@/components/MermaidBlock';
+import { CopyButton } from '@/components/CopyButton';
+import { REMARK_PLUGINS, REHYPE_PLUGINS, StreamingContext, PRE_CLASS } from '@/components/markdownConfig';
 
 // ── Memoized markdown leaf renderers ─────────────────────────
 //
@@ -18,31 +19,10 @@ import { parseListItemText } from './chatHelpers';
 // (react-markdown + remark-gfm + rehype-highlight), which is what made long
 // conversations progressively laggy.
 //
-// The plugin arrays are module-level for the same reason: a fresh `[remarkGfm]`
-// literal per render defeats react-markdown's internal memoization and re-runs
-// the whole unified pipeline on every render.
-const REMARK_PLUGINS = [remarkGfm];
-const REHYPE_PLUGINS = [rehypeHighlight];
+// The shared plugin arrays live in @/components/markdownConfig, module-level
+// for the same reason: a fresh `[remarkGfm]` literal per render defeats
+// react-markdown's internal memoization and re-runs the whole pipeline.
 
-function CopyButtonInner({ code }: { code: string }) {
-  // null = idle, 'ok' = copied, 'fail' = copy attempt failed
-  const [state, setState] = useState<'ok' | 'fail' | null>(null);
-  const handleCopy = () => {
-    copyText(code).then((ok) => {
-      setState(ok ? 'ok' : 'fail');
-      setTimeout(() => setState(null), 2000);
-    });
-  };
-  return (
-    <button
-      onClick={handleCopy}
-      className="absolute top-2 right-2 p-1.5 rounded-md bg-gray-200/80 dark:bg-gray-700/80 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity z-10"
-    >
-      {state === 'ok' ? <Check size={12} /> : state === 'fail' ? <X size={12} className="text-red-500" /> : <Copy size={12} />}
-    </button>
-  );
-}
-export const CopyButton = memo(CopyButtonInner);
 
 // Flattens a React children tree to its concatenated text. rehype-highlight
 // rewrites a highlighted `<code>` element's children into an array of
@@ -67,12 +47,22 @@ function flattenText(node: unknown): string {
 // DOM element therefore leaks `node="[object Object]"` into the markup. React
 // tolerates the unknown attribute but warns, and the stringified object is
 // pure noise in the DOM. Destructuring it out here keeps the spread clean.
-function PreBlockInner({ children, node: _node, ...props }: React.HTMLAttributes<HTMLPreElement> & { node?: unknown }) {
+export function PreBlockInner({ children, node: _node, ...props }: React.HTMLAttributes<HTMLPreElement> & { node?: unknown }) {
   const codeEl = (children as any)?.props;
   // Class list is `hljs language-<lang>`; match the token instead of anchoring
   // at the start, otherwise the label renders as "HLJS LANGUAGE-SQL".
   const lang = /language-([\w+#.-]+)/.exec(codeEl?.className || '')?.[1] || '';
   const code = flattenText(codeEl?.children).replace(/\n$/, '');
+  const streaming = useContext(StreamingContext);
+
+  // ```mermaid fences are handed to MermaidBlock instead of being shown as
+  // highlighted text. rehype-highlight does not recognise `mermaid` as a
+  // language, so it leaves `codeEl.children` untouched and `flattenText` above
+  // recovers the exact source — no highlighting tweak is needed for this.
+  if (lang === 'mermaid' && code) {
+    return <MermaidBlock code={code} streaming={streaming} />;
+  }
+
   return (
     <div className="not-prose relative group my-4">
       {lang && (
@@ -81,13 +71,13 @@ function PreBlockInner({ children, node: _node, ...props }: React.HTMLAttributes
         </div>
       )}
       <CopyButton code={code} />
-      <pre className="overflow-x-auto rounded-lg bg-[#fafafa] dark:bg-[#0d1117] border border-gray-200 dark:border-gray-700/60 p-4 pt-8 text-[13px] leading-[1.6] font-mono" {...props}>
+      <pre className={PRE_CLASS} {...props}>
         {children}
       </pre>
     </div>
   );
 }
-const PreBlock = memo(PreBlockInner);
+export const PreBlock = memo(PreBlockInner);
 
 function InlineCodeInner({ children, className, node: _node, ...props }: React.HTMLAttributes<HTMLElement> & { node?: unknown }) {
   if (className) return <code className={className} {...props}>{children}</code>;
@@ -100,7 +90,7 @@ function InlineCodeInner({ children, className, node: _node, ...props }: React.H
     </code>
   );
 }
-const InlineCode = memo(InlineCodeInner);
+export const InlineCode = memo(InlineCodeInner);
 
 // Wrap tables in a horizontal-scroll container so wide markdown tables don't
 // overflow the narrow chat bubble on mobile.
@@ -142,6 +132,20 @@ const MD_COMPONENTS_PLAIN = {
   a: 'a',
 } as any;
 
+
+// Base component map for the other <Markdown> call sites (command result panel,
+// reports). Those previously rendered code blocks with react-markdown's
+// defaults — no language label, no copy button, and no mermaid branch. Reusing
+// this gives them the same code-block affordances as the chat view. It lives
+// here rather than in markdownConfig.ts because it depends on
+// PreBlock/InlineCode, and markdownConfig is imported BY this module — putting
+// it there would create a cycle.
+export const MD_BASE_COMPONENTS = {
+  pre: PreBlock as any,
+  code: InlineCode as any,
+  a: 'a',
+} as any;
+
 // Builds a components map that routes /api/v1/files/ links through `onOpenFile`.
 //
 // react-markdown resolves custom components by tag name only — arbitrary props
@@ -174,16 +178,25 @@ function buildFileComponents(onOpenFile: (path: string, fileName: string) => voi
   } as any;
 }
 
-function RenderMarkdownInner({ content, onOpenFile }: { content: string; onOpenFile?: (path: string, fileName: string) => void }) {
+function RenderMarkdownInner({ content, onOpenFile, streaming }: { content: string; onOpenFile?: (path: string, fileName: string) => void; streaming?: boolean }) {
   const components = useMemo(
     () => (onOpenFile ? buildFileComponents(onOpenFile) : MD_COMPONENTS_PLAIN),
     [onOpenFile],
   );
+  // `streaming` is deliberately NOT a dependency of the `components` memo above:
+  // it is delivered down the tree via context so the memoized code-block
+  // renderer can read it without the components map ever being rebuilt. Falls
+  // back to any enclosing provider so nested RenderMarkdown calls (card markdown
+  // inside a streaming reply) inherit the flag.
+  const inherited = useContext(StreamingContext);
+  const isStreaming = streaming ?? inherited;
   return (
     <div className={MARKDOWN_CLASS}>
-      <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={components}>
-        {content}
-      </Markdown>
+      <StreamingContext.Provider value={isStreaming}>
+        <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={components}>
+          {content}
+        </Markdown>
+      </StreamingContext.Provider>
     </div>
   );
 }

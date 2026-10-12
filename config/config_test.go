@@ -777,6 +777,97 @@ func TestLoad_ResolvesEnvPlaceholders(t *testing.T) {
 	}
 }
 
+// TestLoad_AnchorsRelativeWorkDirToConfigDir guards against the regression where
+// a relative work_dir (e.g. "../..") was left unresolved and later re-resolved by
+// the OS at each exec.Cmd.Dir assignment, so its meaning drifted with the process
+// cwd. It must now be anchored to the config file's own directory at load time.
+func TestLoad_AnchorsRelativeWorkDirToConfigDir(t *testing.T) {
+	root := t.TempDir()
+	cfgDir := filepath.Join(root, "scripts", "cc-connect-qhn")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	cfgPath := filepath.Join(cfgDir, "config.toml")
+	if err := os.WriteFile(cfgPath, []byte(`
+ [[projects]]
+ name = "demo"
+
+ [projects.agent]
+ type = "codebuddy"
+
+ [projects.agent.options]
+ work_dir = "../.."
+
+ [[projects.platforms]]
+ type = "wecom"
+
+ [projects.platforms.options]
+ token = "t"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	// Run from an unrelated cwd: with the old behaviour "../.." would resolve
+	// against this directory instead of the config's, producing a wrong path.
+	otherCwd := t.TempDir()
+	prevCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(otherCwd); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prevCwd) })
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	got, _ := cfg.Projects[0].Agent.Options["work_dir"].(string)
+	if got != root {
+		t.Fatalf("work_dir = %q, want %q (anchored to config dir's parent)", got, root)
+	}
+	if !filepath.IsAbs(got) {
+		t.Fatalf("work_dir = %q, want absolute path", got)
+	}
+
+	// Idempotence: re-anchoring an already-absolute value is a no-op.
+	anchorProjectWorkDirs(cfg, cfgPath)
+	if again, _ := cfg.Projects[0].Agent.Options["work_dir"].(string); again != got {
+		t.Fatalf("second anchor changed work_dir: %q -> %q", got, again)
+	}
+}
+
+func TestLoad_KeepsAbsoluteWorkDir(t *testing.T) {
+	absTarget := filepath.Join(t.TempDir(), "repo")
+	configPath := writeConfigFixture(t, `
+ [[projects]]
+ name = "demo"
+
+ [projects.agent]
+ type = "codebuddy"
+
+ [projects.agent.options]
+ work_dir = "`+absTarget+`"
+
+ [[projects.platforms]]
+ type = "wecom"
+
+ [projects.platforms.options]
+ token = "t"
+`)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	got, _ := cfg.Projects[0].Agent.Options["work_dir"].(string)
+	if got != absTarget {
+		t.Fatalf("work_dir = %q, want unchanged %q", got, absTarget)
+	}
+}
+
 func TestLoad_MissingEnvPlaceholderBecomesEmptyString(t *testing.T) {
 
 	configPath := writeConfigFixture(t, `

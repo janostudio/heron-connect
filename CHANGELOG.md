@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.3.15 (2026-10-12)
+
+### Fixed
+
+- **相对 `work_dir` 会随启动目录漂移，导致 agent 跑错目录、项目设置丢失**。`work_dir` 写成相对路径（如 `work_dir = "../.."`）时，配置加载阶段从不把它归一化为绝对路径，而是一直以字符串形式透传到 `exec.Cmd.Dir`，由操作系统在启动 agent 时按**当前进程 cwd** 解析。于是一条"相对 config.toml 上两级"的配置，含义变成了"相对启动进程 cwd 上两级"：
+  - 常驻 daemon（launchd/systemd 的 `WorkingDirectory` 恰好等于 config 目录）下看起来正常；
+  - 换成其它 cwd 启动时（前台手动跑、重启、别处调用），`"../.."` 会漂到祖辈目录，agent 在错误目录里工作，`.codebuddy/settings.json` 之类的项目级配置读不到，`permissionMode` 从 `bypassPermissions` 回退为 `default`，非交互模式下审批被拒。
+  现在 `config.Load()` 会把所有相对的 `projects[].agent.options.work_dir` 按 **config.toml 所在目录** 锚定为绝对路径，语义固定为「相对配置文件的目录」，与启动 cwd 无关。绝对路径原样保留；命中存量相对路径时会打一条 warn 提示建议改用绝对路径。顺带修正了 `dashboard.insights_path` / `html_path` / `reports_dir` 这些"相对于 work_dir"的配置项——它们的基准也随之稳定。
+
 ## v1.3.14 (2026-10-09)
 
 ### Changed

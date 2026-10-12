@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { stripReplyFooter } from './markdownBlocks';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { stripReplyFooter, RenderMarkdown } from './markdownBlocks';
 
 // stripReplyFooter removes the trailing `*model · usage · path*` runtime footer
 // that heron-connect appends to assistant replies, so copying a message does not
@@ -68,5 +70,27 @@ describe('stripReplyFooter', () => {
   it('does not strip a bulleted list item ending the message', () => {
     const text = 'steps:\n* do a thing';
     expect(stripReplyFooter(text)).toBe(text);
+  });
+});
+
+// ```mermaid fences are routed to MermaidBlock instead of the plain code-block
+// renderer. Under static rendering the block shows its source (the render
+// effect needs a DOM + browser), which is what makes this observable here.
+describe('mermaid fence routing', () => {
+  it('routes a mermaid fence away from the generic code block', () => {
+    const html = renderToStaticMarkup(
+      createElement(RenderMarkdown, { content: '```mermaid\ngraph TD; A-->B;\n```' }),
+    );
+    // MermaidBlock's fallback carries the `mermaid` language tab and the source.
+    expect(html).toContain('>mermaid</div>');
+    expect(html).toContain('graph TD; A--&gt;B;');
+  });
+
+  it('leaves an ordinary fenced block on the generic code path', () => {
+    const html = renderToStaticMarkup(
+      createElement(RenderMarkdown, { content: '```js\nconst x = 1;\n```' }),
+    );
+    expect(html).toContain('>js</div>');
+    expect(html).not.toContain('>mermaid</div>');
   });
 });
