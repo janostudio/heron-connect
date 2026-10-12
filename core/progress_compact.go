@@ -60,6 +60,10 @@ type ProgressCardEntry struct {
 	// this entry. Clients nest such entries under that call instead of showing
 	// them at the same level as the Agent row itself.
 	ParentID string `json:"parent_id,omitempty"`
+	// Subagent is the human-readable sub-agent label for an Agent tool call
+	// (e.g. "Explore"), letting clients show "Agent · Explore" instead of a
+	// bare "Agent" row. Empty for every other tool.
+	Subagent string `json:"subagent,omitempty"`
 	Status   string `json:"status,omitempty"`
 	ExitCode       *int   `json:"exit_code,omitempty"`
 	Success        *bool  `json:"success,omitempty"`
@@ -120,6 +124,7 @@ func BuildProgressCardPayloadV2(items []ProgressCardEntry, truncated bool, agent
 			ID:             strings.TrimSpace(item.ID),
 			CorrelationKey: strings.TrimSpace(item.CorrelationKey),
 			ParentID:       strings.TrimSpace(item.ParentID),
+			Subagent:       strings.TrimSpace(item.Subagent),
 			Status:         strings.TrimSpace(item.Status),
 			ExitCode:       item.ExitCode,
 			Success:        item.Success,
@@ -494,6 +499,13 @@ func (w *compactProgressWriter) AppendStructured(item ProgressCardEntry, fallbac
 	// for every platform, not just the web client.
 	if w.style == ProgressStyleCard && item.CorrelationKey != "" {
 		if idx := w.findCorrelationKey(item.CorrelationKey); idx >= 0 {
+			// A tool_result row replaces its tool_use row in place. The result
+			// entry carries no Subagent label, so keep the one recorded on the
+			// original invocation — otherwise an Agent row would lose its
+			// "Agent · Explore" label the moment the sub-agent finishes.
+			if item.Subagent == "" {
+				item.Subagent = w.items[idx].Subagent
+			}
 			w.items[idx] = item
 			w.entries[idx] = fallback
 			w.renderAndUpdate()

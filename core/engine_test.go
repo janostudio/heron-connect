@@ -8067,10 +8067,14 @@ func TestQueueMessageOverflow_DropsOldestAndReturnsfalse(t *testing.T) {
 	}
 	state.mu.Unlock()
 
-	// Platform should have received MsgMessageQueued for 5 accepted + MsgQueueFull for the overflow.
+	// Queueing is silent now (the agent CLI answers the queued message itself),
+	// so the only engine-authored reply on this path is the queue-full notice.
 	sent := p.getSent()
-	if len(sent) != defaultMaxQueuedMessages+1 {
-		t.Fatalf("platform replies = %d, want %d (queued + queue-full)", len(sent), defaultMaxQueuedMessages+1)
+	if len(sent) != 1 {
+		t.Fatalf("platform replies = %d, want 1 (queue-full notice only)", len(sent))
+	}
+	if !strings.Contains(sent[0], "queue") && !strings.Contains(sent[0], e.i18n.T(MsgQueueFull)) {
+		t.Fatalf("expected queue-full notice, got %v", sent)
 	}
 }
 
@@ -9044,8 +9048,10 @@ func TestHandleMessageBusyRecalledCurrentStopsAndProcessesNewMessage(t *testing.
 	if len(sent) == 0 || sent[0] != "new message processed" {
 		t.Fatalf("sent = %v, want new message processed", sent)
 	}
+	// The engine no longer emits a queued-message ack, so a recalled active
+	// message must not leave any extra engine-authored bubble behind.
 	for _, line := range sent {
-		if strings.Contains(line, e.i18n.T(MsgMessageQueued)) {
+		if strings.Contains(line, "将在当前任务完成后处理") {
 			t.Fatalf("unexpected queued reply after recalled active message: %v", sent)
 		}
 	}
@@ -14643,6 +14649,58 @@ func TestDrainPendingMessages_MergesQueue(t *testing.T) {
 	}
 }
 
+// TestDrainPendingMessages_MintsFreshEpoch is the regression guard for the
+// interrupted-session hang: a queued turn drained after an interrupt must run
+// under a NEW epoch, not inherit the interrupted turn's. Without a fresh epoch
+// the previous turn's in-flight trailing events (stamped with the old epoch)
+// were indistinguishable from the queued turn's own, so the event loop could
+// drop the queued turn's EventResult as "stale" and block forever — the queued
+// follow-up never produced an answer.
+func TestDrainPendingMessages_MintsFreshEpoch(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	sess := newInterruptibleSession("qs-epoch", true)
+	agent := &controllableAgent{nextSession: sess}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+	key := "test:user1"
+	session := e.sessions.GetOrCreateActive(key)
+
+	// The interrupted turn had already claimed an epoch; record it so we can
+	// assert the drained turn moves past it.
+	sess.SetTurnEpoch(41)
+	state := &interactiveState{
+		agentSession: sess,
+		platform:     p,
+		replyCtx:     "ctx-1",
+		turnEpoch:    41,
+		pendingMessages: []queuedMessage{
+			{platform: p, replyCtx: "ctx-q1", content: "follow up"},
+		},
+	}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = state
+	e.interactiveMu.Unlock()
+
+	go func() {
+		sess.sendMu.Lock()
+		for len(sess.sendCalls) == 0 {
+			sess.sendMu.Unlock()
+			time.Sleep(5 * time.Millisecond)
+			sess.sendMu.Lock()
+		}
+		sess.sendMu.Unlock()
+		sess.events <- Event{Type: EventResult, Content: "answer", Done: true}
+	}()
+
+	if unlocked := e.drainPendingMessages(state, session, e.sessions, key); !unlocked {
+		t.Fatal("drainPendingMessages should unlock the session when the queue empties")
+	}
+
+	if got := sess.currentEpoch(); got == 0 || got == 41 {
+		t.Fatalf("queued turn epoch = %d, want a fresh non-zero epoch distinct from the interrupted turn's 41", got)
+	}
+}
+
 // TestEngine_InteractiveSessionTurnStates verifies the per-session execution
 // state exposed to the management API: running (foreground turn or background
 // reader) and waiting_permission (pending permission prompt).
@@ -14998,6 +15056,13 @@ func (s *interruptibleAgentSession) SetTurnEpoch(epoch uint64) {
 	s.epochMu.Lock()
 	s.epoch = epoch
 	s.epochMu.Unlock()
+}
+
+// currentEpoch returns the epoch most recently pushed via SetTurnEpoch.
+func (s *interruptibleAgentSession) currentEpoch() uint64 {
+	s.epochMu.Lock()
+	defer s.epochMu.Unlock()
+	return s.epoch
 }
 
 func (s *interruptibleAgentSession) CancelTurn() {
@@ -15465,48 +15530,15 @@ func TestProcessInteractiveEvents_AcceptsUnstampedEvents(t *testing.T) {
 	}
 }
 
-// TestMarkTurnInterrupted_SendsMarker verifies the "(已中断)" marker reaches the
-// platform so a truncated reply is not mistaken for a complete one.
-func TestMarkTurnInterrupted_SendsMarker(t *testing.T) {
-	e := newTestEngine()
-	p := &stubPlatformEngine{n: "test"}
-	state := &interactiveState{platform: p, replyCtx: "ctx"}
-
-	e.markTurnInterrupted("test:u", state)
-
-	want := e.i18n.T(MsgTurnInterrupted)
-	found := false
-	for _, s := range p.getSent() {
-		if strings.Contains(s, want) {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("interruption marker %q not sent; platform received %v", want, p.getSent())
-	}
-}
-
-// TestMarkTurnInterrupted_NoPlatform_NoPanic guards the degenerate case where the
-// state has no platform attached.
-func TestMarkTurnInterrupted_NoPlatform_NoPanic(t *testing.T) {
-	e := newTestEngine()
-	state := &interactiveState{}
-
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("markTurnInterrupted panicked without a platform: %v", r)
-		}
-	}()
-	e.markTurnInterrupted("test:u", state)
-}
-
-// TestInterruptRunningTurn_SendsInterruptedMarker ties the marker to the
-// interrupt path itself: interrupting must both cancel the backend and notify
-// the user.
-func TestInterruptRunningTurn_SendsInterruptedMarker(t *testing.T) {
+// TestInterruptRunningTurn_NoEngineNotice locks in the "let the CLI speak"
+// contract: interrupting a turn must cancel the backend but must NOT send an
+// engine-authored "(已中断)" bubble. The agent CLI emits the interrupted turn's
+// own terminal output, so an extra engine reply would duplicate it — and on the
+// interrupt path it used to pile up with the queued-message ack.
+func TestInterruptRunningTurn_NoEngineNotice(t *testing.T) {
 	e := newTestEngine()
 	key := "test:u"
-	p := &stubPlatformEngine{n: "test"}
+	p := &noticePlatform{stubPlatformEngine: stubPlatformEngine{n: "test"}}
 	sess := newInterruptibleSession("s", true)
 	state := &interactiveState{
 		agentSession: sess,
@@ -15520,15 +15552,20 @@ func TestInterruptRunningTurn_SendsInterruptedMarker(t *testing.T) {
 		t.Fatal("interruptRunningTurn = false, want true")
 	}
 
-	want := e.i18n.T(MsgTurnInterrupted)
-	found := false
-	for _, s := range p.getSent() {
-		if strings.Contains(s, want) {
-			found = true
+	// The backend must still be told to stop generating.
+	if got := sess.interruptCalls(); got == 0 {
+		t.Error("interruptRunningTurn did not call CancelTurn")
+	}
+	// ...but the engine contributes no bubble of its own.
+	for _, s := range p.notices {
+		if strings.Contains(s, "已中断") || strings.Contains(s, "interrupted") {
+			t.Errorf("engine sent an interruption notice %q; platform notices %v", s, p.notices)
 		}
 	}
-	if !found {
-		t.Errorf("interruption marker %q not sent; platform received %v", want, p.getSent())
+	for _, s := range p.getSent() {
+		if strings.Contains(s, "已中断") || strings.Contains(s, "interrupted") {
+			t.Errorf("engine sent an interruption reply %q; platform received %v", s, p.getSent())
+		}
 	}
 }
 
@@ -15561,23 +15598,23 @@ func queueOnce(t *testing.T, p Platform) {
 	}
 }
 
-func TestQueueNotice_GoesThroughNoticeSender(t *testing.T) {
+func TestQueueNotice_NoEngineAuthoredAck(t *testing.T) {
 	p := &noticePlatform{stubPlatformEngine: stubPlatformEngine{n: "bridge"}}
 	queueOnce(t, p)
 
-	if len(p.notices) != 1 {
-		t.Fatalf("notices = %v, want exactly one queued notice", p.notices)
+	if len(p.notices) != 0 {
+		t.Fatalf("notices = %v, want none (queueing must be silent)", p.notices)
 	}
 	if got := p.getSent(); len(got) != 0 {
-		t.Fatalf("queued notice must not also arrive as an ordinary reply, got %v", got)
+		t.Fatalf("queueing must not send an ordinary reply either, got %v", got)
 	}
 }
 
-func TestQueueNotice_PlainPlatformStillGetsOrdinaryReply(t *testing.T) {
+func TestQueueNotice_PlainPlatformAlsoSilent(t *testing.T) {
 	p := &stubPlatformEngine{n: "test"}
 	queueOnce(t, p)
 
-	if got := p.getSent(); len(got) != 1 {
-		t.Fatalf("platform without NoticeSender must still receive the notice as a reply, got %v", got)
+	if got := p.getSent(); len(got) != 0 {
+		t.Fatalf("platform must receive no queued ack, got %v", got)
 	}
 }

@@ -289,4 +289,41 @@ describe('buildUnits sub-agent nesting', () => {
     const inner = (g.calls[0].children[0] as Extract<RenderUnit, { type: 'group' }>).group;
     expect(inner.calls).toHaveLength(2);
   });
+
+  it('keeps children nested when the Agent row was row-merged into a tool_result', () => {
+    // Mirrors the backend: once a sub-agent finishes, its Agent tool_use row is
+    // REPLACED in place by the tool_result (core/progress_compact.go
+    // AppendStructured row-merge), so the payload carries the Agent as a
+    // tool_result with NO tool_use. Children must still nest under it — before
+    // the fix they fell back to top-level and the "↳ N" badge disappeared.
+    const units = buildUnits([
+      e({ kind: 'tool_result', tool: 'Agent', id: 'a1', text: 'final report' }),
+      e({ tool: 'Read', id: 'c1', parent_id: 'a1', text: '/x' }),
+      e({ kind: 'tool_result', tool: 'Read', id: 'c1', parent_id: 'a1', text: 'body' }),
+    ]);
+    expect(units.map((u) => (u.type === 'group' ? u.group.tool : 'entry'))).toEqual(['Agent']);
+    const agent = (units[0] as Extract<RenderUnit, { type: 'group' }>).group.calls[0];
+    expect(agent.children).toHaveLength(1);
+    expect(agent.result).toBe('final report');
+  });
+
+  it('carries the subagent label onto the Agent call', () => {
+    const units = buildUnits([
+      e({ tool: 'Agent', id: 'a1', text: 'explore', subagent: 'Explore' }),
+      e({ tool: 'Read', id: 'c1', parent_id: 'a1', text: '/x' }),
+    ]);
+    const agent = (units[0] as Extract<RenderUnit, { type: 'group' }>).group.calls[0];
+    expect(agent.subagent).toBe('Explore');
+    expect(agent.children).toHaveLength(1);
+  });
+
+  it('adopts the subagent label from a row-merged tool_result too', () => {
+    const units = buildUnits([
+      e({ kind: 'tool_result', tool: 'Agent', id: 'a1', text: 'done', subagent: 'Explore' }),
+      e({ tool: 'Grep', id: 'c1', parent_id: 'a1', text: 'needle' }),
+    ]);
+    const agent = (units[0] as Extract<RenderUnit, { type: 'group' }>).group.calls[0];
+    expect(agent.subagent).toBe('Explore');
+    expect(agent.children).toHaveLength(1);
+  });
 });

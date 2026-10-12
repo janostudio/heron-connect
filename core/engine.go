@@ -1369,6 +1369,14 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		// interrupt or there was no turn left to stop.
 		if e.sessionIsInterruptible(interactiveKey) && e.interruptRunningTurn(interactiveKey) {
 			if e.queueMessageForBusySessionPrepend(p, msg, interactiveKey, true) {
+				// Same race guard as the plain-queue path below: the interrupted
+				// turn's drain loop may have already observed an empty queue and
+				// exited between our TryLock failure and this append. Without
+				// re-trying the lock here the front-inserted message would sit
+				// in the queue forever and the session would appear hung.
+				if session.TryLock() {
+					go e.drainOrphanedQueue(session, sessions, interactiveKey, agent, resolvedWorkspace)
+				}
 				return
 			}
 		}
@@ -1543,7 +1551,11 @@ func (e *Engine) queueMessageForBusySessionPrepend(p Platform, msg *Message, int
 		"user", msg.UserName,
 		"queue_depth", queueDepth,
 	)
-	e.replyNotice(p, msg.ReplyCtx, e.i18n.T(MsgMessageQueued))
+	// No "queued, will process after the current task" notice is sent: the
+	// queue is drained by the running turn's event loop, so the message runs
+	// next and the agent CLI answers it directly. An engine-authored ack here
+	// only duplicates that answer (and used to double up with the interrupt
+	// notice on the interrupt path).
 	return true
 }
 
@@ -1635,30 +1647,13 @@ func (e *Engine) interruptRunningTurn(interactiveKey string) bool {
 	// Best-effort: ask the backend to stop generating server-side.
 	agentSession.CancelTurn()
 	// Authoritative: stop the local event loop from relaying anything further.
+	//
+	// No "(已中断)" notice is sent here: the agent CLI emits the interrupted
+	// turn's own terminal output, and an extra engine-authored bubble would
+	// duplicate it (and, on the interrupt path, collide with the queued-message
+	// notice). The user sees the CLI's answer plus the follow-up turn.
 	close(cancelCh)
-
-	// Tell the user the partial reply they are looking at was cut short, so a
-	// truncated answer is not mistaken for a complete one. The already-streamed
-	// output is kept — only this marker is appended.
-	e.markTurnInterrupted(interactiveKey, state)
 	return true
-}
-
-// markTurnInterrupted appends the "(已中断)" marker to the turn that was just
-// interrupted. IM and Web show identical text; platforms that can distinguish
-// notices (Web) get it flagged so it is not taken for the turn's final answer
-// and does not overwrite the partial reply it is annotating.
-func (e *Engine) markTurnInterrupted(interactiveKey string, state *interactiveState) {
-	state.mu.Lock()
-	p := state.platform
-	replyCtx := state.replyCtx
-	state.mu.Unlock()
-
-	if p == nil {
-		slog.Debug("interruptible: no platform to notify of the interruption", "session_key", interactiveKey)
-		return
-	}
-	e.replyNotice(p, replyCtx, e.i18n.T(MsgTurnInterrupted))
 }
 
 // takeQueuedBatchLocked pops the next batch of queued messages.

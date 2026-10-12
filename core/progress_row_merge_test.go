@@ -133,3 +133,64 @@ func TestBuildProgressCardPayloadV2_CarriesCorrelationKey(t *testing.T) {
 		t.Fatalf("correlation_key = %q, want t1", parsed.Items[0].CorrelationKey)
 	}
 }
+
+// TestCompactProgressWriter_RowMergeKeepsSubagentLabel verifies that an Agent
+// row keeps its sub-agent label when its tool_use collapses into a tool_result.
+// The result entry carries no Subagent, so the writer must inherit the label
+// from the row it replaces — otherwise the Web card would drop
+// "Agent · Explore" back to a bare "Agent" the moment the sub-agent finishes.
+func TestCompactProgressWriter_RowMergeKeepsSubagentLabel(t *testing.T) {
+	p := &stubCompactProgressPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		style:              "card",
+		supportPayload:     true,
+	}
+	w := newCompactProgressWriter(context.Background(), p, "ctx", "cc", LangEnglish, nil)
+
+	w.AppendStructured(ProgressCardEntry{
+		Kind:           ProgressEntryToolUse,
+		Text:           "explore the repo",
+		Tool:           "Agent",
+		ID:             "a1",
+		CorrelationKey: "a1",
+		Subagent:       "Explore",
+	}, "🔧 Agent")
+
+	// tool_result merge: no Subagent on the entry → inherit from the replaced row.
+	w.AppendStructured(ProgressCardEntry{
+		Kind:           ProgressEntryToolResult,
+		Text:           "final report",
+		Tool:           "Agent",
+		ID:             "a1",
+		CorrelationKey: "a1",
+		Success:        boolPtr(true),
+	}, "✅ Agent")
+
+	if len(w.items) != 1 {
+		t.Fatalf("items = %d, want 1 (in-place merge)", len(w.items))
+	}
+	if w.items[0].Subagent != "Explore" {
+		t.Fatalf("subagent = %q after merge, want Explore", w.items[0].Subagent)
+	}
+	if w.items[0].Kind != ProgressEntryToolResult {
+		t.Fatalf("kind = %q after merge, want tool_result", w.items[0].Kind)
+	}
+	if w.items[0].ID != "a1" {
+		t.Fatalf("id = %q after merge, want a1 (children must still find their parent)", w.items[0].ID)
+	}
+}
+
+// TestBuildProgressCardPayloadV2_CarriesSubagent verifies the payload builder
+// preserves the Subagent label on the wire for clients.
+func TestBuildProgressCardPayloadV2_CarriesSubagent(t *testing.T) {
+	payload := BuildProgressCardPayloadV2([]ProgressCardEntry{
+		{Kind: ProgressEntryToolUse, Text: "x", Tool: "Agent", ID: "a1", CorrelationKey: "a1", Subagent: "Explore"},
+	}, false, "cc", LangEnglish, ProgressCardStateRunning)
+	parsed, ok := ParseProgressCardPayload(payload)
+	if !ok {
+		t.Fatalf("parse failed: %q", payload)
+	}
+	if len(parsed.Items) != 1 || parsed.Items[0].Subagent != "Explore" {
+		t.Fatalf("items = %+v, want one item with subagent=Explore", parsed.Items)
+	}
+}

@@ -35,6 +35,8 @@ export interface ProgressCardEntry {
   id?: string;
   /** tool_use id of the Agent (sub-agent) call that produced this entry. */
   parent_id?: string;
+  /** Human-readable sub-agent label for an Agent call (e.g. "Explore"). */
+  subagent?: string;
   status?: string;
   exit_code?: number | null;
   success?: boolean | null;
@@ -87,6 +89,8 @@ export interface ToolCall {
   children: RenderUnit[];
   seq: number; // first-seen order, stable across payload updates modulo head truncation
   tool: string;
+  /** Sub-agent label for an Agent call (e.g. "Explore"); undefined otherwise. */
+  subagent?: string;
   input: string; // tool_use text (input preview)
   result: string; // tool_result text (output)
   status?: string;
@@ -116,12 +120,16 @@ export function callKey(tool: string, input: string, result: string, idx: number
  */
 export function buildUnits(items: ProgressCardEntry[]): RenderUnit[] {
   // Pass 0 — split off sub-agent entries. An entry nests under its parent
-  // Agent call only when that call's tool_use is present in this payload;
-  // otherwise (parent trimmed by the backend's entry cap) it stays top-level
-  // so it is never silently lost.
+  // Agent call only when that call is present in this payload as either a
+  // tool_use OR a tool_result row; otherwise (parent trimmed by the backend's
+  // entry cap) it stays top-level so it is never silently lost. The backend's
+  // row-merge collapses an Agent's tool_use into its tool_result once the
+  // sub-agent finishes, so a result row must still count as a valid parent —
+  // otherwise every child would fall back to top-level the moment the Agent
+  // completes and the "↳ N" badge would vanish.
   const knownIds = new Set<string>();
   for (const item of items) {
-    if (item.kind === 'tool_use' && item.id) knownIds.add(item.id);
+    if ((item.kind === 'tool_use' || item.kind === 'tool_result') && item.id) knownIds.add(item.id);
   }
   const childrenByParent = new Map<string, ProgressCardEntry[]>();
   const topLevel: ProgressCardEntry[] = [];
@@ -159,6 +167,7 @@ function buildLevel(
         children: [],
         seq,
         tool: item.tool || '',
+        subagent: item.subagent,
         input: item.text || '',
         result: '',
         running: true,
@@ -175,6 +184,9 @@ function buildLevel(
         matched.exit_code = item.exit_code;
         matched.success = item.success;
         matched.running = false;
+        // The row-merged tool_result carries the sub-agent label when the
+        // tool_use row was collapsed into it; adopt it if we have none yet.
+        if (!matched.subagent && item.subagent) matched.subagent = item.subagent;
         matched.key = ns + callKey(matched.tool, matched.input, matched.result, matched.seq);
         pending.delete(item.id!);
       } else {
@@ -184,6 +196,7 @@ function buildLevel(
           children: [],
           seq,
           tool: item.tool || '',
+          subagent: item.subagent,
           input: '',
           result: item.text || '',
           status: item.status,
@@ -434,7 +447,7 @@ function CallRow({
           : <ChevronRight size={13} className="text-gray-400 shrink-0" />}
         <Wrench size={13} className={cn('shrink-0', call.running ? 'text-amber-500 dark:text-amber-400' : 'text-amber-500/70 dark:text-amber-400/70')} />
         <span className="text-xs font-medium text-gray-700 dark:text-gray-200 truncate flex-1 min-w-0">
-          {call.tool}
+          {call.subagent ? `${call.tool} · ${call.subagent}` : call.tool}
         </span>
         {childCount > 0 && (
           <span className="text-[10px] font-medium tabular-nums text-violet-600 dark:text-violet-300 bg-violet-50 dark:bg-violet-900/20 px-1.5 py-0.5 rounded shrink-0">

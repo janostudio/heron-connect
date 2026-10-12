@@ -1144,7 +1144,7 @@ func TestHandleControlRequest_NonResidentEmitsError(t *testing.T) {
 	cs.handleControlRequest(&streamEvent{
 		Type:      "control_request",
 		RequestID: "perm_1",
-		Request: &controlRequestBody{Subtype: "can_use_tool", ToolName: "Bash"},
+		Request:   &controlRequestBody{Subtype: "can_use_tool", ToolName: "Bash"},
 	})
 
 	select {
@@ -1963,5 +1963,57 @@ func TestTopLevelFrames_HaveNoParentToolID(t *testing.T) {
 	ev := <-cs.events
 	if ev.IsSubagent || ev.ParentToolID != "" {
 		t.Fatalf("top-level event wrongly marked subagent: %+v", ev)
+	}
+}
+
+// TestExtractSubagentLabel covers the Agent tool's sub-agent label extraction:
+// the CLI reports the kind in subagent_type, with a human description as the
+// fallback. Non-Agent tools must never carry a label.
+func TestExtractSubagentLabel(t *testing.T) {
+	tests := []struct {
+		name  string
+		tool  string
+		input string
+		want  string
+	}{
+		{"subagent_type wins", "Agent", `{"subagent_type":"Explore","description":"explore x"}`, "Explore"},
+		{"description fallback", "Agent", `{"description":"do a thing"}`, "do a thing"},
+		{"description truncated", "Agent", `{"description":"` + strings.Repeat("a", 60) + `"}`, strings.Repeat("a", 40) + "..."},
+		{"both empty", "Agent", `{}`, ""},
+		{"non-Agent tool", "Bash", `{"subagent_type":"Explore"}`, ""},
+		{"bad json", "Agent", `{not json`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractSubagentLabel(tt.tool, json.RawMessage(tt.input))
+			if got != tt.want {
+				t.Fatalf("extractSubagentLabel(%q, %s) = %q, want %q", tt.tool, tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestAgentToolUse_CarriesSubagentType verifies an Agent tool_use event carries
+// the sub-agent label through to the emitted core.Event.
+func TestAgentToolUse_CarriesSubagentType(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+
+	asst, _ := json.Marshal([]contentItem{{
+		Type:  "tool_use",
+		ID:    "a1",
+		Name:  "Agent",
+		Input: json.RawMessage(`{"subagent_type":"Explore","description":"explore"}`),
+	}})
+	cs.handleAssistant(&streamEvent{
+		Type: "assistant", Message: &streamMessage{StopReason: "tool_use", Content: asst},
+	}, "")
+
+	ev := <-cs.events
+	if ev.Type != core.EventToolUse || ev.ToolName != "Agent" {
+		t.Fatalf("event = %+v, want Agent tool_use", ev)
+	}
+	if ev.SubagentType != "Explore" {
+		t.Fatalf("SubagentType = %q, want Explore", ev.SubagentType)
 	}
 }

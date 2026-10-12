@@ -132,10 +132,8 @@ const (
 	MsgNoExecution               MsgKey = "no_execution"
 	MsgTurnCancelled             MsgKey = "turn_cancelled"
 	MsgNoTurnInProgress          MsgKey = "no_turn_in_progress"
-	MsgTurnInterrupted           MsgKey = "turn_interrupted"
 	MsgPreviousProcessing        MsgKey = "previous_processing"
 	MsgQueueFull                 MsgKey = "queue_full"
-	MsgMessageQueued             MsgKey = "message_queued"
 	MsgNoToolsAllowed            MsgKey = "no_tools_allowed"
 	MsgCurrentTools              MsgKey = "current_tools"
 	MsgCurrentSession            MsgKey = "current_session"
@@ -685,28 +683,12 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "進行中のターンはありません。",
 		LangSpanish:            "No hay turno en progreso.",
 	},
-	// Appended to the interrupted turn's already-streamed output so the user
-	// can tell a partial reply apart from a complete one.
-	MsgTurnInterrupted: {
-		LangEnglish:            "⏸️ (interrupted)",
-		LangChinese:            "⏸️ (已中断)",
-		LangTraditionalChinese: "⏸️ (已中斷)",
-		LangJapanese:           "⏸️ (中断されました)",
-		LangSpanish:            "⏸️ (interrumpido)",
-	},
 	MsgPreviousProcessing: {
 		LangEnglish:            "⏳ Previous request still processing. Use `/ps <message>` to send a P.S. to the running task.",
 		LangChinese:            "⏳ 上一个请求仍在处理中。使用 `/ps <消息>` 可向正在执行的任务追加补充信息。",
 		LangTraditionalChinese: "⏳ 上一個請求仍在處理中。使用 `/ps <訊息>` 可向正在執行的任務追加補充資訊。",
 		LangJapanese:           "⏳ 前のリクエストを処理中です。`/ps <メッセージ>` で実行中のタスクに補足情報を送れます。",
 		LangSpanish:            "⏳ La solicitud anterior aún se está procesando. Use `/ps <mensaje>` para enviar un P.S. a la tarea en curso.",
-	},
-	MsgMessageQueued: {
-		LangEnglish:            "📬 Message received — will process after the current task finishes.",
-		LangChinese:            "📬 消息已收到，将在当前任务完成后处理。",
-		LangTraditionalChinese: "📬 訊息已收到，將在目前任務完成後處理。",
-		LangJapanese:           "📬 メッセージを受信しました。現在のタスク完了後に処理します。",
-		LangSpanish:            "📬 Mensaje recibido — se procesará después de que termine la tarea actual.",
 	},
 	MsgQueueFull: {
 		LangEnglish:            "📬 Message queue is full (%d pending). Please wait for current tasks to complete.",

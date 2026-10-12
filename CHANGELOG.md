@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.3.18 (2026-10-12)
+
+### Fixed
+
+- **Web 端 subagent 执行完毕后"只剩结果"，过程与工具记录消失**。后端进度卡片对 Web 走 row-merge：subagent 的 `Agent` 调用行在其完成后会被自己的 tool_result **原地替换**。前端 `buildUnits` 只把 `tool_use` 的 id 认作可嵌套的父行，于是父行变成 tool_result 后，所有子工具（Read/Bash/...）全部脱离嵌套掉回顶层，`↳ N` 子工具计数徽章随之消失——用户看到的就是「agent 内部执行时能看到有多少个工具，一执行完就只剩结果」。现在 `tool_use` 与 `tool_result` 的 id 都可作为父行，开始 / 过程 / 结果全程保留。
+
+### Added
+
+- **Web 端 Agent 行现在显示 subagent 名字**（如 `Agent · Explore`）。此前 codebuddy 适配器的 `extractToolPreview` 从不解析 `Agent` 工具的 input，Agent 行只有一个光秃秃的 `Agent`。现在从 input 的 `subagent_type` 提取（缺失时回退 `description` 首段，截断 40 字），并新增 `ProgressCardEntry.subagent` 字段透传到前端；row-merge 时该标签也会随行保留，不会在 subagent 完成的一刻丢失。
+
+## v1.3.17 (2026-10-12)
+
+### Fixed
+
+- **连续发消息时，被打断的会话会彻底卡死、后续消息永不处理**。企微/Web 在执行中再发一条消息会打断当前轮并把它排进队列（`interruptible`），但打断后队列里的消息从未真正跑起来：`drainPendingMessages` 消费排队消息时**没有铸造新回合 epoch**，排队回合因此继承了被打断那一轮的 epoch。被打断的回合仍在异步吐事件（携带旧 epoch），新回合的 `EventResult` 反而会被 epoch 校验当成"旧回合的陈旧事件"丢弃，事件循环于是永远等一个不会到来的结果 —— 表现为「第二条消息发出后没有任何返回，之后整个会话再也不能接新消息」。现在排队回合在 `Send` 前铸造并下发新 epoch，与主回合路径一致。
+- **打断路径缺少孤儿队列兜底，队列消息可能永久滞留**。普通排队分支在入队后会重试 `TryLock`、必要时自行启动 drain 协程；打断分支（front-insert 入队后直接 `return`）漏了这一步，若被打断回合的 drain 循环恰好已观察到空队列并退出，新插入的消息就再没人消费。现在打断分支复用同一兜底逻辑。
+
+### Changed
+
+- **heron-connect 不再自造"⏸️ (已中断)"和"📬 消息已收到，将在当前任务完成后处理。"两条提示**，打断与排队一律静默，由 agent CLI 自己产出内容。此前一条打断消息会同时收到两条引擎回复（打断提示 + 入队提示），语义重叠且会与 CLI 的输出重复。移除的 `turn_interrupted` / `message_queued` 国际化词条一并删除（队列已满的提示保留）。
+
 ## v1.3.16 (2026-10-12)
 
 ### Fixed

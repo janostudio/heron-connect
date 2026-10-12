@@ -976,6 +976,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				ID:             event.ToolID,
 				CorrelationKey: event.ToolID,
 				ParentID:       event.ParentToolID,
+				Subagent:       event.SubagentType,
 			}, toolMsg) {
 					for _, chunk := range SplitMessageCodeFenceAware(toolMsg, maxPlatformMessageLen) {
 						sendWorkspace(p, replyCtx, chunk)
@@ -2000,6 +2001,24 @@ func (e *Engine) drainPendingMessages(state *interactiveState, session *Session,
 		drained := drainEvents(state.agentSession.Events())
 		if drained > 0 {
 			slog.Warn("dropped buffered events before queued turn", "previous_message_id", state.lastTurnMessageID, "count", drained, "new_message_id", merged.messageID)
+		}
+
+		// Mint a fresh epoch for this queued turn before Send, exactly like the
+		// primary turn path (see processInteractiveMessageWith). Without this the
+		// queued turn inherits the PREVIOUS turn's epoch, so when the previous
+		// turn was interrupted its in-flight trailing events (result/error, all
+		// stamped with the old epoch) are indistinguishable from this turn's —
+		// and this turn's own events can be epoch-dropped as "stale". The visible
+		// symptom was an interrupted session where the queued follow-up never
+		// produced an answer: the event loop blocked waiting for an EventResult
+		// that had already been dropped as belonging to the old turn.
+		epoch := e.nextTurnEpoch.Add(1)
+		state.mu.Lock()
+		state.turnEpoch = epoch
+		state.sideText = ""
+		state.mu.Unlock()
+		if setter, ok := state.agentSession.(TurnEpochSetter); ok {
+			setter.SetTurnEpoch(epoch)
 		}
 
 		// Each queued message keeps its own history entry (Web admin shows

@@ -860,7 +860,13 @@ func (cs *codebuddySession) handleAssistant(ev *streamEvent, pendingText string)
 			if item.ID != "" && item.Name != "" {
 				cs.toolNameByID.Store(item.ID, item.Name)
 			}
-			cs.emit(subagentEvent(core.Event{Type: core.EventToolUse, ToolName: item.Name, ToolID: item.ID, ToolInput: inputPreview}, parentID))
+			cs.emit(subagentEvent(core.Event{
+				Type:         core.EventToolUse,
+				ToolName:     item.Name,
+				ToolID:       item.ID,
+				ToolInput:    inputPreview,
+				SubagentType: extractSubagentLabel(item.Name, item.Input),
+			}, parentID))
 
 		case "thinking":
 			// Accept either the Anthropic-style "thinking" field or a "text"
@@ -1149,6 +1155,33 @@ func extractToolPreview(inputJSON json.RawMessage) string {
 		return query
 	}
 	return string(inputJSON)
+}
+
+// extractSubagentLabel returns a short human-readable label identifying which
+// sub-agent an "Agent" tool call spawns, so the progress card can show
+// "Agent · Explore" instead of a bare "Agent" row. The codebuddy CLI puts the
+// sub-agent kind in input.subagent_type; older/other shapes only carry a
+// human description, used as a fallback. Returns "" for non-Agent tools or
+// when neither field is present.
+func extractSubagentLabel(toolName string, inputJSON json.RawMessage) string {
+	switch toolName {
+	case "Agent", "Task":
+	default:
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(inputJSON, &m); err != nil {
+		return ""
+	}
+	if t, ok := m["subagent_type"].(string); ok {
+		if t = strings.TrimSpace(t); t != "" {
+			return t
+		}
+	}
+	if d, ok := m["description"].(string); ok {
+		return truncStr(strings.TrimSpace(d), 40)
+	}
+	return ""
 }
 
 // extractToolResultText extracts readable text from a tool_result content array.

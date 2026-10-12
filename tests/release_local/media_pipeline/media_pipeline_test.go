@@ -151,6 +151,25 @@ func (s *recordingSession) waitRecords(t *testing.T, n int) []sendRecord {
 	return nil
 }
 
+// waitBlocked waits until the first (blocking) Send has been delivered, i.e.
+// the turn is in flight. A message arriving now will be queued — this replaces
+// the old "queued" ack text as the synchronization point, since the engine no
+// longer sends an ack for queued messages.
+func (s *recordingSession) waitBlocked(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		blocked := s.blocked
+		s.mu.Unlock()
+		if blocked {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timeout waiting for the first turn to start (and block)")
+}
+
 type mediaPlatform struct {
 	mu       sync.Mutex
 	texts    []string
@@ -286,7 +305,9 @@ func TestQueuedMessagePreservesFiles(t *testing.T) {
 	queued.Files = []core.FileAttachment{{MimeType: "text/plain", FileName: "queued.txt", Data: []byte("queued-file")}}
 	engine.ReceiveMessage(platform, queued)
 
-	platform.waitTextContaining(t, "process after")
+	// The engine sends no ack for a queued message, so wait for the first turn
+	// to be in flight (its blocking Send) before releasing it.
+	agent.session.waitBlocked(t)
 	agent.session.releaseFirstResult("first done")
 
 	records := agent.session.waitRecords(t, 2)

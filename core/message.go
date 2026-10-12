@@ -311,6 +311,7 @@ type Event struct {
 	Synthetic    bool           // true if this is a synthetic/generated message (not from real user)
 	IsSubagent   bool           // true if this event originates from a child-agent stream
 	ParentToolID string         // tool_use id of the Agent call this child-stream event belongs to (empty for top-level events)
+	SubagentType string         // human-readable sub-agent label for an Agent tool call (e.g. "Explore"); empty for non-Agent tools
 
 	// TurnEpoch identifies which turn produced this event. The engine stamps a
 	// fresh epoch on each turn and drops events stamped with a DIFFERENT epoch,
