@@ -1676,9 +1676,19 @@ app_secret = "your-feishu-app-secret"
 #
 # [projects.agent.options]
 # work_dir = "/path/to/your/code"
-# # Optional: permission mode. "yolo" enables --dangerously-skip-permissions.
-# # 可选：权限模式。"yolo" 启用 --dangerously-skip-permissions
-# # mode = "yolo"
+# # Optional: permission mode. "bypassPermissions" enables
+# # --dangerously-skip-permissions (i.e. the CLI's bypassPermissions mode).
+# # Required for headless runs: the CLI derives a session's initial permission
+# # mode from argv only, and does NOT fall back to .codebuddy/settings.json's
+# # permissions.defaultMode (that field only applies to the interactive TUI).
+# # "yolo" is accepted as an alias. Note this does not override
+# # settings.json permissions.deny — deny rules still take precedence.
+# # 可选：权限模式。"bypassPermissions" 启用 --dangerously-skip-permissions
+# # （即 CLI 的 bypassPermissions 模式）。headless 路径必须显式声明：CLI 的会话
+# # 初始权限模式只从 argv 取，不会回落读 .codebuddy/settings.json 的
+# # permissions.defaultMode（该字段只对交互式 TUI 生效）。"yolo" 是等价别名。
+# # 不影响 settings.json 的 permissions.deny —— deny 优先级最高，仍照常拦截。
+# # mode = "bypassPermissions"
 # #
 # # Optional: model selection (defaults to CLI-configured model).
 # # 可选：模型选择（默认使用 CLI 配置的模型）

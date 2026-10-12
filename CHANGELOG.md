@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.3.16 (2026-10-12)
+
+### Fixed
+
+- **codebuddy 的 `mode = "bypassPermissions"` 一直静默失效**。`normalizeMode` 对输入做了 `ToLower`，但 switch 的 case 写的是驼峰 `"bypassPermissions"` —— 小写化之后永远不可能等于驼峰串，这个分支形同虚设。任何按 CLI 词汇写 `mode = "bypassPermissions"` 的配置都会掉进 `default`，导致 codebuddy 以 `default` 权限模式启动、每个工具调用都要人工确认。现在 `bypassPermissions` 及其小写形式都能正确归一。
+- **codebuddy 的权限模式对外名称统一为 `bypassPermissions`**。原先 `PermissionModes()` 只暴露 `yolo` 这个内部叫法，与 CodeBuddy CLI 自身的词汇（以及 `config.example.toml` 的文档）不一致，用户按文档写 `bypassPermissions` 反而落空。现在对外 Key 为 `bypassPermissions`（显示名仍为 YOLO，与 claudecode 适配器对齐），`yolo`/`bypass`/`dangerously-skip-permissions` 继续作为等价别名被接受。
+
+### Changed
+
+- **`config.example.toml` 的 codebuddy `mode` 文档**改为推荐 `bypassPermissions`，并写明三点：headless（`-p --input-format stream-json`）路径**必须**显式声明 mode，因为 CLI 的会话初始权限模式只从 argv 取、**不会**回落读 `.codebuddy/settings.json` 的 `permissions.defaultMode`（该字段只对交互式 TUI 生效）；`yolo` 是等价别名；此设置不影响 `settings.json` 的 `permissions.deny`（deny 优先级最高）。
+
 ## v1.3.15 (2026-10-12)
 
 ### Fixed

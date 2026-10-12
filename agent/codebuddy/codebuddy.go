@@ -36,7 +36,7 @@ func init() {
 type Agent struct {
 	workDir    string
 	model      string // user-selected model (pending until the next session starts)
-	mode       string // "default" | "yolo" (--dangerously-skip-permissions)
+	mode       string // canonical: "default" | "bypassPermissions" (--dangerously-skip-permissions)
 	args       []string
 	configEnv  []string
 	sessionEnv []string
@@ -128,10 +128,15 @@ func parseStringSlice(v any) []string {
 	}
 }
 
+// normalizeMode maps a user-supplied mode string to the canonical mode value.
+// "bypassPermissions" is the canonical name (matching the CLI's own vocabulary);
+// "yolo" and the other aliases are accepted for compatibility. Note the switch
+// operand is lowercased, so every case must be lowercase too — the previous
+// camelCase "bypassPermissions" case could never match.
 func normalizeMode(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "yolo", "bypass", "dangerously-skip-permissions", "bypassPermissions":
-		return "yolo"
+	case "yolo", "bypass", "dangerously-skip-permissions", "bypasspermissions":
+		return "bypassPermissions"
 	default:
 		return "default"
 	}
@@ -306,7 +311,7 @@ func (a *Agent) GetMode() string {
 func (a *Agent) PermissionModes() []core.PermissionModeInfo {
 	return []core.PermissionModeInfo{
 		{Key: "default", Name: "Default", NameZh: "默认", Desc: "Standard permissions", DescZh: "标准权限模式"},
-		{Key: "yolo", Name: "YOLO", NameZh: "全自动", Desc: "Skip all permission checks (--dangerously-skip-permissions)", DescZh: "跳过所有权限检查"},
+		{Key: "bypassPermissions", Name: "YOLO", NameZh: "全自动", Desc: "Skip all permission checks (--dangerously-skip-permissions)", DescZh: "跳过所有权限检查"},
 	}
 }
 

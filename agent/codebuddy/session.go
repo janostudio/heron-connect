@@ -304,7 +304,7 @@ func baseArgs(sid, mode, model string, extraArgs []string) []string {
 		args = append(args, "--resume", sid)
 	}
 
-	if mode == "yolo" {
+	if mode == "bypassPermissions" {
 		args = append(args, "--dangerously-skip-permissions")
 	}
 

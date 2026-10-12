@@ -24,14 +24,17 @@ func TestNormalizeMode(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"yolo", "yolo"},
-		{"YOLO", "yolo"},
-		{"bypass", "yolo"},
-		{"dangerously-skip-permissions", "yolo"},
+		{"yolo", "bypassPermissions"},
+		{"YOLO", "bypassPermissions"},
+		{"bypass", "bypassPermissions"},
+		{"dangerously-skip-permissions", "bypassPermissions"},
+		{"bypassPermissions", "bypassPermissions"},
+		{"BypassPermissions", "bypassPermissions"},
+		{"bypass-permissions", "default"}, // not an accepted alias; must not silently pass
 		{"default", "default"},
 		{"", "default"},
 		{"unknown", "default"},
-		{"  yolo  ", "yolo"},
+		{"  yolo  ", "bypassPermissions"},
 	}
 
 	for _, tt := range tests {
@@ -114,8 +117,8 @@ func TestAgent_SetModel(t *testing.T) {
 func TestAgent_SetMode(t *testing.T) {
 	a := &Agent{}
 	a.SetMode("yolo")
-	if got := a.GetMode(); got != "yolo" {
-		t.Errorf("GetMode() = %q, want %q", got, "yolo")
+	if got := a.GetMode(); got != "bypassPermissions" {
+		t.Errorf("GetMode() = %q, want %q", got, "bypassPermissions")
 	}
 }
 
@@ -374,7 +377,7 @@ func TestLaunchArgs_DashPrefixedPromptAfterEndOfOptions(t *testing.T) {
 	// "---". The CLI parser rejects such tokens as unknown options unless
 	// they appear after the "--" end-of-options marker.
 	prompt := "---\ndescription: \"audit\"\n---\n\n# audit body"
-	args := launchArgs(prompt, "sid-123", "yolo", "glm-5.3-ioa", nil)
+	args := launchArgs(prompt, "sid-123", "bypassPermissions", "glm-5.3-ioa", nil)
 
 	sep := -1
 	for i, a := range args {
@@ -401,7 +404,7 @@ func TestLaunchArgs_DashPrefixedPromptAfterEndOfOptions(t *testing.T) {
 }
 
 func TestLaunchArgs_OptionalFlagsBeforeEndOfOptions(t *testing.T) {
-	args := launchArgs("hi", "sid-1", "yolo", "m1", nil)
+	args := launchArgs("hi", "sid-1", "bypassPermissions", "m1", nil)
 	want := []string{
 		"-p", "--output-format", "stream-json",
 		"--resume", "sid-1",
