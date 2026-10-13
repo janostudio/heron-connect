@@ -631,8 +631,7 @@ func (sp *streamPreview) ensurePreview(content string) bool {
 		handle, err := starter.SendPreviewStart(sp.ctx, sp.replyCtx, transformed)
 		if err != nil {
 			// Warn for a genuine start failure: it silently degrades the whole turn
-			// to non-streaming delivery, which on some platforms (e.g. WeCom group
-			// or channel, errcode 682003) means the reply never reaches the user.
+			// to non-streaming delivery, with no other trace in the logs.
 			// ErrNotSupported is a deliberate "this platform has no preview" signal
 			// and stays at Debug to avoid noise on unsupported platforms.
 			if errors.Is(err, ErrNotSupported) {

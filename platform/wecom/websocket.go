@@ -527,11 +527,11 @@ func (p *WSPlatform) handleMsgCallback(frame wsFrame) {
 		userID:   body.From.UserID,
 	}
 	// compat_info.source marks a non-普通用户消息 callback: "ai_assistant" or
-	// "channel". Channels carry the channel's chatid but are NOT group chats, and
-	// the stream reply channel (aibot_respond_msg) may not be available, so record
-	// the source to make channel-specific degradation visible in the logs.
+	// "channel". Channels are a normal, recurring source (not an error), so this
+	// is Debug-level detail; the field is kept parsed because it is the only way
+	// to tell a channel callback apart from a plain group callback.
 	if src := body.CompatInfo.Source; src != "" {
-		slog.Warn("wecom-ws: non-standard callback source, req_id may be unusable for replies",
+		slog.Debug("wecom-ws: non-standard callback source",
 			"source", src,
 			"user", body.From.UserID,
 			"chat_id", chatID,
@@ -622,10 +622,6 @@ func (p *WSPlatform) buildStreamFrame(rc wsReplyContext, content string, finish 
 		return "", nil, fmt.Errorf("wecom-ws: stream content exceeds %d bytes", wecomWSStreamContentMaxBytes)
 	}
 	if rc.reqID == "" {
-		slog.Warn("wecom-ws: cannot build stream frame, empty req_id",
-			"user", rc.userID,
-			"chat_id", rc.chatID,
-			"chat_type", rc.chatType)
 		return "", nil, fmt.Errorf("wecom-ws: reqID is empty, cannot send stream reply")
 	}
 	streamID := rc.streamID
