@@ -648,3 +648,110 @@ func TestStreamPreview_AppliesTransform(t *testing.T) {
 		t.Fatalf("final message = %q, want transformed final preview", got)
 	}
 }
+
+// ── ensurePreview return value + empty-finish cleanup ────────
+//
+// These cover the v1.3.21 fix: the instant "处理中..." acknowledgement must go
+// through the updateable stream preview (so the real answer overwrites it),
+// and an empty-final-text turn must not leave a placeholder behind.
+
+// A platform with no MessageUpdater cannot preview: ensurePreview must report
+// failure so the caller can fall back to a direct send, and must mark the
+// preview degraded so later appends don't retry pointlessly.
+func TestEnsurePreview_ReturnsFalseWithoutUpdater(t *testing.T) {
+	// stubPlatformEngine has Send but NOT MessageUpdater.
+	mp := &stubPlatformEngine{n: "plain"}
+	cfg := StreamPreviewCfg{Enabled: true, IntervalMs: 0, MinDeltaChars: 1}
+
+	sp := newStreamPreview(cfg, mp, "ctx", context.Background(), nil)
+	if sp.ensurePreview("⏳ 处理中...") {
+		t.Error("ensurePreview should return false when the platform has no MessageUpdater")
+	}
+	if !sp.degraded {
+		t.Error("ensurePreview should degrade the preview when the platform cannot update")
+	}
+	if got := mp.getSent(); len(got) != 0 {
+		t.Errorf("no message should be sent directly by ensurePreview, got %v", got)
+	}
+}
+
+// A platform that can preview returns true and starts the preview message.
+func TestEnsurePreview_StartsNewPreview(t *testing.T) {
+	mp := &mockUpdaterPlatform{}
+	cfg := StreamPreviewCfg{Enabled: true, IntervalMs: 0, MinDeltaChars: 1}
+
+	sp := newStreamPreview(cfg, mp, "ctx", context.Background(), nil)
+	if !sp.ensurePreview("⏳ 处理中...") {
+		t.Fatal("ensurePreview should return true when it starts a preview")
+	}
+	msgs := mp.getMessages()
+	if len(msgs) != 1 || msgs[0] != "start:⏳ 处理中..." {
+		t.Fatalf("messages = %v, want a single start with the placeholder", msgs)
+	}
+	if !sp.hasPreview() {
+		t.Error("a preview handle should be recorded after a successful start")
+	}
+}
+
+// When a preview already exists, ensurePreview updates it in place (so the
+// placeholder is replaced, not duplicated) and returns true.
+func TestEnsurePreview_UpdatesExistingInPlace(t *testing.T) {
+	mp := &mockUpdaterPlatform{}
+	cfg := StreamPreviewCfg{Enabled: true, IntervalMs: 0, MinDeltaChars: 1}
+
+	sp := newStreamPreview(cfg, mp, "ctx", context.Background(), nil)
+	if !sp.ensurePreview("⏳ 处理中...") {
+		t.Fatal("first ensurePreview should start the preview")
+	}
+	if !sp.ensurePreview("⏳ 正在处理您的请求...") {
+		t.Fatal("second ensurePreview should update the existing preview and return true")
+	}
+
+	msgs := mp.getMessages()
+	if len(msgs) != 2 {
+		t.Fatalf("expected start + update (no new message), got %v", msgs)
+	}
+	if msgs[0] != "start:⏳ 处理中..." || msgs[1] != "update:⏳ 正在处理您的请求..." {
+		t.Errorf("messages = %v, want start then in-place update", msgs)
+	}
+}
+
+// A turn whose final text is empty must not leave the placeholder on screen:
+// on platforms that can delete, the preview is removed.
+func TestFinish_EmptyFinalTextDeletesPreview(t *testing.T) {
+	mp := &mockCleanerPlatform{}
+	cfg := StreamPreviewCfg{Enabled: true, IntervalMs: 0, MinDeltaChars: 1}
+
+	sp := newStreamPreview(cfg, mp, "ctx", context.Background(), nil)
+	if !sp.ensurePreview("⏳ 处理中...") {
+		t.Fatal("ensurePreview should start the preview")
+	}
+
+	if sp.finish("") {
+		t.Error("finish(\"\") should report false (no in-place final message was sent)")
+	}
+	mp.mu.Lock()
+	deleted := len(mp.deleted)
+	mp.mu.Unlock()
+	if deleted != 1 {
+		t.Errorf("DeletePreviewMessage called %d times, want 1 (placeholder must be cleaned up)", deleted)
+	}
+}
+
+// The streamCard path calls finish("") with no preview ever started. That must
+// be a harmless no-op — no delete call, no panic on a nil handle.
+func TestFinish_EmptyFinalTextWithoutPreviewIsNoOp(t *testing.T) {
+	mp := &mockCleanerPlatform{}
+	cfg := StreamPreviewCfg{Enabled: true, IntervalMs: 0, MinDeltaChars: 1}
+
+	sp := newStreamPreview(cfg, mp, "ctx", context.Background(), nil)
+	if sp.finish("") {
+		t.Error("finish(\"\") with no preview should return false")
+	}
+	mp.mu.Lock()
+	deleted := len(mp.deleted)
+	mp.mu.Unlock()
+	if deleted != 0 {
+		t.Errorf("DeletePreviewMessage called %d times with no preview, want 0", deleted)
+	}
+}

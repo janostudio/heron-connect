@@ -594,17 +594,21 @@ func (sp *streamPreview) hasPreview() bool {
 // ensurePreview sends a preview message if one hasn't been started yet.
 // If a preview already exists, it updates the existing preview with the given
 // content. Used for reassurance messages during long agent operations.
-func (sp *streamPreview) ensurePreview(content string) {
+//
+// Returns true when the content was actually delivered to a preview (created
+// or updated). A false return means the platform can't preview (no
+// MessageUpdater) or the preview is closed/degraded — callers that need the
+// user to see something should fall back to a direct send.
+func (sp *streamPreview) ensurePreview(content string) bool {
 	sp.mu.Lock()
 	if sp.closed || sp.degraded || !sp.cfg.Enabled {
 		sp.mu.Unlock()
-		return
+		return false
 	}
 	if sp.previewMsgID != nil {
 		// Already have a preview, update it
 		sp.mu.Unlock()
-		sp.reassure(content)
-		return
+		return sp.reassure(content)
 	}
 	sp.mu.Unlock()
 
@@ -614,7 +618,7 @@ func (sp *streamPreview) ensurePreview(content string) {
 		sp.mu.Lock()
 		sp.degraded = true
 		sp.mu.Unlock()
-		return
+		return false
 	}
 
 	transformed := content
@@ -629,7 +633,7 @@ func (sp *streamPreview) ensurePreview(content string) {
 			sp.mu.Lock()
 			sp.degraded = true
 			sp.mu.Unlock()
-			return
+			return false
 		}
 		sp.mu.Lock()
 		sp.previewMsgID = handle
@@ -637,12 +641,13 @@ func (sp *streamPreview) ensurePreview(content string) {
 		// agent output. Keeping the old lastSentText ensures that when real
 		// content arrives via appendText, the delta calculation is correct.
 		sp.mu.Unlock()
-	} else {
-		_ = updater // suppress unused warning
-		sp.mu.Lock()
-		sp.degraded = true
-		sp.mu.Unlock()
+		return true
 	}
+	_ = updater // suppress unused warning
+	sp.mu.Lock()
+	sp.degraded = true
+	sp.mu.Unlock()
+	return false
 }
 
 func (sp *streamPreview) progressHandle(placeholder string) any {
@@ -656,12 +661,13 @@ func (sp *streamPreview) progressHandle(placeholder string) any {
 }
 
 // reassure updates the existing preview message with reassurance content.
-// Does nothing if no preview is active.
-func (sp *streamPreview) reassure(content string) {
+// Does nothing (and returns false) if no preview is active or the platform
+// can't update it.
+func (sp *streamPreview) reassure(content string) bool {
 	sp.mu.Lock()
 	if sp.closed || sp.degraded || sp.previewMsgID == nil {
 		sp.mu.Unlock()
-		return
+		return false
 	}
 	sp.mu.Unlock()
 
@@ -675,7 +681,7 @@ func (sp *streamPreview) reassure(content string) {
 		sp.mu.Lock()
 		sp.degraded = true
 		sp.mu.Unlock()
-		return
+		return false
 	}
 
 	if err := updater.UpdateMessage(sp.ctx, sp.previewMsgID, transformed); err != nil {
@@ -683,7 +689,7 @@ func (sp *streamPreview) reassure(content string) {
 		sp.mu.Lock()
 		sp.degraded = true
 		sp.mu.Unlock()
-		return
+		return false
 	}
 
 	sp.mu.Lock()
@@ -691,6 +697,7 @@ func (sp *streamPreview) reassure(content string) {
 	// the delta calculation when real agent output arrives.
 	sp.lastSentAt = time.Now()
 	sp.mu.Unlock()
+	return true
 }
 
 // finish is called when the agent response is complete. It cancels any pending
@@ -762,6 +769,19 @@ func (sp *streamPreview) finish(finalText string) bool {
 
 	if finalText == "" {
 		slog.Debug("stream preview finish: empty final text")
+		// A turn with no visible answer text (agent only ran tools, or went
+		// silent) leaves the preview showing nothing but a placeholder /
+		// reassurance line. That is process state, not content, so it must not
+		// persist. Delete it on platforms that can; platforms that can only
+		// overwrite (wecom stream frames — no recall API) fall through to the
+		// finalizer below, which keeps the last real content if any.
+		if sp.previewMsgID != nil {
+			if cleaner, ok := sp.platform.(PreviewCleaner); ok {
+				slog.Debug("stream preview finish: deleting preview (empty final text)")
+				_ = cleaner.DeletePreviewMessage(sp.ctx, sp.previewMsgID)
+				return false
+			}
+		}
 		return false
 	}
 

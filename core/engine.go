@@ -151,13 +151,6 @@ const (
 	displayModeStream  = "stream"
 )
 
-// InstantReplyCfg controls the immediate confirmation reply sent when a message
-// is received, before the agent starts processing.
-type InstantReplyCfg struct {
-	Enabled bool
-	Content string // custom reply text; empty = use i18n MsgStarting default
-}
-
 // RateLimitCfg controls per-session message rate limiting.
 type RateLimitCfg struct {
 	MaxMessages int           // max messages per window; 0 = disabled
@@ -229,7 +222,6 @@ type Engine struct {
 	rateLimiter       *RateLimiter
 	outgoingRL        *OutgoingRateLimiter
 	streamPreview     StreamPreviewCfg
-	instantReply      InstantReplyCfg
 	references        ReferenceRenderCfg
 	relayManager      RelayManagerAPI
 	eventIdleTimeout  time.Duration

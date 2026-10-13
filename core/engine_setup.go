@@ -5,7 +5,7 @@ package core
 // Covers:
 //   - SetMultiWorkspace, SetWorkspaceIdleTimeout, runIdleReaper, reapIdleWorkspaces
 //   - SetHooks, SetSpeechConfig, SetTTSConfig, SetTTSSaveFunc
-//   - SetDisplayConfig, SetInstantReply, SetReferenceConfig
+//   - SetDisplayConfig, SetReferenceConfig
 //   - estimateTokens, estimateTokensWithPendingAssistant
 //   - SetAutoCompressConfig, SetResetOnIdle
 //   - SetShowContextIndicator, SetReplyFooterEnabled, SetFilterExternalSessions
@@ -161,11 +161,6 @@ func (e *Engine) resolveDisplayForPlatform(platformName string) DisplayCfg {
 		return cfg
 	}
 	return e.display
-}
-
-// SetInstantReply configures the immediate confirmation reply.
-func (e *Engine) SetInstantReply(cfg InstantReplyCfg) {
-	e.instantReply = cfg
 }
 
 // SetReferenceConfig configures local reference normalization/rendering.

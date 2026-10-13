@@ -27,7 +27,7 @@ heron-connect 把本地 AI 编码 Agent（Claude Code / CodeBuddy / Codex / Gemi
 | 3 | 接入 IM 平台（飞书/Telegram/Discord/Slack/钉钉/企微/QQ/LINE…）、**文件分享（免登录只读链接）**、**虚拟 `web` 平台** | `references/platforms.md` |
 | 4 | API Provider、模型切换（全局 `[[providers]]` / 项目内 / `/provider`） | `references/providers.md` |
 | 5 | 消息展示 `[display]`、thinking/tool、覆盖优先级、限流/流式预览 | `references/display.md` |
-| 6 | Web 后台、Bridge、Webhook、**日志 `[log]`（按天归档+按大小轮转）**、流式预览 `[stream_preview]`、即时回复 `[instant_reply]`、限流 `[rate_limit]`/`[outgoing_rate_limit]`、`[[commands]]`/`[[aliases]]`/`banned_words`、`[speech]`/`[tts]`、**cron（jobs.json 字段/CLI add-list-edit-info-del/no_delivery）**、heartbeat、多用户 ACL、admin_from、`[queue]`、auto_compress/observe/multi-workspace/relay | `references/advanced.md` |
+| 6 | Web 后台、Bridge、Webhook、**日志 `[log]`（按天归档+按大小轮转）**、流式预览 `[stream_preview]`、限流 `[rate_limit]`/`[outgoing_rate_limit]`、`[[commands]]`/`[[aliases]]`/`banned_words`、`[speech]`/`[tts]`、**cron（jobs.json 字段/CLI add-list-edit-info-del/no_delivery）**、heartbeat、多用户 ACL、admin_from、`[queue]`、auto_compress/observe/multi-workspace/relay | `references/advanced.md` |
 | 7 | **故障排查手册**（推荐入口）：① 先确认跑的是哪个版本（PATH 坑）② 日志怎么读 + 关键关键字速查 ③ 分场景 playbook（消息无回复 / **连续发消息后会话卡死** / 权限一直弹 / Web 显示异常 / 平台连接 / **回合不结束·send 进程存活数天**）④ 排查命令速查 ⑤ 后台运行 | `references/gotchas.md` |
 | 8 | 项目大盘 `[dashboard]`、**引擎统计采集（metrics JSONL）**、业务数据产出（insights.json/HTML 看板/reports 归档）、`no_delivery` 无投递 cron、`{{dashboard.*}}` 模板变量、`/dashboard` 命令 | `references/dashboard.md` |
 | 9 | **部署/后台运行**：`heron-connect daemon`（systemd/launchd/schtasks）、容器无 systemd 用 nohup/tmux、`service.sh` 脚本、日志轮转、多配置实例隔离 | `references/deployment.md` |

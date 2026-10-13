@@ -86,7 +86,7 @@ app_secret = "${FEISHU_APP_SECRET}"
 ```
 全局设置
   language / data_dir / attachment_send / provider_presets_url / idle_timeout_mins
-  [log]   [display]   [speech] [tts]   [stream_preview]   [instant_reply]
+  [log]   [display]   [speech] [tts]   [stream_preview]
   [rate_limit] [outgoing_rate_limit] [cron] [queue] [relay]
   [webhook] [bridge] [management]
   [[providers]]  [[commands]]  [[aliases]]  [[hooks]]  banned_words

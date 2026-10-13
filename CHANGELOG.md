@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.3.21 (2026-10-13)
+
+### Removed
+
+- **删除 `instant_reply` 特性（收到消息立即回「⏳ 处理中...」）**。该特性与既有的流式预览占位、
+  工具进度（tool_hold 模式首个工具调用即建立占位）、reassurance 三条通路**高度重复**，且它走的是
+  一条**生来无法被覆盖**的通路：`e.send` → 企微 `aibot_send_msg` 独立 markdown 消息，既无 stream_id
+  也无句柄；而企微**不支持删除/撤回消息**（只有 `aibot_send_msg` 与 `stream` 两类指令，覆盖能力仅限
+  stream 流消息）。因此这条"处理中"在请求完成后永久残留在聊天里 —— 就是用户看到的「处理中…」与
+  「正在处理您的请求…」两条并列、前者永不消失的现象。删除后，用户反馈完全由流式预览承担：企微
+  `tool_hold` 模式下首个工具调用（或首段文本）建立一条可更新占位，最终答复到达时**就地覆盖**；
+  长静默（1 分钟无 Agent 事件）由 reassurance 更新同一条。存量配置里的 `[instant_reply]` 节会被
+  **静默忽略**（BurntSushi/toml 不校验未知键），可直接删除。`MsgStarting`（「⏳ 处理中...」）文案
+  保留 —— 工具进度占位仍在用。
+  - 移除：配置项 `[instant_reply]`（`config/config.go`）、`core.InstantReplyCfg` 与引擎字段
+    `instantReply`、`SetInstantReply` 方法、首轮与排队轮两处发送逻辑（`core/engine_turn.go`）、
+    `config.example.toml` 示例节，以及 6 个相关测试与各 skill 文档提及。
+
+### Fixed
+
+- **IM 的「处理中」提示不再残留，且不会再出现两条并列的状态消息**。配合上述删除，另修两处：
+  ① `streamPreview.ensurePreview` / `reassure` 改为返回 `bool`，让调用方在平台不支持预览
+  （无 `MessageUpdater`）时能回退到直接发送，而不是静默失败；② `streamPreview.finish("")`
+  —— 整轮无真实文本输出（agent 只调工具或静默）时不再什么都不做，而是在可删除的平台
+  （`PreviewCleaner`）上**删掉占位**，避免"安抚的过程"持久留在会话里。
+
 ## v1.3.20 (2026-10-13)
 
 ### Added

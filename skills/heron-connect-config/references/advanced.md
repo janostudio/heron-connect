@@ -49,10 +49,10 @@ HERON_LOG_FILE / HERON_LOG_MAX_SIZE / HERON_LOG_RETENTION_DAYS  环境变量（�
   （或你指定的名字）。
 - 归档超过 `retention_days` 天自动删除，不会无限膨胀。
 
-## 流式预览（[stream_preview]）与即时回复（[instant_reply]）
+## 流式预览（[stream_preview]）
 
 实时流式预览把 Agent 输出边生成边更新到消息里（类似"正在输入"），支持 Telegram /
-Discord / 飞书；即时回复在收到用户消息后、Agent 开始处理前先发一条确认消息。
+Discord / 飞书 / 企微。
 
 ```toml
 [stream_preview]
@@ -61,15 +61,17 @@ enabled = true            # 默认 true
 interval_ms = 1500        # 更新最小间隔毫秒（默认 1500）
 min_delta_chars = 30      # 发送更新前最少新增字符数（默认 30）
 max_chars = 4000          # 预览最大长度（默认 4000）
-
-[instant_reply]
-enabled = true            # 默认 true（显式设 false 关闭）
-content = "🤔 Thinking..." # 自定义文案；空 = 用 i18n 默认（"⏳ 处理中..."）
 ```
 
-- 已配置流式卡片的平台（如钉钉 AI Card）会自动跳过即时回复（卡片本身已带处理指示）。
-- Web 端自动跳过（Web 自带「正在输入」指示，常驻确认气泡反而是噪音）。
-- `instant_reply` 与 `[projects.users]` 里的每会话 `rate_limit` 是两个不同概念，见下文。
+- 收到消息后，**首个工具调用或首段文本**会建立一条可更新的预览消息（占位/进度），
+  最终答复到达时**就地覆盖**它，不留残影。
+- 长静默（默认 1 分钟无 Agent 事件）会通过同一条预览更新"仍在处理中"提示。
+- 已配置流式卡片的平台（如钉钉 AI Card）走卡片通路，不重复发预览。
+- 流式预览与 `[projects.users]` 里的每会话 `rate_limit` 是两个不同概念，见下文。
+
+> 旧版本的 `[instant_reply]`（收到消息立即回「⏳ 处理中...」）已移除：它与上述预览占位、
+> 工具进度重复，且该独立消息无法被后续答复覆盖（企微等平台不支持删除），会永久残留。
+> 存量配置里的 `[instant_reply]` 节会被**静默忽略**，删除即可。
 
 ## 速率限制（[rate_limit] 与 [outgoing_rate_limit]）
 
