@@ -305,41 +305,50 @@ function FileContentView({ filePath, fileName }: { filePath: string; fileName: s
       )}
       {state === 'ready' && (
         <>
-          {/* Toolbar: HTML view toggle + manual refresh (files change on disk
-              without any push — refresh re-fetches the latest bytes). */}
+          {/* Toolbar: current file name + HTML view toggle + manual refresh
+              (files change on disk without any push — refresh re-fetches the
+              latest bytes). */}
           {previewable && (
-            <div className="flex items-center justify-end gap-2">
-              {isHtml && (
-                <div className="flex items-center rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden text-xs">
-                  <button type="button" onClick={() => setHtmlView('rendered')}
-                    className={cn(
-                      'px-2.5 py-1 transition-colors',
-                      showHtmlRendered
-                        ? 'bg-accent/15 text-accent font-medium'
-                        : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06]',
-                    )}>
-                    效果
-                  </button>
-                  <button type="button" onClick={() => setHtmlView('source')}
-                    className={cn(
-                      'px-2.5 py-1 transition-colors',
-                      !showHtmlRendered
-                        ? 'bg-accent/15 text-accent font-medium'
-                        : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06]',
-                    )}>
-                    源码
-                  </button>
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={() => setRefreshTick((t) => t + 1)}
-                title="刷新（重新获取文件内容）"
-                aria-label="Refresh file"
-                className="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors"
+            <div className="flex items-center justify-between gap-2">
+              <span
+                className="min-w-0 truncate text-xs font-medium text-gray-700 dark:text-gray-200"
+                title={fileName}
               >
-                <RefreshCw size={14} />
-              </button>
+                {fileName}
+              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                {isHtml && (
+                  <div className="flex items-center rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden text-xs">
+                    <button type="button" onClick={() => setHtmlView('rendered')}
+                      className={cn(
+                        'px-2.5 py-1 transition-colors',
+                        showHtmlRendered
+                          ? 'bg-accent/15 text-accent font-medium'
+                          : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06]',
+                      )}>
+                      效果
+                    </button>
+                    <button type="button" onClick={() => setHtmlView('source')}
+                      className={cn(
+                        'px-2.5 py-1 transition-colors',
+                        !showHtmlRendered
+                          ? 'bg-accent/15 text-accent font-medium'
+                          : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06]',
+                      )}>
+                      源码
+                    </button>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setRefreshTick((t) => t + 1)}
+                  title="刷新（重新获取文件内容）"
+                  aria-label="Refresh file"
+                  className="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors"
+                >
+                  <RefreshCw size={14} />
+                </button>
+              </div>
             </div>
           )}
           {previewable && text !== '' && showHtmlRendered && (
