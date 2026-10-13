@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -629,7 +630,18 @@ func (sp *streamPreview) ensurePreview(content string) bool {
 	if starter, ok := sp.platform.(PreviewStarter); ok {
 		handle, err := starter.SendPreviewStart(sp.ctx, sp.replyCtx, transformed)
 		if err != nil {
-			slog.Debug("stream preview: ensurePreview start failed", "error", err)
+			// Warn for a genuine start failure: it silently degrades the whole turn
+			// to non-streaming delivery, which on some platforms (e.g. WeCom group
+			// or channel, errcode 682003) means the reply never reaches the user.
+			// ErrNotSupported is a deliberate "this platform has no preview" signal
+			// and stays at Debug to avoid noise on unsupported platforms.
+			if errors.Is(err, ErrNotSupported) {
+				slog.Debug("stream preview: preview unsupported, degrading",
+					"platform", sp.platform.Name(), "error", err)
+			} else {
+				slog.Warn("stream preview: ensurePreview start failed, degrading",
+					"platform", sp.platform.Name(), "error", err)
+			}
 			sp.mu.Lock()
 			sp.degraded = true
 			sp.mu.Unlock()

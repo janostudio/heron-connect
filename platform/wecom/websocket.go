@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/janostudio/heron-connect/core"
 	"github.com/gorilla/websocket"
+	"github.com/janostudio/heron-connect/core"
 )
 
 const (
@@ -200,9 +200,14 @@ type wsMsgCallbackBody struct {
 		URL    string `json:"url"`
 		Aeskey string `json:"aeskey"`
 	} `json:"file,omitempty"`
-	Mixed      *wsMixedBlock `json:"mixed,omitempty"`
-	Quote      *wsQuoteBlock `json:"quote,omitempty"`
-	CreateTime int64         `json:"create_time"`
+	Mixed *wsMixedBlock `json:"mixed,omitempty"`
+	Quote *wsQuoteBlock `json:"quote,omitempty"`
+	// CompatInfo is present only for non-普通用户消息 callbacks. source:
+	// "ai_assistant" (智能助理调用) or "channel" (频道).
+	CompatInfo struct {
+		Source string `json:"source"`
+	} `json:"compat_info"`
+	CreateTime int64 `json:"create_time"`
 }
 
 func wsVoiceText(v struct {
@@ -521,6 +526,18 @@ func (p *WSPlatform) handleMsgCallback(frame wsFrame) {
 		chatType: body.ChatType,
 		userID:   body.From.UserID,
 	}
+	// compat_info.source marks a non-普通用户消息 callback: "ai_assistant" or
+	// "channel". Channels carry the channel's chatid but are NOT group chats, and
+	// the stream reply channel (aibot_respond_msg) may not be available, so record
+	// the source to make channel-specific degradation visible in the logs.
+	if src := body.CompatInfo.Source; src != "" {
+		slog.Warn("wecom-ws: non-standard callback source, req_id may be unusable for replies",
+			"source", src,
+			"user", body.From.UserID,
+			"chat_id", chatID,
+			"chat_type", body.ChatType,
+			"has_req_id", reqID != "")
+	}
 	p.logAccess(wecomAccessRecord{
 		Source:     "websocket",
 		Allowed:    true,
@@ -566,7 +583,7 @@ func (p *WSPlatform) handleMsgCallback(frame wsFrame) {
 			MessageID: body.MsgID,
 			UserID:    body.From.UserID, UserName: body.From.UserID,
 			ChatName: chatName,
-			Content:   vt, QuotedText: quotedText, ReplyCtx: rctx, FromVoice: true,
+			Content:  vt, QuotedText: quotedText, ReplyCtx: rctx, FromVoice: true,
 		})
 		return
 	}
@@ -583,7 +600,7 @@ func (p *WSPlatform) handleMsgCallback(frame wsFrame) {
 			MessageID: body.MsgID,
 			UserID:    body.From.UserID, UserName: body.From.UserID,
 			ChatName: chatName,
-			Content:   content, QuotedText: quotedText, ReplyCtx: rctx,
+			Content:  content, QuotedText: quotedText, ReplyCtx: rctx,
 		})
 		return
 	}
@@ -605,6 +622,10 @@ func (p *WSPlatform) buildStreamFrame(rc wsReplyContext, content string, finish 
 		return "", nil, fmt.Errorf("wecom-ws: stream content exceeds %d bytes", wecomWSStreamContentMaxBytes)
 	}
 	if rc.reqID == "" {
+		slog.Warn("wecom-ws: cannot build stream frame, empty req_id",
+			"user", rc.userID,
+			"chat_id", rc.chatID,
+			"chat_type", rc.chatType)
 		return "", nil, fmt.Errorf("wecom-ws: reqID is empty, cannot send stream reply")
 	}
 	streamID := rc.streamID

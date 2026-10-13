@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.3.22 (2026-10-13)
+
+### Added
+
+- **企微回调新增 `compat_info` 解析，可识别频道（channel）与智能助理调用来源**。此前
+  `wsMsgCallbackBody` 未声明 `compat_info` 字段，企微频道消息的 `source=channel` 标识被直接丢弃，
+  日志里只剩 `chat_type=group`，**无法区分频道与普通群**，导致频道相关问题无从定位。现在入站即打
+  一条 Warn，携带 `source / user / chat_id / chat_type / has_req_id`，其中 `has_req_id` 直接回答
+  「频道回调是否携带 req_id」这个关键问题。
+
+### Fixed
+
+- **频道/群聊下流式回复不可用导致的静默降级不再无痕**。企微消息回复走 `aibot_respond_msg`（需透传
+  回调头部 `req_id`）；当 `req_id` 为空时会降级到 `aibot_send_msg` 主动推送，而该通道在群/频道场景
+  要求机器人被 @ 提及，否则被服务端以 `errcode 682003 "bot not mentioned"` 拒绝——表现为**能收到
+  消息但无法回复**。此前这条降级路径的日志全在 `Debug` 级别，线上无任何痕迹。现改进可观测性：
+  ① 企微侧三处 `reqID` 空值检查（`SendPreviewStart`、`streamStateFor`、`buildStreamFrame`）提级为
+  `Warn` 并附带 `user / chat_id / chat_type`；② 引擎侧 `streamPreview.ensurePreview` 对真实启动
+  失败提级为 `Warn`（带平台名），`ErrNotSupported`（平台本就不支持预览）仍保持 `Debug` 以免刷屏。
+  本次仅改日志与入站字段解析，不改变任何发送行为。
+
 ## v1.3.21 (2026-10-13)
 
 ### Removed

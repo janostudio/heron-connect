@@ -37,6 +37,15 @@ func (p *WSPlatform) SendPreviewStart(ctx context.Context, rctx any, content str
 		return nil, fmt.Errorf("wecom-ws: invalid reply context type %T", rctx)
 	}
 	if rc.reqID == "" {
+		// No req_id means the stream channel (aibot_respond_msg) is unavailable, so
+		// the engine will degrade to Send()/aibot_send_msg. In group-like contexts
+		// (including WeCom channels) that proactive channel requires the bot to be
+		// @-mentioned and otherwise fails with errcode 682003 "bot not mentioned".
+		// Log at Warn with the full context so this silent degradation is visible.
+		slog.Warn("wecom-ws: SendPreviewStart degraded, empty req_id (stream reply unavailable)",
+			"user", rc.userID,
+			"chat_id", rc.chatID,
+			"chat_type", rc.chatType)
 		return nil, core.ErrNotSupported
 	}
 	handle := &wsPreviewHandle{replyCtx: rc}
@@ -222,6 +231,10 @@ func (p *WSPlatform) sendStreamFrameAndWaitAck(ctx context.Context, rc wsReplyCo
 
 func (p *WSPlatform) streamStateFor(rc wsReplyContext) (string, *wsStreamState, error) {
 	if rc.reqID == "" {
+		slog.Warn("wecom-ws: cannot build stream state, empty req_id",
+			"user", rc.userID,
+			"chat_id", rc.chatID,
+			"chat_type", rc.chatType)
 		return "", nil, fmt.Errorf("wecom-ws: reqID is empty, cannot send stream reply")
 	}
 	streamID := rc.streamID
