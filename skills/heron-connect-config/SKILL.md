@@ -4,7 +4,7 @@ description: 解释、生成并排查 heron-connect 的 TOML 配置。当用户�
 metadata:
   project: heron-connect
   category: config
-  version: 1.3.19
+  version: 1.3.22
 ---
 
 # Heron Connect 配置 Skill
@@ -13,7 +13,7 @@ heron-connect 把本地 AI 编码 Agent（Claude Code / CodeBuddy / Codex / Gemi
 连接到聊天平台（飞书 / Telegram / Discord / Slack / 钉钉 / 企微 / QQ / LINE 等），
 **所有配置由一个 TOML 文件描述**。
 
-本 Skill 对应 heron-connect **v1.3.19**（版本号与 heron-connect 同步，见本文件 frontmatter 的 `metadata.version`，由 `scripts/sync-version.sh` 维护）。
+本 Skill 对应 heron-connect **v1.3.22**（版本号与 heron-connect 同步，见本文件 frontmatter 的 `metadata.version`，由 `scripts/sync-version.sh` 维护）。
 
 ## 能力索引（给模型的导航）
 
