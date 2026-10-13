@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.3.23 (2026-10-13)
+
+### Added
+
+- **每轮记录流式预览的判定结果，用于定位"某类会话静默退化为普通消息"**。`engine_turn.go` 里
+  `streamPreviewToolHold = previewMode()=="tool_hold" && display.Mode=="stream"` 这个布尔量
+  **静默决定整轮是否走流式**，判定为 false 时整轮退化为普通消息且**不留任何日志**，导致企微频道
+  这类场景无从排查（群聊/单聊正常，仅频道异常）。现在每轮打一条 Info，输出全部输入与结论：
+  `platform / preview_mode / display_mode / preview_enabled / preview_supported / tool_hold`。
+  `preview_supported` 由 `canPreview()` 求得，用于区分「平台本身不支持流式」与「配置把它关了」。
+  仅新增日志，不改变任何判定逻辑或发送行为。
+
 ## v1.3.22 (2026-10-13)
 
 ### Added

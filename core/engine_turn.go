@@ -510,6 +510,18 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	state.mu.Unlock()
 	display := e.resolveDisplayForPlatform(platformName)
 	streamPreviewToolHold := sp.previewMode() == "tool_hold" && display.Mode == displayModeStream
+	// Diagnostic: this boolean silently gates ALL streaming behaviour for the
+	// turn. When it resolves the wrong way the turn degrades to plain messages
+	// with no other trace, so log every input plus the outcome. preview_supported
+	// distinguishes "platform cannot stream at all" from "config turned it off".
+	slog.Info("turn: stream preview decision",
+		"session", sessionKey,
+		"platform", platformName,
+		"preview_mode", sp.previewMode(),
+		"display_mode", display.Mode,
+		"preview_enabled", sp.cfg.Enabled,
+		"preview_supported", sp.canPreview(),
+		"tool_hold", streamPreviewToolHold)
 
 	// Idle timeout: 0 = disabled
 	var idleTimer *time.Timer
