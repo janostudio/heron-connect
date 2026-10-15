@@ -2276,8 +2276,11 @@ while read line; do :; done
 	}
 	select {
 	case ev := <-cs.Events():
-		if ev.Type != core.EventError || ev.Error == nil || !strings.Contains(ev.Error.Error(), "429 too many requests") {
-			t.Fatalf("want EventError carrying the 429 text, got %+v", ev)
+		if ev.Type != core.EventError || ev.Error == nil || ev.Error.Error() != "429 too many requests (req-1)" {
+			t.Fatalf("want EventError carrying the 429 text verbatim, got %+v", ev)
+		}
+		if v, _ := ev.Metadata[core.EventMetadataUserVisibleError].(bool); !v {
+			t.Fatal("CLI-reported error must be flagged user-visible so the engine relays it verbatim")
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no event for empty result after model error")

@@ -335,6 +335,13 @@ type Event struct {
 // agent session instead of being stuck forever.
 const EventMetadataSessionUnrecoverable = "session_unrecoverable"
 
+// EventMetadataUserVisibleError marks an EventError whose text the agent CLI
+// itself already presented as the turn's answer (e.g. a model/gateway error
+// such as "429 too many requests" written as an assistant message). The engine
+// relays it verbatim instead of collapsing it into a generic message, so the
+// user sees the real cause of any such failure, not just the ones we map.
+const EventMetadataUserVisibleError = "user_visible_error"
+
 // HistoryAttachment is a persisted attachment reference in a history entry.
 // The attachment bytes are written to disk (see SaveAttachmentsToDisk); this
 // struct only carries the metadata needed for the web UI to render a

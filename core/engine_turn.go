@@ -1739,7 +1739,11 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					Platform:   p.Name(),
 					Error:      event.Error.Error(),
 				})
-				e.send(p, replyCtx, e.sanitizeAgentError(errMsg))
+				if v, _ := event.Metadata[EventMetadataUserVisibleError].(bool); v {
+					e.send(p, replyCtx, fmt.Sprintf(e.i18n.T(MsgError), truncateIf(errMsg, 500)))
+				} else {
+					e.send(p, replyCtx, e.sanitizeAgentError(errMsg))
+				}
 			}
 			// An unrecoverable agent session (e.g. a process-per-turn CLI that
 			// exited silently because --resume targeted a session with no

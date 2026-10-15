@@ -1024,21 +1024,25 @@ func (cs *codebuddySession) emitEmptyResidentResult(ev *streamEvent) {
 		cs.emit(core.Event{Type: core.EventResult, SessionID: cs.CurrentSessionID(), Done: true})
 		return
 	}
-	var err error
 	if text := cs.lastIncompleteText; text != "" {
-		// Usually the model/gateway error, e.g. "429 too many requests (...)";
-		// the engine maps known phrases to a friendly message.
-		err = fmt.Errorf("%s", truncStr(text, 300))
-	} else {
-		detail := ev.Subtype
-		if ev.IsError {
-			detail += ", is_error"
-		}
-		err = fmt.Errorf("agent returned an empty response (%s)", detail)
+		// The CLI's own error text (e.g. "429 too many requests (...)"), which
+		// it showed as the answer. Relay it verbatim: any error the model or
+		// gateway reports reaches the user, not only the ones we recognise.
+		cs.emit(core.Event{
+			Type:      core.EventError,
+			Error:     fmt.Errorf("%s", text),
+			SessionID: cs.CurrentSessionID(),
+			Metadata:  map[string]any{core.EventMetadataUserVisibleError: true},
+		})
+		return
+	}
+	detail := ev.Subtype
+	if ev.IsError {
+		detail += ", is_error"
 	}
 	cs.emit(core.Event{
 		Type:      core.EventError,
-		Error:     err,
+		Error:     fmt.Errorf("agent returned an empty response (%s)", detail),
 		SessionID: cs.CurrentSessionID(),
 	})
 }

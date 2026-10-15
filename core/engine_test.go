@@ -9432,6 +9432,65 @@ func TestEventIdleTimeout_NotResetByReassurance(t *testing.T) {
 	}
 }
 
+func TestTurnError_UserVisibleRelayedVerbatim(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		meta    map[string]any
+		errText string
+		want    func(e *Engine) string
+	}{
+		{
+			name:    "flagged error relayed as-is",
+			meta:    map[string]any{EventMetadataUserVisibleError: true},
+			errText: "503 upstream overloaded (req-9)",
+			want: func(e *Engine) string {
+				return fmt.Sprintf(e.i18n.T(MsgError), "503 upstream overloaded (req-9)")
+			},
+		},
+		{
+			name:    "unflagged error still sanitized",
+			errText: "secret internal detail",
+			want:    func(e *Engine) string { return e.i18n.T(MsgAgentInternalError) },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &stubPlatformEngine{n: "test"}
+			sess := newControllableSession("visible-err")
+			agent := &controllableAgent{nextSession: sess}
+			e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+			key := "test:visible-err"
+			state := &interactiveState{agentSession: sess, platform: p, replyCtx: "ctx"}
+			e.interactiveMu.Lock()
+			e.interactiveStates[key] = state
+			e.interactiveMu.Unlock()
+			session := e.sessions.GetOrCreateActive(key)
+			session.TryLock()
+
+			sess.events <- Event{Type: EventError, Error: errors.New(tc.errText), Metadata: tc.meta}
+
+			done := make(chan struct{})
+			go func() {
+				e.processInteractiveEvents(state, session, e.sessions, key, "", time.Now(), nil, nil, nil)
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				t.Fatal("turn did not end on EventError")
+			}
+
+			want := tc.want(e)
+			for _, s := range p.getSent() {
+				if s == want {
+					return
+				}
+			}
+			t.Fatalf("want %q among sent messages, got %v", want, p.getSent())
+		})
+	}
+}
+
 func TestEventIdleTimeout_ResetOnEvent(t *testing.T) {
 	p := &stubPlatformEngine{n: "test"}
 	sess := newControllableSession("idle-reset")
