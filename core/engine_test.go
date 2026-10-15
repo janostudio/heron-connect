@@ -9389,6 +9389,52 @@ func TestEventIdleTimeout_CleansUpSession(t *testing.T) {
 	}
 }
 
+func TestEventIdleTimeout_NotResetByReassurance(t *testing.T) {
+	// Regression: the "still processing" placeholder tick used to fall through
+	// into the per-event bookkeeping, resetting the idle watchdog every tick.
+	// With ticks faster than the timeout, a hung turn never timed out.
+	old := reassureInterval
+	reassureInterval = 20 * time.Millisecond
+	defer func() { reassureInterval = old }()
+
+	p := &stubPlatformEngine{n: "test"}
+	sess := newControllableSession("idle-reassure")
+	agent := &controllableAgent{nextSession: sess}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetEventIdleTimeout(150 * time.Millisecond)
+
+	key := "test:idle-reassure"
+	state := &interactiveState{agentSession: sess, platform: p, replyCtx: "ctx"}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = state
+	e.interactiveMu.Unlock()
+
+	session := e.sessions.GetOrCreateActive(key)
+	session.TryLock()
+
+	done := make(chan struct{})
+	go func() {
+		e.processInteractiveEvents(state, session, e.sessions, key, "", time.Now(), nil, nil, nil)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("idle timeout never fired: reassurance ticks are resetting the watchdog")
+	}
+
+	foundTimeout := false
+	for _, s := range p.getSent() {
+		if strings.Contains(s, "timed out") {
+			foundTimeout = true
+		}
+	}
+	if !foundTimeout {
+		t.Fatalf("expected timeout error message, got %v", p.getSent())
+	}
+}
+
 func TestEventIdleTimeout_ResetOnEvent(t *testing.T) {
 	p := &stubPlatformEngine{n: "test"}
 	sess := newControllableSession("idle-reset")

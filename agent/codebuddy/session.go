@@ -675,13 +675,11 @@ func (cs *codebuddySession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderr
 	// is dead regardless of whether the last turn produced a result.
 	if cs.interruptible {
 		cs.alive.Store(false)
-		if exitErr != nil {
-			stderrMsg := strings.TrimSpace(stderrBuf.String())
-			if stderrMsg != "" {
-				slog.Error("codebuddySession: resident process failed", "error", exitErr, "stderr", truncStr(stderrMsg, 200))
-				cs.emit(core.Event{Type: core.EventError, Error: fmt.Errorf("%s", stderrMsg)})
-			}
+		if cs.ctx.Err() != nil {
+			// Close() tore the process down on purpose; nobody is waiting.
+			return
 		}
+		cs.emit(residentExitEvent(exitErr, strings.TrimSpace(stderrBuf.String())))
 		return
 	}
 
@@ -708,6 +706,25 @@ func (cs *codebuddySession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderr
 		cs.alive.Store(false)
 	}
 	cs.emit(evt)
+}
+
+// residentExitEvent builds the terminal event for a resident process that
+// exited on its own (crash, external kill). It must always be emitted: the
+// events channel stays open until Close(), so without it the engine's turn
+// loop never learns the process is gone and waits — refreshing its "still
+// processing" placeholder — indefinitely.
+func residentExitEvent(exitErr error, stderrMsg string) core.Event {
+	var err error
+	switch {
+	case stderrMsg != "":
+		err = fmt.Errorf("%s", stderrMsg)
+	case exitErr != nil:
+		err = fmt.Errorf("agent process exited: %v", exitErr)
+	default:
+		err = fmt.Errorf("agent process exited unexpectedly")
+	}
+	slog.Error("codebuddySession: resident process exited", "error", exitErr, "stderr", truncStr(stderrMsg, 200))
+	return core.Event{Type: core.EventError, Error: err}
 }
 
 // exitFallbackEvent builds the terminal event when the CLI process exits

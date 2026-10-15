@@ -24,6 +24,10 @@ import (
 
 const defaultEventIdleTimeout = 2 * time.Hour
 
+// reassureInterval is how often a turn with no agent output refreshes its
+// "still processing" placeholder. A var so tests can shorten it.
+var reassureInterval = 1 * time.Minute
+
 // cardToolEntry stores a tool call record for card content rendering.
 type cardToolEntry struct {
 	Index int
@@ -535,8 +539,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	// when no output has been received for too long (default 1 minute).
 	// Since WeCom uses full-replacement stream updates, the reassurance text
 	// is automatically replaced when real agent output arrives.
-	const defaultReassureInterval = 1 * time.Minute
-	reassureTimer := time.NewTimer(defaultReassureInterval)
+	reassureTimer := time.NewTimer(reassureInterval)
 	defer reassureTimer.Stop()
 	var reassureSent bool
 
@@ -654,7 +657,11 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			} else {
 				sp.ensurePreview(msg)
 			}
-			reassureTimer.Reset(defaultReassureInterval)
+			reassureTimer.Reset(reassureInterval)
+			// Not an agent event: falling through would reset the idle
+			// watchdog and lastEventTime every minute, so a hung turn would
+			// never time out and the placeholder would refresh forever.
+			continue
 		case <-idleCh:
 			slog.Error("agent session idle timeout: no events for too long, killing session",
 				"session_key", sessionKey, "timeout", e.eventIdleTimeout, "elapsed", time.Since(turnStart))
@@ -705,7 +712,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			default:
 			}
 		}
-		reassureTimer.Reset(defaultReassureInterval)
+		reassureTimer.Reset(reassureInterval)
 
 		if !firstEventLogged {
 			firstEventLogged = true

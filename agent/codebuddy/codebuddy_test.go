@@ -2146,3 +2146,54 @@ func TestAgent_AvailableModels_CacheRespectsModelsJSON(t *testing.T) {
 	}
 	t.Errorf("claude-sonnet-5 missing from %+v", models)
 }
+
+// TestResidentProcessExit_EmitsError is a regression test: when the resident
+// process dies on its own (external kill, crash) without any stderr, the
+// session used to just flip alive=false and return. The events channel stays
+// open until Close(), so the engine's turn loop never learned the turn was
+// over and kept refreshing its "still processing" placeholder forever.
+func TestResidentProcessExit_EmitsError(t *testing.T) {
+	// Read one prompt line, then exit silently with status 0.
+	t.Setenv("PATH", writeFakeCLI(t, "read line\nexit 0\n"))
+
+	cs, err := newCodeBuddySession(context.Background(), t.TempDir(), "", "default", "", nil, nil, true)
+	if err != nil {
+		t.Fatalf("newCodeBuddySession: %v", err)
+	}
+	defer cs.Close()
+
+	if err := cs.Send("hi", nil, nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	select {
+	case ev := <-cs.Events():
+		if ev.Type != core.EventError || ev.Error == nil {
+			t.Fatalf("want EventError after process exit, got %+v", ev)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no event after resident process exited: engine would wait forever")
+	}
+	if cs.Alive() {
+		t.Error("session must report not alive after its process exited")
+	}
+}
+
+// TestResidentClose_NoExitError verifies a deliberate Close() does not surface
+// a spurious "process exited" error.
+func TestResidentClose_NoExitError(t *testing.T) {
+	t.Setenv("PATH", writeFakeCLI(t, "while read line; do :; done\n"))
+
+	cs, err := newCodeBuddySession(context.Background(), t.TempDir(), "", "default", "", nil, nil, true)
+	if err != nil {
+		t.Fatalf("newCodeBuddySession: %v", err)
+	}
+	if err := cs.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	for ev := range cs.Events() {
+		if ev.Type == core.EventError {
+			t.Fatalf("Close() must not emit an error event, got %v", ev.Error)
+		}
+	}
+}
