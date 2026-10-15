@@ -87,6 +87,19 @@ type codebuddySession struct {
 	// whatever turn happens to be running when it ends.
 	turnFinishedSeq atomic.Uint64
 
+	// resultSeq counts result events seen in resident mode. Compared against
+	// turnSeq it tells whether a result belongs to the current turn or to an
+	// earlier, interrupted one whose result arrives after the next prompt.
+	resultSeq atomic.Uint64
+
+	// lastIncompleteText is the text of the most recent unfinished top-level
+	// assistant message in the current turn — typically a model/gateway error
+	// such as "429 too many requests". turnEmittedText records whether the
+	// turn already relayed normal top-level text. Both decide how an empty
+	// result is reported; only the readLoop goroutine touches them.
+	lastIncompleteText string
+	turnEmittedText    bool
+
 	// tasksMu guards tasks, the background-task registry.
 	tasksMu sync.Mutex
 	// tasks maps task_id → the last lifecycle state seen for that background
@@ -631,9 +644,14 @@ func (cs *codebuddySession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderr
 			cs.handleUser(&raw)
 
 		case "result":
+			stale := cs.countResult()
 			if cs.handleResult(&raw, pendingText) {
 				gotResult = true
+			} else if cs.interruptible && !stale {
+				cs.emitEmptyResidentResult(&raw)
 			}
+			cs.lastIncompleteText = ""
+			cs.turnEmittedText = false
 			pendingText = ""
 			// Raise the finished-turn watermark: any background task spawned
 			// in this turn (or an earlier one) is now safe to relay. A
@@ -854,6 +872,15 @@ func (cs *codebuddySession) handleAssistant(ev *streamEvent, pendingText string)
 
 	// Only emit on complete messages (stop_reason set) to avoid partial output
 	if ev.Message.StopReason == "" {
+		// Remember the text of an unfinished top-level message: when the
+		// model call fails (e.g. gateway "429 too many requests") the CLI
+		// writes the error as an incomplete assistant message and then sends
+		// an empty result. Without this the error text is lost.
+		if parentID == "" {
+			if text := assistantText(ev.Message.Content); text != "" {
+				cs.lastIncompleteText = text
+			}
+		}
 		return pendingText
 	}
 
@@ -866,6 +893,9 @@ func (cs *codebuddySession) handleAssistant(ev *streamEvent, pendingText string)
 		switch item.Type {
 		case "text":
 			if item.Text != "" {
+				if parentID == "" {
+					cs.turnEmittedText = true
+				}
 				cs.emit(subagentEvent(core.Event{Type: core.EventText, Content: item.Text}, parentID))
 			}
 
@@ -951,7 +981,9 @@ func (cs *codebuddySession) handleResult(ev *streamEvent, pendingText string) bo
 		finalText = pendingText
 	}
 	if strings.TrimSpace(finalText) == "" {
-		slog.Warn("codebuddySession: result event with empty content", "session_id", cs.CurrentSessionID())
+		slog.Warn("codebuddySession: result event with empty content", "session_id", cs.CurrentSessionID(),
+			"subtype", ev.Subtype, "is_error", ev.IsError, "turn_seq", cs.turnSeq.Load(), "result_seq", cs.resultSeq.Load(),
+			"incomplete_text", truncStr(cs.lastIncompleteText, 200), "emitted_text", cs.turnEmittedText)
 		return false
 	}
 
@@ -962,6 +994,68 @@ func (cs *codebuddySession) handleResult(ev *streamEvent, pendingText string) bo
 		Done:      true,
 	})
 	return true
+}
+
+// countResult records a result frame against the prompts written so far and
+// reports whether it is stale: the result of an earlier, interrupted turn that
+// arrived after the next prompt was written (and the engine already
+// re-stamped the epoch). The count is capped at turnSeq so extra result frames
+// cannot push it ahead and make a later stale result look current. Only the
+// readLoop goroutine writes resultSeq.
+func (cs *codebuddySession) countResult() (stale bool) {
+	r, turns := cs.resultSeq.Load(), cs.turnSeq.Load()
+	if r < turns {
+		r++
+		cs.resultSeq.Store(r)
+	}
+	return r < turns
+}
+
+// emitEmptyResidentResult ends the current turn when the resident CLI returns
+// a result with no content. The per-turn path surfaces this via
+// exitFallbackEvent once the process exits, but a resident process stays up,
+// so without an explicit event the engine waits on a turn that is already
+// over — the UI hangs until the user sends /stop.
+func (cs *codebuddySession) emitEmptyResidentResult(ev *streamEvent) {
+	if cs.turnEmittedText && cs.lastIncompleteText == "" {
+		// The answer was already relayed as text events; the empty result is
+		// just the end marker. Finish the turn normally — the engine falls
+		// back to the accumulated text.
+		cs.emit(core.Event{Type: core.EventResult, SessionID: cs.CurrentSessionID(), Done: true})
+		return
+	}
+	var err error
+	if text := cs.lastIncompleteText; text != "" {
+		// Usually the model/gateway error, e.g. "429 too many requests (...)";
+		// the engine maps known phrases to a friendly message.
+		err = fmt.Errorf("%s", truncStr(text, 300))
+	} else {
+		detail := ev.Subtype
+		if ev.IsError {
+			detail += ", is_error"
+		}
+		err = fmt.Errorf("agent returned an empty response (%s)", detail)
+	}
+	cs.emit(core.Event{
+		Type:      core.EventError,
+		Error:     err,
+		SessionID: cs.CurrentSessionID(),
+	})
+}
+
+// assistantText joins the text blocks of an assistant message content array.
+func assistantText(raw json.RawMessage) string {
+	var items []contentItem
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return ""
+	}
+	var parts []string
+	for _, it := range items {
+		if (it.Type == "text" || it.Type == "output_text") && strings.TrimSpace(it.Text) != "" {
+			parts = append(parts, it.Text)
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 // handleControlRequest turns a CLI control_request into an

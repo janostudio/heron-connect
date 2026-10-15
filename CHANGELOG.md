@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.3.26 (2026-10-15)
+
+### Fixed
+
+- **模型限流（429）等错误导致 turn 一直挂到用户手动 `/stop`，用户收不到任何失败提示**。
+  模型网关返回 `429 too many requests` 时，codebuddy CLI 把错误写成一条未完成的 assistant 消息，
+  随后发出内容为空的 result。适配器原先只打 WARN 就丢弃：原本依赖进程随后退出、由退出路径补报错误，
+  但常驻模式下进程不退出，引擎得不到任何结束信号。线上一个下午出现 7 次，每次都要靠 `/stop` 解开。
+  现在常驻模式下空 result 会结束本轮：
+  - 有错误文本（如 429）：发出 `EventError`，用户看到「AI 服务暂时不可用，请稍后再试」；
+  - 本轮已输出正文、只是 result 为空：按正常完成处理；
+  - 被打断轮次迟到的空 result：按计数识别为陈旧并丢弃，不会误结束新一轮。
+
+### Changed
+
+- 空 result 的 WARN 日志补充 `subtype`、`is_error`、`turn_seq`、`result_seq`、`incomplete_text`（截断的错误文本）、
+  `emitted_text`，用于定位空结果来源。
+- 占位消息间隔由包级变量改为 Engine 字段（消除测试间数据竞争）。
+
 ## v1.3.25 (2026-10-15)
 
 ### Fixed

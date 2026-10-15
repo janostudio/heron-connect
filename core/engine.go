@@ -225,6 +225,7 @@ type Engine struct {
 	references        ReferenceRenderCfg
 	relayManager      RelayManagerAPI
 	eventIdleTimeout  time.Duration
+	reassureInterval  time.Duration
 	maxQueuedMessages int
 	// queuedMessagesMerge: when true, the whole pendingMessages queue is
 	// submitted to the agent as a single turn after the current turn
@@ -527,6 +528,7 @@ func NewEngine(name string, ag Agent, platforms []Platform, sessionStorePath str
 		streamPreview:         DefaultStreamPreviewCfg(),
 		references:            DefaultReferenceRenderCfg(),
 		eventIdleTimeout:      defaultEventIdleTimeout,
+		reassureInterval:      defaultReassureInterval,
 		maxQueuedMessages:     defaultMaxQueuedMessages,
 		showContextIndicator:  true,
 	}

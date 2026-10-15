@@ -9393,15 +9393,12 @@ func TestEventIdleTimeout_NotResetByReassurance(t *testing.T) {
 	// Regression: the "still processing" placeholder tick used to fall through
 	// into the per-event bookkeeping, resetting the idle watchdog every tick.
 	// With ticks faster than the timeout, a hung turn never timed out.
-	old := reassureInterval
-	reassureInterval = 20 * time.Millisecond
-	defer func() { reassureInterval = old }()
-
 	p := &stubPlatformEngine{n: "test"}
 	sess := newControllableSession("idle-reassure")
 	agent := &controllableAgent{nextSession: sess}
 	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
 	e.SetEventIdleTimeout(150 * time.Millisecond)
+	e.reassureInterval = 20 * time.Millisecond
 
 	key := "test:idle-reassure"
 	state := &interactiveState{agentSession: sess, platform: p, replyCtx: "ctx"}

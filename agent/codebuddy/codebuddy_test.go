@@ -628,7 +628,7 @@ func TestHandleResult_EmptyContent(t *testing.T) {
 		IsError:   false,
 	}
 	if got := cs.handleResult(ev, ""); got {
-		t.Fatal("handleResult() = true for empty result, want false (so readLoop falls through to exitFallback)")
+		t.Fatal("handleResult() = true for empty result, want false (caller decides: exitFallback per-turn, EventError resident)")
 	}
 
 	// No EventResult must be emitted.
@@ -2195,5 +2195,122 @@ func TestResidentClose_NoExitError(t *testing.T) {
 		if ev.Type == core.EventError {
 			t.Fatalf("Close() must not emit an error event, got %v", ev.Error)
 		}
+	}
+}
+
+// TestResidentEmptyResult_EndsTurn is a regression test: in resident mode an
+// empty result frame used to be dropped silently. The process stays up, so
+// nothing else ends the turn — the UI hung until the user sent /stop.
+func TestResidentEmptyResult_EndsTurn(t *testing.T) {
+	t.Setenv("PATH", writeFakeCLI(t, `read line
+echo '{"type":"result","subtype":"success","result":"","is_error":false}'
+while read line; do :; done
+`))
+
+	cs, err := newCodeBuddySession(context.Background(), t.TempDir(), "", "default", "", nil, nil, true)
+	if err != nil {
+		t.Fatalf("newCodeBuddySession: %v", err)
+	}
+	defer cs.Close()
+
+	if err := cs.Send("hi", nil, nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	select {
+	case ev := <-cs.Events():
+		if ev.Type != core.EventError || ev.Error == nil {
+			t.Fatalf("want EventError for empty result, got %+v", ev)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no event for empty resident result: turn would hang")
+	}
+	if !cs.Alive() {
+		t.Error("an empty result must not mark the resident session dead")
+	}
+}
+
+// TestResidentEmptyResult_StaleFromInterruptedTurnDropped verifies the empty
+// result of an interrupted turn, arriving after the next prompt was written,
+// does not end the new turn.
+func TestResidentEmptyResult_StaleFromInterruptedTurnDropped(t *testing.T) {
+	cs := newTestSession()
+	defer cs.cancel()
+	cs.interruptible = true
+
+	// Two prompts written (turn 1 interrupted, turn 2 queued), then turn 1's
+	// late empty result arrives.
+	cs.turnSeq.Store(2)
+	if stale := cs.countResult(); !stale {
+		t.Fatal("first result after two prompts must be stale")
+	}
+	// Turn 2's own result is current.
+	if stale := cs.countResult(); stale {
+		t.Fatal("second result must belong to the current turn")
+	}
+	// An extra result frame must not push the count past the prompts.
+	if stale := cs.countResult(); stale {
+		t.Fatal("surplus result must not be treated as stale")
+	}
+	cs.turnSeq.Store(4)
+	if stale := cs.countResult(); !stale {
+		t.Fatal("count must be capped at turnSeq; result for turn 3 of 4 is stale")
+	}
+}
+
+// TestResidentEmptyResult_ReportsModelError verifies a gateway error written
+// as an unfinished assistant message (seen in production: "429 too many
+// requests", status=incomplete) reaches the user instead of a generic error.
+func TestResidentEmptyResult_ReportsModelError(t *testing.T) {
+	t.Setenv("PATH", writeFakeCLI(t, `read line
+echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"output_text","text":"429 too many requests (req-1)"}]}}'
+echo '{"type":"result","subtype":"success","result":"","is_error":false}'
+while read line; do :; done
+`))
+	cs, err := newCodeBuddySession(context.Background(), t.TempDir(), "", "default", "", nil, nil, true)
+	if err != nil {
+		t.Fatalf("newCodeBuddySession: %v", err)
+	}
+	defer cs.Close()
+	if err := cs.Send("hi", nil, nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	select {
+	case ev := <-cs.Events():
+		if ev.Type != core.EventError || ev.Error == nil || !strings.Contains(ev.Error.Error(), "429 too many requests") {
+			t.Fatalf("want EventError carrying the 429 text, got %+v", ev)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no event for empty result after model error")
+	}
+}
+
+// TestResidentEmptyResult_AfterTextFinishesNormally verifies an empty result
+// that follows an already-relayed answer ends the turn as a success.
+func TestResidentEmptyResult_AfterTextFinishesNormally(t *testing.T) {
+	t.Setenv("PATH", writeFakeCLI(t, `read line
+echo '{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}'
+echo '{"type":"result","subtype":"success","result":"","is_error":false}'
+while read line; do :; done
+`))
+	cs, err := newCodeBuddySession(context.Background(), t.TempDir(), "", "default", "", nil, nil, true)
+	if err != nil {
+		t.Fatalf("newCodeBuddySession: %v", err)
+	}
+	defer cs.Close()
+	if err := cs.Send("hi", nil, nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	var types []core.EventType
+	timeout := time.After(5 * time.Second)
+	for len(types) < 2 {
+		select {
+		case ev := <-cs.Events():
+			types = append(types, ev.Type)
+		case <-timeout:
+			t.Fatalf("turn did not finish, events so far: %v", types)
+		}
+	}
+	if types[0] != core.EventText || types[1] != core.EventResult {
+		t.Fatalf("want [text result], got %v", types)
 	}
 }
