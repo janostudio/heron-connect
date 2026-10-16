@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.3.28 (2026-10-16)
+
+### Added
+
+- **主动发送支持显式指定投递平台**（`heron-connect send --platform` / `POST /send` 的 `platform` 字段）。
+  背景：Web 管理端借用 `wecom:` 会话键后，该键的平台绑定被覆盖为 web，此后所有主动发送
+  （进度推送、cron 提醒等）都落到 Web 而企业微信收不到，且此前 `platform` 字段完全不参与路由。
+  现在三种取值：**不传**＝沿用绑定优先的旧行为；**`origin`**＝按 session key 自身前缀投递
+  （`wecom:...` 一律走企微，无视绑定——Web 会话排查后把结论发回企微原会话即用此值）；
+  **平台名**（`wecom`/`feishu`/...，`web` 是 `bridge` 别名）＝强制投递到指定平台。
+  命中的是当前绑定时复用活跃 replyCtx，否则从 key 重建上下文；跨平台投递不再污染
+  绑定会话的 sideText。
+
+### Changed
+
+- **`POST /send` 错误码细化 + 响应可对账**：指定的平台不存在返回 400、key 与平台不匹配
+  返回 422、无活跃会话返回 404（此前一律 500 且 platform 字段被静默忽略、非法值也返回 200）。
+  成功响应改为三字段 `{"status":"ok","platform":<实际投递平台>,"session_key":<请求键>}`，
+  CLI send 成功输出同步带上这两个字段，便于调用方核对消息真实去向。平台侧发送失败
+  （如企微 ack errcode=93006）仍返回非 200。
+- **测试**：新增 7 个 `--platform` 全链路集成测试（真实 Engine + unix socket API）、
+  core/api 单测；修正过期断言 `StaleEventsDrainedAfterAbnormalExit`（v1.3.27 起错误原文
+  透传需 `user_visible_error` 元数据，测试事件已补上该标记）。
+
 ## v1.3.27 (2026-10-15)
 
 ### Changed

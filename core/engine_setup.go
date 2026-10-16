@@ -720,6 +720,22 @@ func (e *Engine) IsSessionLive(sessionKey string) bool {
 	return ok
 }
 
+// InjectInteractiveStateForTest registers an interactive state as if the given
+// session key had just received a message from platform p. Exported for
+// integration tests only (tests/integration), which live in a separate package
+// and therefore cannot reach the unexported interactiveStates map. Production
+// code must not call this.
+func (e *Engine) InjectInteractiveStateForTest(sessionKey string, p Platform, replyCtx any) {
+	e.interactiveMu.Lock()
+	defer e.interactiveMu.Unlock()
+	e.interactiveStates[sessionKey] = &interactiveState{
+		platform:         p,
+		replyCtx:         replyCtx,
+		eventsNeedResync: true,
+		spawnedAt:        time.Now(),
+	}
+}
+
 // SessionTurnState describes whether the agent is actively working for a
 // session, exposed to the management API so the Web admin UI can surface
 // per-session execution status (multiple sessions may run in parallel).

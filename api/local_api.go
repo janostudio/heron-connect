@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -62,8 +63,13 @@ type SendRequest struct {
 	Project    string                 `json:"project"`
 	SessionKey string                 `json:"session_key"`
 	Message    string                 `json:"message"`
-	Images     []core.ImageAttachment `json:"images,omitempty"`
-	Files      []core.FileAttachment  `json:"files,omitempty"`
+	// Platform optionally forces delivery through a named platform instead
+	// of the session's current binding. "" keeps the default behavior;
+	// "origin" routes by the session key's own prefix (e.g. wecom:... → wecom);
+	// "web" is an alias for "bridge".
+	Platform string                 `json:"platform,omitempty"`
+	Images   []core.ImageAttachment `json:"images,omitempty"`
+	Files    []core.FileAttachment  `json:"files,omitempty"`
 }
 
 // NewAPIServer creates an API server on a Unix socket.
@@ -331,12 +337,29 @@ func (s *APIServer) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := engine.SendToSessionWithAttachments(req.SessionKey, req.Message, req.Images, req.Files); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	platform, err := engine.SendToSessionOptsWithAttachments(req.SessionKey, req.Message, req.Images, req.Files, core.SendOptions{Platform: req.Platform})
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, core.ErrSendPlatformNotFound):
+			status = http.StatusBadRequest
+		case errors.Is(err, core.ErrSendPlatformMismatch),
+			errors.Is(err, core.ErrNotSupported):
+			status = http.StatusUnprocessableEntity
+		case errors.Is(err, core.ErrNoActiveSession):
+			status = http.StatusNotFound
+		case errors.Is(err, core.ErrAttachmentSendDisabled):
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
 
-	apiJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	apiJSON(w, http.StatusOK, map[string]string{
+		"status":      "ok",
+		"platform":    platform,
+		"session_key": req.SessionKey,
+	})
 }
 
 func (s *APIServer) handleSessions(w http.ResponseWriter, r *http.Request) {

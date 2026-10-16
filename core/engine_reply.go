@@ -21,13 +21,31 @@ import (
 	"time"
 )
 
+// SendOptions carries explicit routing overrides for proactive sends.
+type SendOptions struct {
+	// Platform forces delivery through the named platform instead of the
+	// session's current binding. Special values:
+	//   ""       — default behavior: binding first, then key-prefix fallback.
+	//   "origin" — always route by the session key's own platform prefix
+	//              (e.g. "wecom:..." → wecom), ignoring the binding.
+	//   "web"    — alias for "bridge".
+	Platform string
+}
+
 func (e *Engine) SendToSession(sessionKey, message string) error {
 	return e.SendToSessionWithAttachments(sessionKey, message, nil, nil)
 }
 
 func (e *Engine) SendToSessionWithAttachments(sessionKey, message string, images []ImageAttachment, files []FileAttachment) error {
+	_, err := e.SendToSessionOptsWithAttachments(sessionKey, message, images, files, SendOptions{})
+	return err
+}
+
+// SendToSessionOptsWithAttachments sends a proactive message and reports which
+// platform actually delivered it (for API response reconciliation).
+func (e *Engine) SendToSessionOptsWithAttachments(sessionKey, message string, images []ImageAttachment, files []FileAttachment, opts SendOptions) (string, error) {
 	if strings.TrimSpace(sessionKey) == "" {
-		return fmt.Errorf("session key is required for proactive messaging")
+		return "", fmt.Errorf("session key is required for proactive messaging")
 	}
 
 	e.interactiveMu.Lock()
@@ -45,61 +63,48 @@ func (e *Engine) SendToSessionWithAttachments(sessionKey, message string, images
 
 	var p Platform
 	var replyCtx any
-	if state != nil {
-		state.mu.Lock()
-		p = state.platform
-		replyCtx = state.replyCtx
-		state.mu.Unlock()
-	}
-
-	if p == nil && sessionKey != "" {
-		strippedKey := sessionKey
-		platformName := ""
-		if idx := strings.Index(strippedKey, ":"); idx > 0 {
-			platformName = strippedKey[:idx]
+	explicit := strings.ToLower(strings.TrimSpace(opts.Platform))
+	switch {
+	case explicit == "":
+		if state != nil {
+			state.mu.Lock()
+			p = state.platform
+			replyCtx = state.replyCtx
+			state.mu.Unlock()
 		}
-		var targetPlatform Platform
-		for _, candidate := range e.platforms {
-			if candidate.Name() == platformName {
-				targetPlatform = candidate
-				break
-			}
-		}
-		// Fallback: multi-workspace mode may prefix the session key with the
-		// workspace path (same heuristic as ExecuteCronJob / ExecuteHeartbeat).
-		if targetPlatform == nil {
-			for _, candidate := range e.platforms {
-				needle := ":" + candidate.Name() + ":"
-				if idx := strings.Index(strippedKey, needle); idx >= 0 {
-					targetPlatform = candidate
-					strippedKey = strippedKey[idx+1:]
-					break
-				}
-			}
-		}
-		if targetPlatform != nil {
-			rc, ok := targetPlatform.(ReplyContextReconstructor)
-			if !ok {
-				return fmt.Errorf("platform %q does not support proactive messaging", targetPlatform.Name())
-			}
-			reconstructed, err := rc.ReconstructReplyCtx(strippedKey)
+		if p == nil {
+			var err error
+			p, replyCtx, err = e.resolveSendPlatformByPrefix(sessionKey)
 			if err != nil {
-				return fmt.Errorf("reconstruct reply context: %w", err)
+				return "", err
 			}
-			p = targetPlatform
-			replyCtx = reconstructed
+		}
+	case explicit == "origin":
+		// Ignore the binding entirely: the caller wants the platform that
+		// owns the session key itself (e.g. reply back to the wecom chat
+		// whose key the Web admin borrowed).
+		var err error
+		p, replyCtx, err = e.resolveSendPlatformByPrefix(sessionKey)
+		if err != nil {
+			return "", err
+		}
+	default:
+		var err error
+		p, replyCtx, state, err = e.resolveSendPlatformByName(sessionKey, explicit)
+		if err != nil {
+			return "", err
 		}
 	}
 
 	if p == nil {
-		return fmt.Errorf("no active session found (key=%q)", sessionKey)
+		return "", fmt.Errorf("%w (key=%q)", ErrNoActiveSession, sessionKey)
 	}
 
 	if message == "" && len(images) == 0 && len(files) == 0 {
-		return fmt.Errorf("message or attachment is required")
+		return p.Name(), fmt.Errorf("message or attachment is required")
 	}
 	if (len(images) > 0 || len(files) > 0) && !e.attachmentSendEnabled {
-		return ErrAttachmentSendDisabled
+		return p.Name(), ErrAttachmentSendDisabled
 	}
 
 	var imageSender ImageSender
@@ -107,7 +112,7 @@ func (e *Engine) SendToSessionWithAttachments(sessionKey, message string, images
 		var ok bool
 		imageSender, ok = p.(ImageSender)
 		if !ok {
-			return fmt.Errorf("platform %s: %w", p.Name(), ErrNotSupported)
+			return p.Name(), fmt.Errorf("platform %s: %w", p.Name(), ErrNotSupported)
 		}
 	}
 
@@ -116,16 +121,16 @@ func (e *Engine) SendToSessionWithAttachments(sessionKey, message string, images
 		var ok bool
 		fileSender, ok = p.(FileSender)
 		if !ok {
-			return fmt.Errorf("platform %s: %w", p.Name(), ErrNotSupported)
+			return p.Name(), fmt.Errorf("platform %s: %w", p.Name(), ErrNotSupported)
 		}
 	}
 
 	if message != "" {
 		if err := e.waitOutgoing(p); err != nil {
-			return err
+			return p.Name(), err
 		}
 		if err := p.Send(e.ctx, replyCtx, message); err != nil {
-			return err
+			return p.Name(), err
 		}
 		if state != nil {
 			state.mu.Lock()
@@ -135,21 +140,124 @@ func (e *Engine) SendToSessionWithAttachments(sessionKey, message string, images
 	}
 	for _, img := range images {
 		if err := e.waitOutgoing(p); err != nil {
-			return err
+			return p.Name(), err
 		}
 		if err := imageSender.SendImage(e.ctx, replyCtx, img); err != nil {
-			return err
+			return p.Name(), err
 		}
 	}
 	for _, file := range files {
 		if err := e.waitOutgoing(p); err != nil {
-			return err
+			return p.Name(), err
 		}
 		if err := fileSender.SendFile(e.ctx, replyCtx, file); err != nil {
-			return err
+			return p.Name(), err
 		}
 	}
-	return nil
+	return p.Name(), nil
+}
+
+// resolveSendPlatformByPrefix routes purely by the session key's own platform
+// prefix: the leading "name:" segment (or a "<workspace>:name:" needle in
+// multi-workspace mode) selects the platform, whose ReconstructReplyCtx then
+// rebuilds the reply context. No live binding is consulted.
+func (e *Engine) resolveSendPlatformByPrefix(sessionKey string) (Platform, any, error) {
+	strippedKey := sessionKey
+	platformName := ""
+	if idx := strings.Index(strippedKey, ":"); idx > 0 {
+		platformName = strippedKey[:idx]
+	}
+	var targetPlatform Platform
+	for _, candidate := range e.platforms {
+		if candidate.Name() == platformName {
+			targetPlatform = candidate
+			break
+		}
+	}
+	// Fallback: multi-workspace mode may prefix the session key with the
+	// workspace path (same heuristic as ExecuteCronJob / ExecuteHeartbeat).
+	if targetPlatform == nil {
+		for _, candidate := range e.platforms {
+			needle := ":" + candidate.Name() + ":"
+			if idx := strings.Index(strippedKey, needle); idx >= 0 {
+				targetPlatform = candidate
+				strippedKey = strippedKey[idx+1:]
+				break
+			}
+		}
+	}
+	if targetPlatform == nil {
+		return nil, nil, fmt.Errorf("%w (key=%q)", ErrNoActiveSession, sessionKey)
+	}
+	rc, ok := targetPlatform.(ReplyContextReconstructor)
+	if !ok {
+		return nil, nil, fmt.Errorf("platform %q does not support proactive messaging", targetPlatform.Name())
+	}
+	reconstructed, err := rc.ReconstructReplyCtx(strippedKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reconstruct reply context: %w", err)
+	}
+	return targetPlatform, reconstructed, nil
+}
+
+// resolveSendPlatformByName delivers to the explicitly named platform. When the
+// session is currently bound to that platform, its live replyCtx is reused and
+// the binding state is returned (so callers keep sideText semantics);
+// otherwise the reply context is reconstructed from the (prefix-stripped) key
+// and no state is returned. The key must belong to the requested platform.
+func (e *Engine) resolveSendPlatformByName(sessionKey, want string) (Platform, any, *interactiveState, error) {
+	name := want
+	if name == "web" {
+		name = "bridge"
+	}
+	var target Platform
+	for _, candidate := range e.platforms {
+		if strings.EqualFold(candidate.Name(), name) {
+			target = candidate
+			break
+		}
+	}
+	if target == nil {
+		names := make([]string, 0, len(e.platforms))
+		for _, candidate := range e.platforms {
+			names = append(names, candidate.Name())
+		}
+		return nil, nil, nil, fmt.Errorf("%w: %q (available: %s)", ErrSendPlatformNotFound, want, strings.Join(names, ", "))
+	}
+
+	// Reuse the live binding when it already points at the requested platform.
+	e.interactiveMu.Lock()
+	state := e.interactiveStates[sessionKey]
+	if state == nil && e.multiWorkspace {
+		if iKey := e.interactiveKeyForSessionKeyLocked(sessionKey); iKey != sessionKey {
+			state = e.interactiveStates[iKey]
+		}
+	}
+	e.interactiveMu.Unlock()
+	if state != nil && state.platform == target {
+		state.mu.Lock()
+		replyCtx := state.replyCtx
+		state.mu.Unlock()
+		return target, replyCtx, state, nil
+	}
+
+	if !strings.HasPrefix(sessionKey, target.Name()+":") {
+		// Tolerate a workspace-prefixed key: "<workspace>:<name>:...".
+		if idx := strings.Index(sessionKey, ":"+target.Name()+":"); idx >= 0 {
+			sessionKey = sessionKey[idx+1:]
+		} else {
+			return nil, nil, nil, fmt.Errorf("%w: key %q vs platform %q", ErrSendPlatformMismatch, sessionKey, target.Name())
+		}
+	}
+	rc, ok := target.(ReplyContextReconstructor)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("%w: platform %q does not support proactive messaging", ErrNotSupported, target.Name())
+	}
+	reconstructed, err := rc.ReconstructReplyCtx(sessionKey)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("reconstruct reply context: %w", err)
+	}
+	return target, reconstructed, nil, nil
 }
 
 // sendPermissionPrompt sends a permission prompt with interactive buttons when

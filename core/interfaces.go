@@ -15,6 +15,19 @@ type Platform interface {
 	Stop() error
 }
 
+// ErrNoActiveSession indicates a proactive send found no active session for
+// the given session key (neither a live binding nor a reconstructable prefix).
+var ErrNoActiveSession = errors.New("no active session found")
+
+// ErrSendPlatformNotFound indicates the platform explicitly requested for a
+// proactive send does not exist (or is not enabled) in this engine.
+var ErrSendPlatformNotFound = errors.New("requested send platform not found")
+
+// ErrSendPlatformMismatch indicates the session key does not belong to the
+// platform explicitly requested for a proactive send (e.g. a wecom:... key
+// sent with --platform slack).
+var ErrSendPlatformMismatch = errors.New("session key does not belong to the requested platform")
+
 // ErrNotSupported indicates a platform doesn't support a particular operation.
 var ErrNotSupported = errors.New("operation not supported by this platform")
 

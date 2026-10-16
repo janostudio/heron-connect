@@ -70,6 +70,17 @@ func runSend(args []string) {
 		os.Exit(1)
 	}
 
+	// Best-effort reconciliation info: the API reports the platform that
+	// actually delivered the message plus the session key used.
+	var ack struct {
+		Status     string `json:"status"`
+		Platform   string `json:"platform"`
+		SessionKey string `json:"session_key"`
+	}
+	if err := json.Unmarshal(body, &ack); err == nil && ack.Platform != "" {
+		fmt.Printf("Message sent successfully (platform=%s, session_key=%s).\n", ack.Platform, ack.SessionKey)
+		return
+	}
 	fmt.Println("Message sent successfully.")
 }
 
@@ -103,6 +114,12 @@ func parseSendArgs(args []string) (api.SendRequest, string, error) {
 			}
 			i++
 			req.SessionKey = args[i]
+		case "--platform":
+			if i+1 >= len(args) {
+				return req, "", fmt.Errorf("--platform requires a value")
+			}
+			i++
+			req.Platform = args[i]
 		case "--message", "-m":
 			if i+1 >= len(args) {
 				return req, "", fmt.Errorf("--message requires a value")
@@ -273,6 +290,12 @@ Options:
       --stdin              Read message from stdin (best for long/special-char messages)
   -p, --project <name>     Target project (optional if only one project)
   -s, --session <key>      Target session key (optional, picks first active)
+      --platform <name>    Force delivery via a platform, overriding the
+                           session's current binding. Values: a platform name
+                           (wecom/feishu/slack/...), "web" (alias for bridge),
+                           or "origin" (route by the session key's own prefix,
+                           e.g. wecom:... always goes to wecom). Omit to use
+                           the session's binding (default, unchanged).
       --data-dir <path>    Data directory (default: ~/.heron-connect)
   -h, --help               Show this help
 

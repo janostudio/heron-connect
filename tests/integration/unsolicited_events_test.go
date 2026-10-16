@@ -315,7 +315,18 @@ func TestIntegration_StaleEventsDrainedAfterAbnormalExit(t *testing.T) {
 	// causes cleanupInteractiveState in the EventError path (if agent is
 	// reported dead). Here the agent is still Alive(), so session persists
 	// but the flag stays true.
-	sess.emit(core.Event{Type: core.EventError, Error: simpleError("turn failed")})
+	//
+	// The event carries the user_visible_error marker: the agent CLI itself
+	// reported this failure as the turn's answer, so the engine relays the
+	// text verbatim instead of collapsing it into the generic internal-error
+	// message (default-deny sanitization). Without the marker the platform
+	// would receive "❌ Error: agent encountered an internal error..." and
+	// the wait below would time out.
+	sess.emit(core.Event{
+		Type:     core.EventError,
+		Error:    simpleError("turn failed"),
+		Metadata: map[string]any{core.EventMetadataUserVisibleError: true},
+	})
 
 	require.True(t, waitForMessage(t, platform, "turn failed", 3*time.Second),
 		"error message not delivered")

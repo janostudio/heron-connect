@@ -22,6 +22,9 @@
    见 `references/project-agent.md`。
 10. **验证**：`heron-connect doctor`（二进制/认证/平台/系统/依赖/网络），`heron-connect --help`
     查看子命令。所有字段以仓库根 `config.example.toml` 为权威。
+11. **主动发送的平台由"绑定"决定**：session key 的投递平台 = 该 key 最后一次消息来源平台。
+    Web 管理端借用 `wecom:` key 后，主动发送会全部落 Web 而企微收不到。v1.3.28 起
+    `heron-connect send --platform origin` 可按 key 前缀投回原平台（详见 `references/cli.md`）。
 
 ---
 

@@ -50,10 +50,21 @@ heron-connect send --stdin <<'EOF'                  # 多行/长消息（特殊�
 EOF
 heron-connect send -m "看图" --image /path/x.png     # 回传图片
 heron-connect send -m "附件" --file /path/x.pdf      # 回传文件
-# 选项：-p/--project、-s/--session-key（缺省读 HERON_PROJECT / HERON_SESSION_KEY 环境变量）
+heron-connect send -m "..." --platform origin        # 按 key 前缀投递（见下）
+# 选项：-p/--project、-s/--session-key、--platform（缺省读 HERON_PROJECT / HERON_SESSION_KEY 环境变量）
 ```
 
 > 图片/文件回传受 `attachment_send` 全局开关控制（off 则禁）。
+
+**`--platform` 显式指定投递平台**（v1.3.28+）：
+
+- 缺省（不传）：沿用既有行为——按会话当前绑定投递（绑定 = 该 key 最后一次消息来源平台）。
+- `--platform origin`：**按 session key 自身前缀投递**，无视绑定。例：Web 管理端借用
+  `wecom:<chat>:<user>` 会话后，该 key 的绑定被覆盖为 web；此时在 Web 会话里用
+  `--platform origin` 可把消息发回企业微信原会话（群聊/单聊均可）。
+- `--platform <名称>`：投递到指定平台（`wecom`/`feishu`/`slack`/...，`web` 是 `bridge` 的别名）。
+  key 前缀与平台不符时返回 422，平台不存在返回 400。
+- 前缀不匹配的平台（如对 `wecom:` key 用 `--platform slack`）会明确失败，不会静默改道。
 
 每次 `send` 都会投递一条**独立的新消息**（不替换会话内容）。命令通过 Unix socket
 `<data_dir>/run/api.sock` 与运行中的 heron-connect 通信，因此实例必须在运行。
