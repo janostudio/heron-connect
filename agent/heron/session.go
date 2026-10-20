@@ -19,6 +19,12 @@ import (
 	"github.com/janostudio/heron-connect/core"
 )
 
+// emptyReplyPlaceholder is shown when Heron ends a turn without any reply
+// text. It stays a successful result on purpose: the turn did end normally,
+// and only a non-error terminal event keeps the session's background reader
+// alive for the work that is still running.
+const emptyReplyPlaceholder = "（本轮无回复）"
+
 const (
 	heronJSONRPCParseError     = -32700
 	heronJSONRPCInvalidRequest = -32600
@@ -44,9 +50,22 @@ type heronSession struct {
 	sessionID atomic.Value // stores string
 	nextID    atomic.Uint64
 
-	progressMu       sync.Mutex
-	progressTurnID   string
-	lastProgressSeq  int64
+	progressMu sync.Mutex
+	// progressSeen deduplicates progress notifications per flow turn. A Heron
+	// session runs several FlowTurns: the user's turn, then one turn per
+	// mailbox wake-up (a dispatched Team reporting back, the entry Team
+	// summarising it). Keying by turn instead of pinning one turn ID is what
+	// lets an unattended turn's progress through — a single pinned ID silently
+	// dropped everything after the first turn ended.
+	//
+	// Entries are bounded by pruneProgressSeen, which forgets turns a new turn
+	// has superseded (see the turnSequence counter).
+	progressSeen map[string]int64
+	// progressOrder records the arrival order of each turn, so the turn the
+	// caller is waiting on can be told apart from later mailbox turns without
+	// relying on turn IDs, which carry no ordering.
+	progressOrder    map[string]uint64
+	turnSequence     uint64
 	progressStatus   string
 	pendingApprovals []heronPendingApproval
 
@@ -126,6 +145,16 @@ type heronProgress struct {
 	RecordName       string                 `json:"record_name"`
 	Revision         int                    `json:"revision"`
 	ToolCalls        int                    `json:"tool_calls"`
+	// Reply is the turn's final text, carried on flow_turn_completed for turns
+	// the caller is not waiting on (mailbox wake-ups).
+	Reply string `json:"reply"`
+	// Origin distinguishes a user turn ("user") from a turn Heron started on
+	// its own ("mailbox", "resume"). Empty on engines older than the field.
+	Origin string `json:"origin"`
+	// Intermediate marks a background turn whose reply is an internal step
+	// rather than an answer for the user (a Team handing work back to its
+	// activator). Such replies are never relayed.
+	Intermediate bool `json:"intermediate"`
 }
 
 type heronContentBlock struct {
@@ -213,9 +242,13 @@ func (s *heronSession) Send(prompt string, images []core.ImageAttachment, files 
 	s.turnMu.Lock()
 	defer s.turnMu.Unlock()
 
+	// A new user turn supersedes every turn seen so far: mailbox wake-ups from
+	// the previous turn are done by the time it is over. Forgetting them keeps
+	// the dedup map sized by one conversation turn rather than by session age.
 	s.progressMu.Lock()
-	s.progressTurnID = ""
-	s.lastProgressSeq = 0
+	s.progressSeen = make(map[string]int64)
+	s.progressOrder = make(map[string]uint64)
+	s.turnSequence++
 	s.progressStatus = ""
 	s.pendingApprovals = nil
 	s.progressMu.Unlock()
@@ -322,9 +355,6 @@ func (s *heronSession) handleResponse(response heronJSONRPCResponse) error {
 		s.sessionID.Store(result.SessionID)
 	}
 	s.progressMu.Lock()
-	if result.FlowTurnID != "" && s.progressTurnID == "" {
-		s.progressTurnID = result.FlowTurnID
-	}
 	if result.Status == "" {
 		result.Status = s.progressStatus
 	}
@@ -365,13 +395,28 @@ func (s *heronSession) handleResponse(response heronJSONRPCResponse) error {
 	}
 	// Empty reply with no error (model/API returned nothing) must not surface
 	// as a successful empty result.
+	//
+	// It must not surface as EventError either. Heron's dispatch turn
+	// legitimately ends with a short routing reply and then keeps working in
+	// the background; marking the normal end of a turn as an error makes the
+	// engine flag the session for a resync, which stops the unsolicited reader
+	// from ever starting — and with it every background result. A terminal
+	// EventResult carrying a placeholder keeps the reader alive and still tells
+	// the user the turn produced nothing.
 	if strings.TrimSpace(result.Reply) == "" {
 		slog.Warn("heronSession: turn returned empty reply", "session_id", result.SessionID)
 		return s.emit(core.Event{
-			Type:      core.EventError,
-			Error:     errors.New("model returned an empty result"),
-			SessionID: result.SessionID,
-			Done:      true,
+			Type:         core.EventResult,
+			Content:      emptyReplyPlaceholder,
+			SessionID:    result.SessionID,
+			Done:         true,
+			InputTokens:  result.Usage.PromptTokens,
+			OutputTokens: result.Usage.CompletionTokens,
+			Metadata: map[string]any{
+				"flow_turn_id": result.FlowTurnID,
+				"status":       result.Status,
+				"empty_reply":  true,
+			},
 		})
 	}
 	return s.emit(core.Event{
@@ -421,6 +466,14 @@ func (s *heronSession) handleNotification(method string, params json.RawMessage)
 	if sessionID == "" {
 		sessionID = s.CurrentSessionID()
 	}
+	// applyToUserTurn is set for a turn the caller is not waiting on: Heron
+	// runs one FlowTurn per mailbox wake-up (a dispatched Team reporting back,
+	// the entry Team summarising it), and a JSON-RPC "turn" response only ever
+	// terminates the user's own turn. Progress of any other turn is therefore
+	// relayed as an unattended agent turn — EventResult with no active caller —
+	// which is exactly the "background completion" shape every other adapter
+	// already produces.
+	applyToUserTurn := s.progressIsUserTurn(progress.FlowTurnID)
 	switch progress.Type {
 	case "assistant":
 		var blocks []heronContentBlock
@@ -432,6 +485,9 @@ func (s *heronSession) handleNotification(method string, params json.RawMessage)
 		}
 		for _, block := range blocks {
 			if block.Type != "text" || block.Text == "" {
+				continue
+			}
+			if !applyToUserTurn {
 				continue
 			}
 			if err := s.emit(core.Event{Type: core.EventText, Content: block.Text, SessionID: sessionID}); err != nil {
@@ -473,6 +529,35 @@ func (s *heronSession) handleNotification(method string, params json.RawMessage)
 			ToolSuccess:  &success,
 			SessionID:    sessionID,
 		})
+	case "flow_turn_completed":
+		// A turn the caller is waiting on ends through its JSON-RPC response,
+		// which carries the reply and the usage. Relaying the event as well
+		// would duplicate that reply in the same bubble.
+		if applyToUserTurn {
+			return nil
+		}
+		return s.emitUnattendedTurn(progress, sessionID)
+	case "flow_turn_started":
+		// The caller's own turn is already running; a start notice for it adds
+		// nothing. An unattended one is worth a thought line so the user can
+		// tell a background turn apart from a stalled one.
+		if applyToUserTurn || progress.Origin == "user" {
+			return nil
+		}
+		return s.emit(core.Event{
+			Type:      core.EventThinking,
+			Content:   unattendedTurnNotice(progress),
+			SessionID: sessionID,
+		})
+	case "team_turn_completed":
+		if applyToUserTurn || progress.TeamID == "" {
+			return nil
+		}
+		return s.emit(core.Event{
+			Type:      core.EventThinking,
+			Content:   fmt.Sprintf("↳ %s 完成", progress.TeamID),
+			SessionID: sessionID,
+		})
 	case "status":
 		s.progressMu.Lock()
 		s.progressStatus = progress.Status
@@ -506,18 +591,78 @@ func (s *heronSession) acceptProgress(progress heronProgress) bool {
 	}
 	s.progressMu.Lock()
 	defer s.progressMu.Unlock()
-	if s.progressTurnID == "" {
-		s.progressTurnID = progress.FlowTurnID
-	} else if s.progressTurnID != progress.FlowTurnID {
-		return false
+	if s.progressSeen == nil {
+		s.progressSeen = make(map[string]int64)
+	}
+	if s.progressOrder == nil {
+		s.progressOrder = make(map[string]uint64)
+	}
+	lastSeq, seen := s.progressSeen[progress.FlowTurnID]
+	if !seen {
+		// Record arrival order: the first turn of a Send cycle is the one the
+		// JSON-RPC response terminates (see progressIsUserTurn).
+		s.turnSequence++
+		s.progressOrder[progress.FlowTurnID] = s.turnSequence
+		s.progressSeen[progress.FlowTurnID] = 0
+		lastSeq = 0
 	}
 	if progress.Seq > 0 {
-		if progress.Seq <= s.lastProgressSeq {
+		if progress.Seq <= lastSeq {
 			return false
 		}
-		s.lastProgressSeq = progress.Seq
+		s.progressSeen[progress.FlowTurnID] = progress.Seq
 	}
 	return true
+}
+
+// progressIsUserTurn reports whether flowTurnID belongs to the turn the caller
+// is waiting on. Heron answers a "turn" request with the reply of exactly one
+// FlowTurn; every other turn of the same session (mailbox wake-ups) reaches the
+// caller only as progress notifications.
+//
+// The user's turn is the first one seen in a Send cycle, which is the turn the
+// response terminates. Later turns are unattended by construction: the reply
+// that ends the request has already been produced or is being produced now.
+func (s *heronSession) progressIsUserTurn(flowTurnID string) bool {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	order, seen := s.progressOrder[flowTurnID]
+	// A turn with no recorded order has not been accepted yet; treat it as the
+	// user's, the pre-existing behaviour for the very first turn.
+	return !seen || order <= 1
+}
+
+// emitUnattendedTurn relays a background FlowTurn as an agent-initiated turn:
+// its reply goes out as EventResult, which the engine already treats as an
+// unsolicited completion (it appends history and sends to the platform without
+// waiting for a caller).
+func (s *heronSession) emitUnattendedTurn(progress heronProgress, sessionID string) error {
+	reply := strings.TrimSpace(progress.Reply)
+	if reply == "" || progress.Intermediate {
+		return nil
+	}
+	return s.emit(core.Event{
+		Type:      core.EventResult,
+		Content:   reply,
+		SessionID: sessionID,
+		Done:      true,
+		Metadata: map[string]any{
+			"flow_turn_id": progress.FlowTurnID,
+			"status":       progress.Status,
+			"origin":       progress.Origin,
+		},
+	})
+}
+
+// unattendedTurnNotice renders the one-line lead-in for a background turn, so
+// the user can tell "a Team is still working" apart from "nothing is happening".
+func unattendedTurnNotice(progress heronProgress) string {
+	switch progress.Origin {
+	case "mailbox":
+		return "🔄 后台团队继续处理中…"
+	default:
+		return "🔄 会话继续处理中…"
+	}
 }
 
 func summarizeInput(tool string, input map[string]any) string {

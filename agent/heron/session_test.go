@@ -24,6 +24,183 @@ func newTestHeronSession() *heronSession {
 	return session
 }
 
+// TestHeronSessionRelaysUnattendedTurnReply covers the async-dispatch gap: a
+// user turn answers "handed off", then Heron keeps working in a mailbox-driven
+// turn. That later turn's reply must reach the caller as an unattended result,
+// otherwise the answer exists only in the engine's own records.
+func TestHeronSessionRelaysUnattendedTurnReply(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	session.progressMu.Lock()
+	session.progressSeen = map[string]int64{"ft-user": 0}
+	session.progressOrder = map[string]uint64{"ft-user": 1}
+	session.turnSequence = 1
+	session.progressMu.Unlock()
+
+	frames := []string{
+		`{"session_id":"fs-1","flow_turn_id":"ft-user","seq":1,"event_id":"fs-1-1","type":"assistant","content":[{"type":"text","text":"handed off"}]}`,
+		`{"session_id":"fs-1","flow_turn_id":"ft-user","seq":2,"event_id":"fs-1-2","type":"flow_turn_completed","reply":"已转给执行侧核实","status":"waiting_input"}`,
+		`{"session_id":"fs-1","flow_turn_id":"ft-bg","seq":3,"event_id":"fs-1-3","type":"flow_turn_started","origin":"mailbox"}`,
+		`{"session_id":"fs-1","flow_turn_id":"ft-bg","seq":4,"event_id":"fs-1-4","type":"assistant","content":[{"type":"text","text":"raw model json"}]}`,
+		`{"session_id":"fs-1","flow_turn_id":"ft-bg","seq":5,"event_id":"fs-1-5","type":"flow_turn_completed","origin":"mailbox","reply":"heron-ai 的主分支是 master","status":"completed","team_id":"default"}`,
+	}
+	for _, frame := range frames {
+		if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var results []core.Event
+	for len(session.events) > 0 {
+		event := <-session.events
+		if event.Type == core.EventResult {
+			results = append(results, event)
+		}
+	}
+	if len(results) != 1 {
+		t.Fatalf("want exactly one relayed result, got %d: %+v", len(results), results)
+	}
+	if got := results[0]; got.Content != "heron-ai 的主分支是 master" || got.Metadata["flow_turn_id"] != "ft-bg" {
+		t.Fatalf("relayed result = %+v", got)
+	}
+}
+
+// TestHeronSessionDropsIntermediateBackgroundReplies guards the chained
+// hand-off case (default -> owner -> other): only the turn that reports back to
+// the entry team carries an answer. A Team handing work to its activator is an
+// internal step and must not reach the user as a reply.
+func TestHeronSessionDropsIntermediateBackgroundReplies(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	session.progressMu.Lock()
+	session.progressSeen = map[string]int64{"ft-user": 0}
+	session.progressOrder = map[string]uint64{"ft-user": 1}
+	session.turnSequence = 1
+	session.progressMu.Unlock()
+
+	frame := `{"session_id":"fs-1","flow_turn_id":"ft-owner","seq":7,"event_id":"fs-1-7","type":"flow_turn_completed","origin":"mailbox","intermediate":true,"reply":"owner 已拿到 other 的结果，继续处理"}`
+	if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
+		t.Fatal(err)
+	}
+	if len(session.events) != 0 {
+		t.Fatalf("intermediate background reply leaked %d events", len(session.events))
+	}
+}
+
+// TestHeronSessionUserTurnAssistantReachesText keeps the foreground streaming
+// path unchanged: assistant text of the turn the caller is waiting on still
+// arrives as EventText, and its completion does not fabricate a second result
+// (the JSON-RPC response carries the reply).
+func TestHeronSessionUserTurnAssistantReachesText(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	session.progressMu.Lock()
+	session.progressSeen = map[string]int64{"ft-user": 0}
+	session.progressOrder = map[string]uint64{"ft-user": 1}
+	session.turnSequence = 1
+	session.progressMu.Unlock()
+
+	frames := []string{
+		`{"session_id":"fs-1","flow_turn_id":"ft-user","seq":1,"event_id":"fs-1-1","type":"assistant","content":[{"type":"text","text":"partial answer"}]}`,
+		`{"session_id":"fs-1","flow_turn_id":"ft-user","seq":2,"event_id":"fs-1-2","type":"flow_turn_completed","origin":"user","reply":"partial answer","status":"completed"}`,
+	}
+	for _, frame := range frames {
+		if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := <-session.events; got.Type != core.EventText || got.Content != "partial answer" {
+		t.Fatalf("first event = %+v", got)
+	}
+	if len(session.events) != 0 {
+		t.Fatalf("user turn completion emitted %d extra events", len(session.events))
+	}
+}
+
+// TestHeronSessionTeamProgressSurfacesAsThinking covers the progress line a
+// background Team adds, so the UI can show work continuing instead of silence.
+func TestHeronSessionTeamProgressSurfacesAsThinking(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	session.progressMu.Lock()
+	session.progressSeen = map[string]int64{"ft-user": 0}
+	session.progressOrder = map[string]uint64{"ft-user": 1}
+	session.turnSequence = 1
+	session.progressMu.Unlock()
+
+	frame := `{"session_id":"fs-1","flow_turn_id":"ft-bg","seq":9,"event_id":"fs-1-9","type":"team_turn_completed","team_id":"repo-info","status":"completed"}`
+	if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-session.events; got.Type != core.EventThinking || !strings.Contains(got.Content, "repo-info") {
+		t.Fatalf("team progress event = %+v", got)
+	}
+}
+
+// TestHeronSessionEmptyReplyIsNotError pins the trigger of the whole incident:
+// an empty reply used to be an EventError, which flags the session for a resync
+// and stops the background reader from ever starting — taking every later
+// background result with it.
+func TestHeronSessionEmptyReplyIsNotError(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	defer session.cancel()
+	err := session.handleResponse(heronJSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Result: mustJSON(map[string]any{
+			"session_id":   "fs-9",
+			"flow_turn_id": "ft-9",
+			"status":       "waiting_input",
+			"reply":        "",
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := <-session.events
+	if event.Type != core.EventResult {
+		t.Fatalf("empty reply event type = %v, want EventResult", event.Type)
+	}
+	if !event.Done || event.Content != emptyReplyPlaceholder {
+		t.Fatalf("empty reply event = %+v", event)
+	}
+	if empty, _ := event.Metadata["empty_reply"].(bool); !empty {
+		t.Fatalf("empty reply metadata = %#v", event.Metadata)
+	}
+}
+
+// TestHeronSessionAcceptsProgressAcrossFlowTurns is the regression test for the
+// pinned-turn filter: both turns of one Send cycle must be accepted.
+func TestHeronSessionAcceptsProgressAcrossFlowTurns(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	first := heronProgress{SessionID: "fs-1", FlowTurnID: "ft-a", Seq: 1, EventID: "e1", Type: "flow_turn_started"}
+	second := heronProgress{SessionID: "fs-1", FlowTurnID: "ft-b", Seq: 2, EventID: "e2", Type: "flow_turn_started"}
+	if !session.acceptProgress(first) {
+		t.Fatal("first turn rejected")
+	}
+	if !session.acceptProgress(second) {
+		t.Fatal("later turn of the same Send was rejected")
+	}
+	if session.acceptProgress(heronProgress{SessionID: "fs-1", FlowTurnID: "ft-b", Seq: 2, EventID: "e2", Type: "flow_turn_started"}) {
+		t.Fatal("duplicate seq accepted")
+	}
+	if !session.progressIsUserTurn("ft-a") {
+		t.Fatal("first turn should be the user turn")
+	}
+	if session.progressIsUserTurn("ft-b") {
+		t.Fatal("later turn should not be the user turn")
+	}
+}
+
 func TestAgentNewAddsJSONRPCFlag(t *testing.T) {
 	agent, err := New(map[string]any{
 		"command": "true",
@@ -55,8 +232,7 @@ func TestHeronSessionSendWritesTurnRequest(t *testing.T) {
 	session := newTestHeronSession()
 	session.stdin = writer
 	session.sessionID.Store("fs-1")
-	session.progressTurnID = "old-turn"
-	session.lastProgressSeq = 90
+	session.progressSeen = map[string]int64{"old-turn": 90}
 	session.progressStatus = "waiting_approval"
 	session.pendingApprovals = []heronPendingApproval{{RequestID: "old-approval"}}
 	defer session.cancel()
@@ -88,8 +264,8 @@ func TestHeronSessionSendWritesTurnRequest(t *testing.T) {
 	if params["session_id"] != "fs-1" || params["input"] != "continue" {
 		t.Fatalf("params = %#v", params)
 	}
-	if session.progressTurnID != "" || session.lastProgressSeq != 0 || session.progressStatus != "" || len(session.pendingApprovals) != 0 {
-		t.Fatalf("progress turn state was not reset: turn=%q seq=%d status=%q approvals=%#v", session.progressTurnID, session.lastProgressSeq, session.progressStatus, session.pendingApprovals)
+	if len(session.progressSeen) != 0 || session.progressStatus != "" || len(session.pendingApprovals) != 0 {
+		t.Fatalf("progress turn state was not reset: seen=%v status=%q approvals=%#v", session.progressSeen, session.progressStatus, session.pendingApprovals)
 	}
 }
 
