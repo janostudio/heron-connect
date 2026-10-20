@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.3.29 (2026-10-20)
+
+### Added
+
+- **Heron AI 过程事件现在会透出到 Web/IM**：展示每轮模型文本、工具调用与结果，并保留调用关联；Heron 的 `waiting_approval` / `waiting_tool` 状态会明确提示并正常结束当前连接器回合，不再误报空回复错误。
+  背景：Heron JSON-RPC 之前只返回整轮最终答复，执行中的 team/call/tool 信息不可见；等待状态因空 `reply` 被误判为模型失败。现在 adapter 将结构化 `progress` 帧映射到通用事件，兼容旧式 progress 文本；挂起状态保留 Heron session ID，后续输入可继续该会话。审批批准/拒绝交互仍未实现。
+
 ## v1.3.28 (2026-10-16)
 
 ### Added

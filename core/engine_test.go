@@ -1414,6 +1414,49 @@ func TestProcessInteractiveEvents_SuppressesReplyFooterWhenOnlyWorkDir(t *testin
 	}
 }
 
+func TestProcessInteractiveEvents_SuspendedTurnPreservesSessionWithoutReplyOrError(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetDisplayConfig(DisplayCfg{ThinkingMessages: false, ToolMessages: true})
+	sessionKey := "test:user-suspended"
+	session := e.sessions.GetOrCreateActive(sessionKey)
+	agentSession := newControllableSession("heron-flow-session")
+	state := &interactiveState{
+		agentSession: agentSession,
+		platform:     p,
+		replyCtx:     "ctx-1",
+	}
+	e.interactiveStates[sessionKey] = state
+
+	agentSession.events <- Event{Type: EventThinking, Content: "等待审批：Bash"}
+	agentSession.events <- Event{
+		Type:      EventSuspended,
+		Content:   "等待审批：Bash",
+		SessionID: "heron-flow-session",
+		Metadata:  map[string]any{"status": "waiting_approval"},
+	}
+	e.processInteractiveEvents(state, session, e.sessions, sessionKey, "m-suspended", time.Now(), nil, nil, nil)
+
+	if got := session.GetAgentSessionID(); got != "heron-flow-session" {
+		t.Fatalf("agent session ID = %q, want persisted Heron session", got)
+	}
+	if history := session.GetHistory(0); len(history) != 0 {
+		t.Fatalf("suspended turn added conversation history: %#v", history)
+	}
+	if turnState := e.InteractiveSessionTurnStates()[sessionKey]; turnState.Running {
+		t.Fatalf("suspended turn still running: %+v", turnState)
+	}
+	sent := p.getSent()
+	if len(sent) != 1 || !strings.Contains(sent[0], "等待审批：Bash") {
+		t.Fatalf("suspended turn should show its wait status without a reply: %#v", sent)
+	}
+	for _, message := range sent {
+		if message == "assistant answer" || strings.Contains(message, "internal error") {
+			t.Fatalf("suspended turn emitted a reply or error: %#v", sent)
+		}
+	}
+}
+
 func TestProcessInteractiveEvents_HiddenToolProgressKeepsPreviewOnFinalize(t *testing.T) {
 	p := &mockKeepPreviewPlatform{}
 	p.n = "feishu"

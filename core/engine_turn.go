@@ -1215,6 +1215,45 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				idleTimer.Reset(e.eventIdleTimeout)
 			}
 
+		case EventSuspended:
+			cp.Finalize(ProgressCardStateCompleted)
+			if !display.ThinkingMessages && event.Content != "" {
+				waitMessage := fmt.Sprintf(e.i18n.T(MsgThinking), truncateIf(event.Content, display.ThinkingMaxLen))
+				sendWorkspace(p, replyCtx, waitMessage)
+			}
+			sp.discard()
+			if streamCard != nil && !streamCard.Failed() {
+				if err := streamCard.Finalize(e.ctx, buildCardContent(cardThinkingText, cardToolCalls, cardAnswerText.String())); err != nil {
+					slog.Debug("suspended streaming card finalize failed", "platform", p.Name(), "error", err)
+				}
+			}
+			if hasRichCard && cardMessageID != nil {
+				card := richCardSupporter.BuildRichCard(CardStatusDone, "", toolSteps, partialText, false, time.Since(turnStart))
+				if updater, ok := p.(MessageUpdater); ok {
+					if err := updater.UpdateMessage(e.ctx, cardMessageID, card); err != nil {
+						slog.Debug("suspended rich card finalize failed", "platform", p.Name(), "error", err)
+					}
+				}
+			}
+			state.mu.Lock()
+			state.eventsNeedResync = false
+			state.mu.Unlock()
+			agentSessionID := event.SessionID
+			if state.agentSession != nil && state.agentSession.CurrentSessionID() != "" {
+				agentSessionID = state.agentSession.CurrentSessionID()
+			}
+			if agentSessionID != "" && session.CompareAndSetAgentSessionID(agentSessionID, e.agent.Name()) {
+				sessions.Save()
+			}
+			if pendingSend != nil {
+				if err := <-pendingSend; err != nil {
+					slog.Warn("async send error before suspended turn", "error", err, "session", sessionKey)
+				}
+			}
+			status, _ := event.Metadata["status"].(string)
+			slog.Info("agent turn suspended", "session", sessionKey, "agent", e.agent.Name(), "status", status)
+			return
+
 		case EventResult:
 			cp.Finalize(ProgressCardStateCompleted)
 			// Use state.agentSession.CurrentSessionID() instead of event.SessionID.
