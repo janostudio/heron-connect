@@ -248,7 +248,7 @@ func (s *heronSession) Send(prompt string, images []core.ImageAttachment, files 
 	s.progressMu.Lock()
 	s.progressSeen = make(map[string]int64)
 	s.progressOrder = make(map[string]uint64)
-	s.turnSequence++
+	s.turnSequence = 0
 	s.progressStatus = ""
 	s.pendingApprovals = nil
 	s.progressMu.Unlock()

@@ -3191,7 +3191,7 @@ func TestHandleMessage_MultiWorkspacePreservesCCSessionKey(t *testing.T) {
 	}
 }
 
-func TestHandleMessage_AutoResetOnIdle_RotatesToNewSession(t *testing.T) {
+func TestHandleMessage_AutoResetOnIdle_NonWebExplicitSessionStillRotates(t *testing.T) {
 	p := &stubPlatformEngine{n: "test"}
 	agentSession := newResultAgentSession("fresh reply")
 	agent := &resultAgent{session: agentSession}
@@ -3209,6 +3209,7 @@ func TestHandleMessage_AutoResetOnIdle_RotatesToNewSession(t *testing.T) {
 
 	msg := &Message{
 		SessionKey: key,
+		SessionID:  old.ID,
 		Platform:   "test",
 		UserID:     "u1",
 		UserName:   "user",
@@ -3263,6 +3264,99 @@ func TestHandleMessage_AutoResetOnIdle_RotatesToNewSession(t *testing.T) {
 	}
 	if got := sent[len(sent)-1]; got != "fresh reply" {
 		t.Fatalf("final reply = %q, want fresh reply", got)
+	}
+}
+
+func TestHandleMessage_AutoResetOnIdle_WebExplicitSessionDoesNotRotate(t *testing.T) {
+	p := &stubPlatformEngine{n: "bridge"}
+	agentSession := newResultAgentSession("web reply")
+	agent := &resultAgent{session: agentSession}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetResetOnIdle(720 * time.Minute)
+
+	key := "web:user1"
+	session := e.sessions.GetOrCreateActive(key)
+	session.AddHistory("user", "stale context")
+	session.SetAgentSessionID("old-session", "stub")
+	session.mu.Lock()
+	session.UpdatedAt = time.Now().Add(-20 * time.Hour)
+	session.mu.Unlock()
+
+	msg := &Message{
+		SessionKey: key,
+		SessionID:  session.ID,
+		Platform:   "web",
+		UserID:     "u1",
+		UserName:   "user",
+		Content:    "continue selected conversation",
+		ReplyCtx:   "ctx",
+	}
+	e.handleMessage(p, msg)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		if len(p.getSent()) >= 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for Web reply")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	active := e.sessions.GetOrCreateActive(key)
+	if active.ID != session.ID {
+		t.Fatalf("expected explicitly selected Web session to remain active, got %s (old %s)", active.ID, session.ID)
+	}
+	if got := active.GetAgentSessionID(); got != "old-session" {
+		t.Fatalf("session agent id = %q, want old-session preserved", got)
+	}
+}
+
+func TestHandleMessage_AutoResetOnIdle_WebUnknownSessionIDFallsBackAndRotates(t *testing.T) {
+	p := &stubPlatformEngine{n: "bridge"}
+	agentSession := newResultAgentSession("fresh reply")
+	agent := &resultAgent{session: agentSession}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetResetOnIdle(60 * time.Minute)
+
+	key := "web:user1"
+	old := e.sessions.GetOrCreateActive(key)
+	old.AddHistory("user", "stale context")
+	old.SetAgentSessionID("old-session", "stub")
+	old.mu.Lock()
+	old.UpdatedAt = time.Now().Add(-2 * time.Hour)
+	old.mu.Unlock()
+
+	msg := &Message{
+		SessionKey: key,
+		SessionID:  "unknown-session-id",
+		Platform:   "web",
+		UserID:     "u1",
+		UserName:   "user",
+		Content:    "hello after idle",
+		ReplyCtx:   "ctx",
+	}
+	e.handleMessage(p, msg)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		active := e.sessions.GetOrCreateActive(key)
+		if active.ID != old.ID && len(p.getSent()) >= 2 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for fallback idle reset, sent=%v", p.getSent())
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	if active := e.sessions.GetOrCreateActive(key); active.ID == old.ID {
+		t.Fatal("expected unknown explicit Web session id to fall back and rotate stale active session")
 	}
 }
 

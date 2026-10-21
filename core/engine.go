@@ -1343,6 +1343,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 	// the key (e.g. s91 after an idle auto-reset). Falls back to the key-based
 	// active session when the id is absent or no longer exists.
 	session := sessions.FindByID(msg.SessionID)
+	explicitWebSession := msg.Platform == "web" && msg.SessionID != "" && session != nil
 	if session == nil {
 		session = sessions.GetOrCreateActive(msg.SessionKey)
 	}
@@ -1392,8 +1393,12 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 	}
 
 sessionLocked:
-	if rotated := e.maybeAutoResetSessionOnIdle(p, msg, sessions, interactiveKey, session); rotated != nil {
-		session = rotated
+	// An explicitly selected Web conversation is a fixed target; keep the idle
+	// reset policy unchanged for all other requests.
+	if !explicitWebSession {
+		if rotated := e.maybeAutoResetSessionOnIdle(p, msg, sessions, interactiveKey, session); rotated != nil {
+			session = rotated
+		}
 	}
 
 	// Ensure an interactiveState entry exists before launching the async

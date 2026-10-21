@@ -89,35 +89,58 @@ func TestHeronSessionDropsIntermediateBackgroundReplies(t *testing.T) {
 	}
 }
 
-// TestHeronSessionUserTurnAssistantReachesText keeps the foreground streaming
-// path unchanged: assistant text of the turn the caller is waiting on still
-// arrives as EventText, and its completion does not fabricate a second result
-// (the JSON-RPC response carries the reply).
-func TestHeronSessionUserTurnAssistantReachesText(t *testing.T) {
+// TestHeronSessionFirstTurnProgressPrecedesSingleResponseResult exercises the
+// real Send reset path: the first FlowTurn's assistant text must arrive as
+// EventText, and its progress completion must not duplicate the JSON-RPC result.
+func TestHeronSessionFirstTurnProgressPrecedesSingleResponseResult(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+
 	session := newTestHeronSession()
+	session.stdin = writer
 	defer session.cancel()
 
-	session.progressMu.Lock()
-	session.progressSeen = map[string]int64{"ft-user": 0}
-	session.progressOrder = map[string]uint64{"ft-user": 1}
-	session.turnSequence = 1
-	session.progressMu.Unlock()
+	if err := session.Send("find the default branch", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	if _, err := io.ReadAll(reader); err != nil {
+		t.Fatal(err)
+	}
 
 	frames := []string{
-		`{"session_id":"fs-1","flow_turn_id":"ft-user","seq":1,"event_id":"fs-1-1","type":"assistant","content":[{"type":"text","text":"partial answer"}]}`,
-		`{"session_id":"fs-1","flow_turn_id":"ft-user","seq":2,"event_id":"fs-1-2","type":"flow_turn_completed","origin":"user","reply":"partial answer","status":"completed"}`,
+		`{"session_id":"fs-first","flow_turn_id":"ft-first","seq":1,"event_id":"fs-first-1","type":"assistant","content":[{"type":"text","text":"The default branch is main."}]}`,
+		`{"session_id":"fs-first","flow_turn_id":"ft-first","seq":2,"event_id":"fs-first-2","type":"flow_turn_completed","origin":"user","reply":"The default branch is main.","status":"waiting_input"}`,
 	}
 	for _, frame := range frames {
 		if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if err := session.handleResponse(heronJSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Result: mustJSON(map[string]any{
+			"session_id":   "fs-first",
+			"flow_turn_id": "ft-first",
+			"status":       "waiting_input",
+			"reply":        "The default branch is main.",
+		}),
+	}); err != nil {
+		t.Fatal(err)
+	}
 
-	if got := <-session.events; got.Type != core.EventText || got.Content != "partial answer" {
-		t.Fatalf("first event = %+v", got)
+	if got := <-session.events; got.Type != core.EventText || got.Content != "The default branch is main." {
+		t.Fatalf("first-turn progress event = %+v, want assistant text", got)
+	}
+	if got := <-session.events; got.Type != core.EventResult || got.Content != "The default branch is main." {
+		t.Fatalf("turn response event = %+v, want exactly one final result", got)
 	}
 	if len(session.events) != 0 {
-		t.Fatalf("user turn completion emitted %d extra events", len(session.events))
+		t.Fatalf("user turn emitted duplicate results: %d extra events", len(session.events))
 	}
 }
 
