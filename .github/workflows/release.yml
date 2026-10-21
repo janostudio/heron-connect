@@ -30,6 +30,13 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Build web assets
+        # web/embed.go embeds all:dist, so every package that links the
+        # connector fails to compile until the frontend is built. Doing it
+        # before the tests keeps `go test ./...` from reporting three
+        # "[setup failed]" packages as if the code were broken.
+        run: make web
+
       - name: Run tests
         run: go test ./...
 

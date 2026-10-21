@@ -108,8 +108,13 @@ func TestReadTurnRecords_WindowAndMalformed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	start := time.Date(2026, 8, 30, 0, 0, 0, 0, time.Local)
-	end := time.Date(2026, 8, 31, 0, 0, 0, 0, time.Local)
+	// The records carry +08:00 timestamps, so the window has to use the same
+	// fixed zone. With time.Local this test only passes on a +08:00 machine:
+	// on a UTC runner 2026-08-31T00:00:01+08:00 lands at 08-30T16:00Z, inside
+	// the window, and the "out-of-window excluded" assertion fails.
+	cst := time.FixedZone("CST", 8*60*60)
+	start := time.Date(2026, 8, 30, 0, 0, 0, 0, cst)
+	end := time.Date(2026, 8, 31, 0, 0, 0, 0, cst)
 	recs := ReadTurnRecords([]string{p}, start, end)
 	if len(recs) != 2 {
 		t.Fatalf("got %d records, want 2 (malformed skipped, out-of-window excluded)", len(recs))
