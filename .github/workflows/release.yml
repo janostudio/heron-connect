@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+# 与 heron-ai 的发布方式保持一致：打 tag 即发布，产物与 npm 包都由流水线产出，
+# 不再依赖本地 make publish（那需要本机的 gh 认证与 NPM_TOKEN）。
+#
+# 本地 make publish 仍然可用，两者共用 npm/release-assets.js：
+#   - ensure 会创建 GitHub Release 并上传 dist/ 归档
+#   - npm publish 的 prepublishOnly 也会调 ensure，流水线里已先跑一次，故跳过脚本避免重复
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Cross-compile and package
+        run: make release-all VERSION=${GITHUB_REF_NAME}
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node npm/release-assets.js ensure
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          cd npm
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          # npm 对无效/过期的 token 返回 404（"'<pkg>@<version>' is not in this
+          # registry"）而不是 401，看起来像"包不存在/没权限发布"，极易误诊。
+          # 发布前先确认 token 有效，失败就明确报认证问题并终止。
+          npm whoami || { echo "::error::NPM_TOKEN 无效或已过期（npm whoami 失败）；请到 npm 账户重新生成 token 并更新仓库 secret NPM_TOKEN"; exit 1; }
+          # 版本必须与 tag 一致，否则会发出一个与 Release 对不上的 npm 包。
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION=${GITHUB_REF_NAME#v}
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::npm/package.json 版本 $PKG_VERSION 与 tag $GITHUB_REF_NAME 不一致；先 bump 版本号再打 tag"
+            exit 1
+          fi
+          npm publish --access public --ignore-scripts
