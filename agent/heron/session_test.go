@@ -622,3 +622,82 @@ func TestAgentAvailableModels_MissingFile(t *testing.T) {
 		t.Fatalf("expected empty model list for missing models.json, got %#v", models)
 	}
 }
+
+// A turn that ends waiting_input arrives as a status frame, not as
+// flow_turn_completed. Dropping it is why a background answer never reached
+// the user even though the engine had delivered it.
+func TestHeronSessionRelaysBackgroundReplyFromStatusFrame(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	session.progressMu.Lock()
+	session.progressSeen = map[string]int64{"ft-user": 0}
+	session.progressOrder = map[string]uint64{"ft-user": 1}
+	session.turnSequence = 1
+	session.progressMu.Unlock()
+
+	frame := `{"session_id":"fs-1","flow_turn_id":"ft-bg","seq":5,"event_id":"fs-1-5","type":"status","status":"waiting_input","origin":"mailbox","reply":"heron-connect 的主分支是 main"}`
+	if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(session.events) != 1 {
+		t.Fatalf("want the background reply relayed, got %d events", len(session.events))
+	}
+	event := <-session.events
+	if event.Type != core.EventResult || event.Content != "heron-connect 的主分支是 main" || !event.Done {
+		t.Fatalf("relayed event = %+v", event)
+	}
+	if event.Metadata["origin"] != "mailbox" {
+		t.Fatalf("metadata = %+v", event.Metadata)
+	}
+}
+
+// The status frame of the caller's own turn must not be relayed: its reply is
+// already delivered by the JSON-RPC response, and relaying it again duplicates
+// the answer in the same conversation.
+func TestHeronSessionIgnoresStatusFrameForUserTurn(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	session.progressMu.Lock()
+	session.progressSeen = map[string]int64{"ft-user": 0}
+	session.progressOrder = map[string]uint64{"ft-user": 1}
+	session.turnSequence = 1
+	session.progressMu.Unlock()
+
+	frame := `{"session_id":"fs-1","flow_turn_id":"ft-user","seq":6,"event_id":"fs-1-6","type":"status","status":"waiting_input","origin":"user","reply":"已转给执行侧"}`
+	if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
+		t.Fatal(err)
+	}
+	if len(session.events) != 0 {
+		t.Fatalf("user turn status frame leaked %d events", len(session.events))
+	}
+}
+
+// A status frame without a reply is a state transition (waiting_tool /
+// waiting_approval), not an answer.
+func TestHeronSessionIgnoresStatusFrameWithoutReply(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	session.progressMu.Lock()
+	session.progressSeen = map[string]int64{"ft-user": 0}
+	session.progressOrder = map[string]uint64{"ft-user": 1}
+	session.turnSequence = 1
+	session.progressMu.Unlock()
+
+	frame := `{"session_id":"fs-1","flow_turn_id":"ft-bg","seq":7,"event_id":"fs-1-7","type":"status","status":"waiting_approval","origin":"mailbox"}`
+	if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
+		t.Fatal(err)
+	}
+	if len(session.events) != 0 {
+		t.Fatalf("status frame without reply leaked %d events", len(session.events))
+	}
+	session.progressMu.Lock()
+	cached := session.progressStatus
+	session.progressMu.Unlock()
+	if cached != "waiting_approval" {
+		t.Fatalf("status was not cached: %q", cached)
+	}
+}

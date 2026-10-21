@@ -570,6 +570,15 @@ func (s *heronSession) handleNotification(method string, params json.RawMessage)
 		s.progressStatus = progress.Status
 		s.pendingApprovals = append([]heronPendingApproval(nil), progress.PendingApprovals...)
 		s.progressMu.Unlock()
+		// A turn that ends waiting_input — every normal turn, including the
+		// background ones — arrives as this synthetic status frame instead of
+		// flow_turn_completed, and it carries the reply. Treating only
+		// flow_turn_completed as terminal is why a background answer never
+		// reaches the user even when the engine delivered it.
+		if applyToUserTurn {
+			return nil
+		}
+		return s.emitUnattendedTurn(progress, sessionID)
 	case "call_completed":
 		slog.Debug("heron: call completed",
 			"call_id", progress.CallID,
