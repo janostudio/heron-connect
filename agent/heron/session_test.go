@@ -280,12 +280,17 @@ func TestHeronSessionSendWritesTurnRequest(t *testing.T) {
 	if string(request.ID) != "1" {
 		t.Fatalf("request id = %s, want 1", request.ID)
 	}
-	var params map[string]string
+	var params map[string]any
 	if err := json.Unmarshal(request.Params, &params); err != nil {
 		t.Fatal(err)
 	}
 	if params["session_id"] != "fs-1" || params["input"] != "continue" {
 		t.Fatalf("params = %#v", params)
+	}
+	// The engine must keep streaming after this turn; otherwise the work it
+	// dispatches is written to storage with nobody listening.
+	if follow, _ := params["follow_async"].(bool); !follow {
+		t.Fatalf("params = %#v, want follow_async=true", params)
 	}
 	if len(session.progressSeen) != 0 || session.progressStatus != "" || len(session.pendingApprovals) != 0 {
 		t.Fatalf("progress turn state was not reset: seen=%v status=%q approvals=%#v", session.progressSeen, session.progressStatus, session.pendingApprovals)
