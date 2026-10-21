@@ -261,6 +261,13 @@ func (s *heronSession) Send(prompt string, images []core.ImageAttachment, files 
 		Params: mustJSON(map[string]any{
 			"session_id": s.CurrentSessionID(),
 			"input":      prompt,
+			// Keep the engine's subscription open after this turn returns.
+			// A dispatch turn only routes the request ("已转给执行侧"), and
+			// the Teams it hands work to answer in later FlowTurns; without
+			// the subscription those events never reach this process, so the
+			// final answer has nowhere to go. Engines older than 0.0.20 ignore
+			// the field, which keeps this safe across versions.
+			"follow_async": true,
 		}),
 	}
 	if err := s.writeJSON(request); err != nil {
