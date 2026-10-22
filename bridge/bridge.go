@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/janostudio/heron-connect/core"
 	"github.com/gorilla/websocket"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ type bridgeReplyCtx struct {
 	progressStyle               string         `json:"-"`
 	supportsProgressCardPayload bool           `json:"-"`
 	progressMaxEntries          int            `json:"-"` // -1 = no hint; 0 = unlimited; >0 = cap
-	src                        *bridgeAdapter `json:"-"` // non-serialized pointer to originating adapter
+	src                         *bridgeAdapter `json:"-"` // non-serialized pointer to originating adapter
 }
 
 func (rc *bridgeReplyCtx) ProgressStyleHint() string {
@@ -369,6 +369,13 @@ type BridgePlatform struct {
 	project    string
 	handler    core.MessageHandler
 	navHandler core.CardNavigationHandler
+
+	// progress holds the tool-progress lines of in-flight streaming previews,
+	// keyed by the client-side preview handle. The engine rewrites the preview
+	// body wholesale on every text update, so the lines are re-attached on each
+	// update rather than written into the body once.
+	progressMu sync.Mutex
+	progress   map[string]*bridgeProgressState
 }
 
 // Compile-time interface checks.
@@ -385,6 +392,8 @@ var (
 	_ core.FileSender                = (*BridgePlatform)(nil)
 	_ core.CardNavigable             = (*BridgePlatform)(nil)
 	_ core.ReplyContextReconstructor = (*BridgePlatform)(nil)
+	_ core.ProgressAssembler         = (*BridgePlatform)(nil)
+	_ core.StreamPreviewModeProvider = (*BridgePlatform)(nil)
 )
 
 func (bp *BridgePlatform) Name() string { return "bridge" }
@@ -662,6 +671,9 @@ func (bp *BridgePlatform) UpdateMessage(ctx context.Context, replyCtx any, conte
 		// platform; retrying will not help.
 		return core.ErrNotSupported
 	}
+	// Re-attach tool progress: the engine owns the body text and rewrites it in
+	// full on every chunk, so anything left inside it would be dropped here.
+	content = bp.mergeToolProgress(rc.ReplyCtx, content)
 	return bp.server.sendToAdapter(rc.Platform, map[string]any{
 		"type":           "update_message",
 		"session_key":    rc.SessionKey,
@@ -734,6 +746,8 @@ func (bp *BridgePlatform) DeletePreviewMessage(ctx context.Context, previewHandl
 	if !ok {
 		return fmt.Errorf("bridge: invalid preview handle")
 	}
+	// The preview is gone, so its tool lines have nothing left to attach to.
+	defer bp.clearProgress(rc.ReplyCtx)
 	a := bp.server.getAdapterForClient(rc.Platform, rc.ClientID)
 	if a == nil {
 		return core.ErrNotConnected
