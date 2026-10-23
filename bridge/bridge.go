@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"math/rand"
 	"net/http"
@@ -415,9 +416,29 @@ func (bp *BridgePlatform) Reply(ctx context.Context, replyCtx any, content strin
 		"session_key": rc.SessionKey,
 		"session_id":  rc.SessionID,
 		"reply_ctx":   rc.ReplyCtx,
+		"message_id":  replyMessageID(rc, content),
 		"content":     content,
 		"format":      "text",
 	})
+}
+
+// replyMessageID derives a stable identifier for one reply frame.
+//
+// The web client uses it to reconcile a message it already rendered: a
+// background turn and the coordinating reply can carry identical text, and a
+// reconnect can repeat a frame that arrived before the socket dropped. Without
+// an identifier the client can only append, so the user sees the same answer
+// twice until a refresh rebuilds the transcript from the server.
+//
+// The id is scoped to the originating user message (reply_ctx): asking the same
+// question again is a new message and must show up again.
+func replyMessageID(rc *bridgeReplyCtx, content string) string {
+	digest := fnv.New64a()
+	for _, part := range []string{rc.Platform, rc.SessionKey, rc.ReplyCtx, content} {
+		_, _ = digest.Write([]byte(part))
+		_, _ = digest.Write([]byte{0})
+	}
+	return "msg-" + strconv.FormatUint(digest.Sum64(), 16)
 }
 
 // ReplyNotice implements core.NoticeSender. The frame is a normal reply plus

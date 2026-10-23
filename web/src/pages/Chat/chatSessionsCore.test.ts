@@ -783,3 +783,85 @@ describe('mid-turn notices', () => {
     expect(next.messages[0].content).toBe('final');
   });
 });
+
+// ── Duplicate reply frames ───────────────────────────────────
+//
+// The web client used to append whenever no streaming placeholder matched, so
+// the same answer arriving twice (background turn + coordinating reply, or a
+// frame replayed after a reconnect) produced two identical rows until a
+// refresh rebuilt the transcript. The backend now stamps a stable id, and the
+// reducer reconciles by it.
+
+describe('duplicate reply frames', () => {
+  it('the same message_id renders once', () => {
+    const first = applyFrame(emptySlice(), frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u1',
+      message_id: 'msg-1', content: 'CLS 里流量正常。', format: 'markdown',
+    } as any));
+    expect(first.messages).toHaveLength(1);
+
+    const second = applyFrame(first, frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u1',
+      message_id: 'msg-1', content: 'CLS 里流量正常。', format: 'markdown',
+    } as any));
+
+    expect(second.messages).toHaveLength(1);
+    expect(second.messages[0].content).toBe('CLS 里流量正常。');
+    expect(second.typing).toBe(false);
+  });
+
+  it('a replayed frame with different text updates the row it owns', () => {
+    const first = applyFrame(emptySlice(), frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u1',
+      message_id: 'msg-2', content: 'partial', format: 'markdown',
+    } as any));
+    const second = applyFrame(first, frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u1',
+      message_id: 'msg-2', content: 'complete', format: 'markdown',
+    } as any));
+
+    expect(second.messages).toHaveLength(1);
+    expect(second.messages[0].content).toBe('complete');
+  });
+
+  it('a different message_id with identical text still shows up', () => {
+    const first = applyFrame(emptySlice(), frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u1',
+      message_id: 'msg-3', content: '主分支是 main', format: 'markdown',
+    } as any));
+    const second = applyFrame(first, frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u2',
+      message_id: 'msg-4', content: '主分支是 main', format: 'markdown',
+    } as any));
+
+    expect(second.messages).toHaveLength(2);
+  });
+
+  it('a reply without an id keeps the append-only behaviour', () => {
+    const first = applyFrame(emptySlice(), frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', content: 'once', format: 'markdown',
+    } as any));
+    const second = applyFrame(first, frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', content: 'once', format: 'markdown',
+    } as any));
+
+    expect(second.messages).toHaveLength(2);
+  });
+
+  it('a reply that settles a streaming placeholder records the id', () => {
+    const streaming = sliceWith(assistant('a1', 'partial', { streaming: true }));
+    const s = applyFrame(streaming, frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u1',
+      message_id: 'msg-5', content: 'done', format: 'markdown',
+    } as any));
+
+    expect(s.messages).toHaveLength(1);
+    expect(s.messages[0].bridgeMessageId).toBe('msg-5');
+
+    const replay = applyFrame(s, frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u1',
+      message_id: 'msg-5', content: 'done', format: 'markdown',
+    } as any));
+    expect(replay.messages).toHaveLength(1);
+  });
+});

@@ -41,6 +41,12 @@ export interface ChatMsg {
   streaming?: boolean;
   previewHandle?: string;
   timestamp?: string;
+  // Stable id of the bridge reply this row was rendered from. The backend
+  // derives it from the originating user message and the content, so a reply
+  // that arrives twice (background turn + coordinating reply, or a frame
+  // replayed after a reconnect) updates the existing row instead of adding a
+  // second one.
+  bridgeMessageId?: string;
   // When the message body is a structured agent-progress payload (sent by
   // the engine with the __heron_connect_progress_card_v1__: prefix), the
   // parsed payload lives here and takes precedence over `content` for
