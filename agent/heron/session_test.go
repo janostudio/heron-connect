@@ -768,3 +768,99 @@ func TestHeronSessionDoesNotRepeatDeliveries(t *testing.T) {
 		t.Fatalf("delivery repeated: %d", deliveries)
 	}
 }
+
+// s15: 同一回合里，投递项的正文与协调方的回复完全相同（941 字逐字重复），
+// 连接器把两者各发一次，用户看到两条一模一样的消息。
+func TestHeronSessionDropsReplyThatRepeatsDelivery(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	session.progressMu.Lock()
+	session.progressSeen = map[string]int64{"ft-user": 0}
+	session.progressOrder = map[string]uint64{"ft-user": 1}
+	session.turnSequence = 1
+	session.progressMu.Unlock()
+
+	answer := "查看 CLS 线上日志核实结果：**workbuddy.host 的流量并没有消失**，最近 3 小时流量正常。"
+	frame := fmt.Sprintf(`{"session_id":"fs-1","flow_turn_id":"ft-bg","seq":12,"event_id":"fs-1-12","type":"status","status":"waiting_input","origin":"mailbox","reply":%q,"deliveries":[{"message_id":"mb-9","team_id":"owner","text":%q}]}`, answer, answer)
+	if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
+		t.Fatal(err)
+	}
+
+	var contents []string
+	for len(session.events) > 0 {
+		event := <-session.events
+		if event.Type == core.EventResult {
+			contents = append(contents, event.Content)
+		}
+	}
+	if len(contents) != 1 {
+		t.Fatalf("identical delivery and reply must collapse to one message, got %#v", contents)
+	}
+	if contents[0] != answer {
+		t.Fatalf("unexpected content %#v", contents[0])
+	}
+}
+
+// 回复带着适配器自己加的 footer/ctx 时，仍应与投递项判为同一正文。
+func TestHeronSessionIgnoresFooterWhenMatchingDelivery(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	body := "结论：流量没有消失。"
+	if !session.rememberBody("ft-bg", body) {
+		t.Fatal("first body must be sent")
+	}
+	if session.rememberBody("ft-bg", body+"\n\n*[ctx: ~4%] · heron-ai*") {
+		t.Fatal("footer must not make the same body look new")
+	}
+	if session.rememberBody("ft-bg", body+"\n[ctx: ~12%]") {
+		t.Fatal("context indicator must not make the same body look new")
+	}
+}
+
+// 去重只作用在同一回合同一正文；后续回合说同样的话仍要送达。
+func TestHeronSessionDedupIsPerTurn(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	if !session.rememberBody("ft-a", "主分支是 main") {
+		t.Fatal("first turn must send")
+	}
+	if !session.rememberBody("ft-b", "主分支是 main") {
+		t.Fatal("a later turn repeating the same wording must still reach the user")
+	}
+}
+
+// 同一回合的两帧（completed + status）携带同一段回复时只发一次。
+func TestHeronSessionDropsDuplicateTerminalFrames(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	session.progressMu.Lock()
+	session.progressSeen = map[string]int64{"ft-user": 0}
+	session.progressOrder = map[string]uint64{"ft-user": 1}
+	session.turnSequence = 1
+	session.progressMu.Unlock()
+
+	frames := []string{
+		`{"session_id":"fs-1","flow_turn_id":"ft-bg2","seq":20,"event_id":"fs-1-20","type":"flow_turn_completed","reply":"排查完成，流量正常。","status":"waiting_input","origin":"mailbox"}`,
+		`{"session_id":"fs-1","flow_turn_id":"ft-bg2","seq":21,"event_id":"fs-1-21","type":"status","reply":"排查完成，流量正常。","status":"waiting_input","origin":"mailbox"}`,
+	}
+	for _, frame := range frames {
+		if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	count := 0
+	for len(session.events) > 0 {
+		event := <-session.events
+		if event.Type == core.EventResult && event.Content == "排查完成，流量正常。" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("duplicate terminal frames must not produce two messages, got %d", count)
+	}
+}
