@@ -68,6 +68,10 @@ type heronSession struct {
 	turnSequence     uint64
 	progressStatus   string
 	pendingApprovals []heronPendingApproval
+	// deliveredIDs remembers mailbox results already relayed to the user, so a
+	// turn that reports the same delivery twice (completed + status frame)
+	// does not produce two messages.
+	deliveredIDs map[string]bool
 
 	writeMu    sync.Mutex
 	turnMu     sync.Mutex
@@ -155,6 +159,17 @@ type heronProgress struct {
 	// rather than an answer for the user (a Team handing work back to its
 	// activator). Such replies are never relayed.
 	Intermediate bool `json:"intermediate"`
+	// Deliveries are mailbox results the engine wants the user to receive as
+	// their own messages, attributed to the Team that produced them. The
+	// engine decides this from state (a delivered result), not from the
+	// wording of the turn's reply.
+	Deliveries []heronDelivery `json:"deliveries"`
+}
+
+type heronDelivery struct {
+	Text      string `json:"text"`
+	TeamID    string `json:"team_id"`
+	MessageID string `json:"message_id"`
 }
 
 type heronContentBlock struct {
@@ -652,7 +667,52 @@ func (s *heronSession) progressIsUserTurn(flowTurnID string) bool {
 // its reply goes out as EventResult, which the engine already treats as an
 // unsolicited completion (it appends history and sends to the platform without
 // waiting for a caller).
+// emitDeliveries relays mailbox results as their own agent-initiated messages.
+// They are emitted before the turn's reply so the user sees the substance
+// first, and they are attributed to the producing Team.
+func (s *heronSession) emitDeliveries(progress heronProgress, sessionID string) error {
+	for _, delivery := range progress.Deliveries {
+		text := strings.TrimSpace(delivery.Text)
+		if text == "" {
+			continue
+		}
+		if delivery.MessageID != "" {
+			s.progressMu.Lock()
+			if s.deliveredIDs == nil {
+				s.deliveredIDs = make(map[string]bool)
+			}
+			already := s.deliveredIDs[delivery.MessageID]
+			s.deliveredIDs[delivery.MessageID] = true
+			s.progressMu.Unlock()
+			if already {
+				continue
+			}
+		}
+		metadata := map[string]any{
+			"flow_turn_id": progress.FlowTurnID,
+			"origin":       progress.Origin,
+			"delivery":     true,
+		}
+		if delivery.TeamID != "" {
+			metadata["team_id"] = delivery.TeamID
+		}
+		if err := s.emit(core.Event{
+			Type:      core.EventResult,
+			Content:   text,
+			SessionID: sessionID,
+			Done:      true,
+			Metadata:  metadata,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *heronSession) emitUnattendedTurn(progress heronProgress, sessionID string) error {
+	if err := s.emitDeliveries(progress, sessionID); err != nil {
+		return err
+	}
 	reply := strings.TrimSpace(progress.Reply)
 	if reply == "" || progress.Intermediate {
 		return nil

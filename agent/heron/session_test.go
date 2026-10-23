@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -699,5 +700,71 @@ func TestHeronSessionIgnoresStatusFrameWithoutReply(t *testing.T) {
 	session.progressMu.Unlock()
 	if cached != "waiting_approval" {
 		t.Fatalf("status was not cached: %q", cached)
+	}
+}
+
+// 引擎把"投递结果"作为独立交付项随回合事件下发：连接器先把它发出去（归属产生它的
+// 团队），再发回合自身的回复。这样协调方回"稍后给结论"也不会吞掉结果。
+func TestHeronSessionRelaysDeliveriesBeforeTurnReply(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	session.progressMu.Lock()
+	session.progressSeen = map[string]int64{"ft-user": 0}
+	session.progressOrder = map[string]uint64{"ft-user": 1}
+	session.turnSequence = 1
+	session.progressMu.Unlock()
+
+	frame := `{"session_id":"fs-1","flow_turn_id":"ft-bg","seq":8,"event_id":"fs-1-8","type":"status","status":"waiting_input","origin":"mailbox","reply":"稍后给结论","deliveries":[{"message_id":"mb-2","team_id":"owner","text":"缺 CLS 索引/地域/时间范围"}]}`
+	if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
+		t.Fatal(err)
+	}
+
+	var contents []string
+	for len(session.events) > 0 {
+		event := <-session.events
+		if event.Type == core.EventResult {
+			contents = append(contents, event.Content)
+		}
+	}
+	if len(contents) != 2 {
+		t.Fatalf("expected delivery + reply, got %#v", contents)
+	}
+	if contents[0] != "缺 CLS 索引/地域/时间范围" {
+		t.Fatalf("delivery must come first, got %#v", contents)
+	}
+	if contents[1] != "稍后给结论" {
+		t.Fatalf("turn reply must follow, got %#v", contents)
+	}
+}
+
+// 同一 message_id 的交付项重复下发时不重复发消息。
+func TestHeronSessionDoesNotRepeatDeliveries(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	session.progressMu.Lock()
+	session.progressSeen = map[string]int64{"ft-user": 0}
+	session.progressOrder = map[string]uint64{"ft-user": 1}
+	session.turnSequence = 1
+	session.progressMu.Unlock()
+
+	delivery := `"deliveries":[{"message_id":"mb-2","team_id":"owner","text":"缺 CLS 索引"}]`
+	for _, seq := range []int{9, 10} {
+		frame := fmt.Sprintf(`{"session_id":"fs-1","flow_turn_id":"ft-bg","seq":%d,"event_id":"fs-1-%d","type":"status","status":"waiting_input","origin":"mailbox","reply":"稍后给结论",%s}`, seq, seq, delivery)
+		if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	deliveries := 0
+	for len(session.events) > 0 {
+		event := <-session.events
+		if event.Type == core.EventResult && event.Content == "缺 CLS 索引" {
+			deliveries++
+		}
+	}
+	if deliveries != 1 {
+		t.Fatalf("delivery repeated: %d", deliveries)
 	}
 }
