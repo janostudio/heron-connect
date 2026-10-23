@@ -808,13 +808,11 @@ func TestHeronSessionIgnoresFooterWhenMatchingDelivery(t *testing.T) {
 	defer session.cancel()
 
 	body := "结论：流量没有消失。"
-	if !session.rememberBody("ft-bg", body) {
-		t.Fatal("first body must be sent")
-	}
-	if session.rememberBody("ft-bg", body+"\n\n*[ctx: ~4%] · heron-ai*") {
+	session.markBodySent("ft-bg", body)
+	if !session.bodyAlreadySent("ft-bg", body+"\n\n*[ctx: ~4%] · heron-ai*") {
 		t.Fatal("footer must not make the same body look new")
 	}
-	if session.rememberBody("ft-bg", body+"\n[ctx: ~12%]") {
+	if !session.bodyAlreadySent("ft-bg", body+"\n[ctx: ~12%]") {
 		t.Fatal("context indicator must not make the same body look new")
 	}
 }
@@ -824,11 +822,63 @@ func TestHeronSessionDedupIsPerTurn(t *testing.T) {
 	session := newTestHeronSession()
 	defer session.cancel()
 
-	if !session.rememberBody("ft-a", "主分支是 main") {
-		t.Fatal("first turn must send")
-	}
-	if !session.rememberBody("ft-b", "主分支是 main") {
+	session.markBodySent("ft-a", "主分支是 main")
+	if session.bodyAlreadySent("ft-b", "主分支是 main") {
 		t.Fatal("a later turn repeating the same wording must still reach the user")
+	}
+}
+
+// 发送失败不能把正文记成"已发"：适配器出错后重试时必须还能发出去。
+func TestHeronSessionDoesNotRecordFailedSend(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+	// 填满事件通道，让 emit 只能走 ctx 分支而失败。
+	for i := 0; i < cap(session.events); i++ {
+		session.events <- core.Event{Type: core.EventThinking, Content: "filler"}
+	}
+	session.cancel()
+
+	err := session.emitUnattendedTurn(heronProgress{
+		SessionID:  "fs-1",
+		FlowTurnID: "ft-x",
+		Type:       "status",
+		Status:     "waiting_input",
+		Origin:     "mailbox",
+		Reply:      "结论：流量正常。",
+	}, "fs-1")
+	if err == nil {
+		t.Fatal("emit should fail once the session context is cancelled")
+	}
+	if session.bodyAlreadySent("ft-x", "结论：流量正常。") {
+		t.Fatal("a failed send must stay retryable")
+	}
+}
+
+// 两个团队得出同样结论是两条结果，不能因为正文相同而吞掉一条。
+func TestHeronSessionKeepsDistinctResultsWithSameText(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	session.progressMu.Lock()
+	session.progressSeen = map[string]int64{"ft-user": 0}
+	session.progressOrder = map[string]uint64{"ft-user": 1}
+	session.turnSequence = 1
+	session.progressMu.Unlock()
+
+	frame := `{"session_id":"fs-1","flow_turn_id":"ft-bg3","seq":30,"event_id":"fs-1-30","type":"status","status":"waiting_input","origin":"mailbox","reply":"","deliveries":[{"message_id":"mb-a","team_id":"owner","text":"流量正常。"},{"message_id":"mb-b","team_id":"verify","text":"流量正常。"}]}`
+	if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
+		t.Fatal(err)
+	}
+
+	count := 0
+	for len(session.events) > 0 {
+		event := <-session.events
+		if event.Type == core.EventResult && event.Content == "流量正常。" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("two distinct results must both be delivered, got %d", count)
 	}
 }
 

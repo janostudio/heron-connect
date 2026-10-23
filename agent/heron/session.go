@@ -685,19 +685,10 @@ func (s *heronSession) emitDeliveries(progress heronProgress, sessionID string) 
 		if text == "" {
 			continue
 		}
-		if delivery.MessageID != "" {
-			s.progressMu.Lock()
-			if s.deliveredIDs == nil {
-				s.deliveredIDs = make(map[string]bool)
-			}
-			already := s.deliveredIDs[delivery.MessageID]
-			s.deliveredIDs[delivery.MessageID] = true
-			s.progressMu.Unlock()
-			if already {
-				continue
-			}
-		}
-		if !s.rememberBody(progress.FlowTurnID, text) {
+		// Results are deduplicated by message id only. Two Teams answering with
+		// the same wording are two separate results and must both arrive;
+		// collapsing them by text would lose one.
+		if delivery.MessageID != "" && s.deliveryAlreadySent(delivery.MessageID) {
 			continue
 		}
 		metadata := map[string]any{
@@ -717,6 +708,8 @@ func (s *heronSession) emitDeliveries(progress heronProgress, sessionID string) 
 		}); err != nil {
 			return err
 		}
+		s.markDeliverySent(delivery.MessageID)
+		s.markBodySent(progress.FlowTurnID, text)
 	}
 	return nil
 }
@@ -729,10 +722,10 @@ func (s *heronSession) emitUnattendedTurn(progress heronProgress, sessionID stri
 	if reply == "" || progress.Intermediate {
 		return nil
 	}
-	if !s.rememberBody(progress.FlowTurnID, reply) {
+	if s.bodyAlreadySent(progress.FlowTurnID, reply) {
 		return nil
 	}
-	return s.emit(core.Event{
+	if err := s.emit(core.Event{
 		Type:      core.EventResult,
 		Content:   reply,
 		SessionID: sessionID,
@@ -742,17 +735,54 @@ func (s *heronSession) emitUnattendedTurn(progress heronProgress, sessionID stri
 			"status":       progress.Status,
 			"origin":       progress.Origin,
 		},
-	})
+	}); err != nil {
+		return err
+	}
+	s.markBodySent(progress.FlowTurnID, reply)
+	return nil
 }
 
-// rememberBody records a body as sent within its turn and reports whether it
-// should be sent at all. Within one FlowTurn the engine hands over both the
-// mailbox result and the coordinating reply; when the coordinator repeats that
-// result verbatim the user would see the same message twice.
-func (s *heronSession) rememberBody(flowTurnID, text string) bool {
+func (s *heronSession) deliveryAlreadySent(messageID string) bool {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	return s.deliveredIDs[messageID]
+}
+
+func (s *heronSession) markDeliverySent(messageID string) {
+	if messageID == "" {
+		return
+	}
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	if s.deliveredIDs == nil {
+		s.deliveredIDs = make(map[string]bool)
+	}
+	s.deliveredIDs[messageID] = true
+}
+
+// bodyAlreadySent reports whether this exact body was already delivered within
+// the same FlowTurn. A turn carries both the mailbox result and the
+// coordinating reply, and the coordinator routinely repeats that result
+// verbatim (s15: 941 identical characters delivered twice). Only the reply is
+// judged by body, so two Teams wording the same conclusion are still both
+// delivered.
+func (s *heronSession) bodyAlreadySent(flowTurnID, text string) bool {
 	key := bodyKey(text)
 	if key == "" {
 		return false
+	}
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	return s.sentBodies[flowTurnID][key]
+}
+
+// markBodySent records a body that was actually handed to the event channel.
+// Recording after a successful emit (not before) keeps a failed send
+// retryable: an adapter error must not swallow the message.
+func (s *heronSession) markBodySent(flowTurnID, text string) {
+	key := bodyKey(text)
+	if key == "" {
+		return
 	}
 	s.progressMu.Lock()
 	defer s.progressMu.Unlock()
@@ -764,11 +794,7 @@ func (s *heronSession) rememberBody(flowTurnID, text string) bool {
 		seen = make(map[string]bool)
 		s.sentBodies[flowTurnID] = seen
 	}
-	if seen[key] {
-		return false
-	}
 	seen[key] = true
-	return true
 }
 
 // replyFooterSuffix matches the adapter's own presentation footer
