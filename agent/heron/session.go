@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -72,6 +73,12 @@ type heronSession struct {
 	// turn that reports the same delivery twice (completed + status frame)
 	// does not produce two messages.
 	deliveredIDs map[string]bool
+	// sentBodies remembers the message bodies already sent within each FlowTurn.
+	// A single turn carries both the mailbox result and the coordinating team's
+	// reply, and the coordinator routinely repeats that result verbatim (s15:
+	// 941 identical characters delivered twice). Dedup is per turn so a later
+	// turn repeating the same wording still reaches the user.
+	sentBodies map[string]map[string]bool
 
 	writeMu    sync.Mutex
 	turnMu     sync.Mutex
@@ -266,6 +273,8 @@ func (s *heronSession) Send(prompt string, images []core.ImageAttachment, files 
 	s.turnSequence = 0
 	s.progressStatus = ""
 	s.pendingApprovals = nil
+	s.deliveredIDs = nil
+	s.sentBodies = make(map[string]map[string]bool)
 	s.progressMu.Unlock()
 
 	id := s.nextID.Add(1)
@@ -688,6 +697,9 @@ func (s *heronSession) emitDeliveries(progress heronProgress, sessionID string) 
 				continue
 			}
 		}
+		if !s.rememberBody(progress.FlowTurnID, text) {
+			continue
+		}
 		metadata := map[string]any{
 			"flow_turn_id": progress.FlowTurnID,
 			"origin":       progress.Origin,
@@ -717,6 +729,9 @@ func (s *heronSession) emitUnattendedTurn(progress heronProgress, sessionID stri
 	if reply == "" || progress.Intermediate {
 		return nil
 	}
+	if !s.rememberBody(progress.FlowTurnID, reply) {
+		return nil
+	}
 	return s.emit(core.Event{
 		Type:      core.EventResult,
 		Content:   reply,
@@ -728,6 +743,51 @@ func (s *heronSession) emitUnattendedTurn(progress heronProgress, sessionID stri
 			"origin":       progress.Origin,
 		},
 	})
+}
+
+// rememberBody records a body as sent within its turn and reports whether it
+// should be sent at all. Within one FlowTurn the engine hands over both the
+// mailbox result and the coordinating reply; when the coordinator repeats that
+// result verbatim the user would see the same message twice.
+func (s *heronSession) rememberBody(flowTurnID, text string) bool {
+	key := bodyKey(text)
+	if key == "" {
+		return false
+	}
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	if s.sentBodies == nil {
+		s.sentBodies = make(map[string]map[string]bool)
+	}
+	seen := s.sentBodies[flowTurnID]
+	if seen == nil {
+		seen = make(map[string]bool)
+		s.sentBodies[flowTurnID] = seen
+	}
+	if seen[key] {
+		return false
+	}
+	seen[key] = true
+	return true
+}
+
+// replyFooterSuffix matches the adapter's own presentation footer
+// ("\n\n*[ctx: ~4%] · heron-ai*"), and contextSuffix the bare context marker.
+// Both are added after the message leaves the engine, so they must not make an
+// otherwise identical body look different when deciding whether it was already
+// sent.
+var (
+	replyFooterSuffix = regexp.MustCompile(`(?s)\n\n\*[^*\n]*\*\s*$`)
+	contextSuffix     = regexp.MustCompile(`\n?\[ctx: ~\d+%]`)
+)
+
+// bodyKey normalises a body for same-turn dedup. Normalisation only strips
+// presentation the adapter itself appends; it never inspects meaning.
+func bodyKey(text string) string {
+	trimmed := strings.TrimSpace(text)
+	trimmed = replyFooterSuffix.ReplaceAllString(trimmed, "")
+	trimmed = contextSuffix.ReplaceAllString(trimmed, "")
+	return strings.TrimSpace(trimmed)
 }
 
 // unattendedTurnNotice renders the one-line lead-in for a background turn, so

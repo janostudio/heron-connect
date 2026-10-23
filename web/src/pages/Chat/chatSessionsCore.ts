@@ -237,6 +237,25 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
           }],
         };
       }
+      // The backend stamps a stable id per (user message, content). A repeated
+      // delivery — the same text arriving from both the background turn and
+      // the coordinating reply, or a frame replayed after a reconnect — updates
+      // the row it already produced instead of appending a duplicate.
+      const bridgeId = (reply as any).message_id as string | undefined;
+      if (bridgeId) {
+        const seen = slice.messages.findIndex(m => m.bridgeMessageId === bridgeId);
+        if (seen >= 0) {
+          const prev = slice.messages[seen];
+          if (prev.content === reply.content) {
+            return { ...slice, typing: false };
+          }
+          return { ...slice, messages: settleAndReplace(slice.messages, seen, {
+            content: reply.content,
+            format,
+            timestamp: stampFor(prev.timestamp, stamp),
+          }), typing: false };
+        }
+      }
       const idx = slice.messages.findIndex(m => m.streaming && m.role === 'assistant' && !m.previewHandle);
       if (idx >= 0) {
         const prev = slice.messages[idx];
@@ -244,6 +263,7 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
           content: reply.content,
           format,
           timestamp: stampFor(prev.timestamp, stamp),
+          ...(bridgeId ? { bridgeMessageId: bridgeId } : {}),
         }), typing: false };
       }
       // No matching placeholder (e.g. the turn started while this conversation
@@ -258,6 +278,7 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
           format,
           timestamp: stamp,
           streaming: false,
+          ...(bridgeId ? { bridgeMessageId: bridgeId } : {}),
         }],
         typing: false,
       };

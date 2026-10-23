@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/janostudio/heron-connect/core"
 	"github.com/gorilla/websocket"
+	"github.com/janostudio/heron-connect/core"
 )
 
 // helpers ------------------------------------------------------------------
@@ -1189,5 +1189,59 @@ func TestBridge_ReplyNotice_FlagsFrame(t *testing.T) {
 	}
 	if _, has := answer["notice"]; has {
 		t.Fatalf("ordinary reply must not carry the notice flag: %v", answer)
+	}
+}
+
+// 同一用户消息、同一正文的回复必须带同一个 id：客户端据此把重复下发的同一
+// 条消息合并掉，而不是追加第二条。
+func TestReplyMessageIDIsStablePerMessage(t *testing.T) {
+	base := &bridgeReplyCtx{Platform: "web", SessionKey: "web-admin:conv-1", ReplyCtx: "u1"}
+
+	if got, want := replyMessageID(base, "流量正常"), replyMessageID(base, "流量正常"); got != want {
+		t.Fatalf("same message must get the same id: %q vs %q", got, want)
+	}
+	if replyMessageID(base, "流量正常") == replyMessageID(base, "流量异常") {
+		t.Fatal("different text must get a different id")
+	}
+
+	// 用户再次提问是另一条消息，相同措辞的回答必须再次显示。
+	next := &bridgeReplyCtx{Platform: "web", SessionKey: "web-admin:conv-1", ReplyCtx: "u2"}
+	if replyMessageID(base, "流量正常") == replyMessageID(next, "流量正常") {
+		t.Fatal("a later user message must not reuse the previous id")
+	}
+
+	// 不同会话之间不共享 id。
+	other := &bridgeReplyCtx{Platform: "web", SessionKey: "web-admin:conv-2", ReplyCtx: "u1"}
+	if replyMessageID(base, "流量正常") == replyMessageID(other, "流量正常") {
+		t.Fatal("different conversations must not share an id")
+	}
+}
+
+// reply 帧必须带 message_id，否则客户端只能追加。
+func TestBridge_ReplyFrameCarriesMessageID(t *testing.T) {
+	bs, wsURL := startTestBridge(t, "")
+	bp := bs.NewPlatform("test-proj")
+	e := core.NewEngine("test-proj", &stubAgent{}, []core.Platform{bp}, "", core.LangEnglish)
+	bs.RegisterEngine("test-proj", e, bp)
+	bp.handler = func(p core.Platform, msg *core.Message) {
+		if err := p.Reply(context.TODO(), msg.ReplyCtx, "pong"); err != nil {
+			t.Fatalf("Reply: %v", err)
+		}
+	}
+
+	conn := dialWS(t, wsURL, nil)
+	register(t, conn, "rc", []string{"text"})
+	mustWriteJSON(t, conn, map[string]any{
+		"type":        "message",
+		"msg_id":      "m1",
+		"session_key": "rc:u1:u1",
+		"user_id":     "u1",
+		"content":     "ping",
+		"reply_ctx":   "ctx-1",
+	})
+
+	reply := readMsg(t, conn)
+	if id, _ := reply["message_id"].(string); id == "" {
+		t.Fatal("reply frame must carry a message_id")
 	}
 }
