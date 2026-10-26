@@ -47,6 +47,10 @@ export interface ChatMsg {
   // replayed after a reconnect) updates the existing row instead of adding a
   // second one.
   bridgeMessageId?: string;
+  // Same answer delivered again by a later turn (the coordinating Team repeating
+  // its dispatch line while the task is still blocked). The rows are coalesced
+  // and this counts how many times the text arrived.
+  repeatCount?: number;
   // When the message body is a structured agent-progress payload (sent by
   // the engine with the __heron_connect_progress_card_v1__: prefix), the
   // parsed payload lives here and takes precedence over `content` for

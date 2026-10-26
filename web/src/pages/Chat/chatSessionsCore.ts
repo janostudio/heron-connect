@@ -188,6 +188,19 @@ function stampFor(existing: string | undefined, stamp: string): string {
 }
 
 /**
+ * Body text with the adapter's presentation stripped, for comparing two
+ * arrivals of the same answer. The footer (ctx percentage + agent name) is
+ * appended after the engine hands the text over, so it must not make an
+ * otherwise identical body look different.
+ */
+function normalizeBody(text: string): string {
+  return text
+    .replace(/\n\n\*[^*\n]*\*\s*$/, '')
+    .replace(/\n?\[ctx: ~\d+%\]/g, '')
+    .trim();
+}
+
+/**
  * Apply one bridge frame to one conversation slice. Pure: (slice, frame) →
  * slice. Unknown frame types return the input unchanged.
  *
@@ -242,6 +255,7 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
       // the coordinating reply, or a frame replayed after a reconnect — updates
       // the row it already produced instead of appending a duplicate.
       const bridgeId = (reply as any).message_id as string | undefined;
+      const producer = ((reply as any).team as string | undefined) || undefined;
       if (bridgeId) {
         const seen = slice.messages.findIndex(m => m.bridgeMessageId === bridgeId);
         if (seen >= 0) {
@@ -264,11 +278,34 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
           format,
           timestamp: stampFor(prev.timestamp, stamp),
           ...(bridgeId ? { bridgeMessageId: bridgeId } : {}),
+          ...(producer ? { producer } : {}),
         }), typing: false };
       }
       // No matching placeholder (e.g. the turn started while this conversation
       // was not being viewed — `typing_start` was the only thing we saw). As
       // long as it was in flight, append the final reply rather than dropping it.
+      //
+      // Before appending, coalesce with the previous row when the body is the
+      // same. A blocked task makes the coordinating Team repeat its dispatch
+      // line verbatim on every wake-up (s17: three identical lines in one
+      // minute), and two identical bubbles read as a delivery bug rather than
+      // as the same statement said twice.
+      const body = normalizeBody(reply.content);
+      const last = slice.messages[slice.messages.length - 1];
+      if (
+        body &&
+        last?.role === 'assistant' &&
+        !last.streaming &&
+        !last.previewHandle &&
+        normalizeBody(last.content) === body
+      ) {
+        const messages = [...slice.messages];
+        messages[messages.length - 1] = {
+          ...last,
+          repeatCount: (last.repeatCount ?? 1) + 1,
+        };
+        return { ...slice, messages, typing: false };
+      }
       return {
         ...slice,
         messages: [...settledMessages(slice.messages), {
@@ -279,6 +316,7 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
           timestamp: stamp,
           streaming: false,
           ...(bridgeId ? { bridgeMessageId: bridgeId } : {}),
+          ...(producer ? { producer } : {}),
         }],
         typing: false,
       };

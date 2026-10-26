@@ -1245,3 +1245,66 @@ func TestBridge_ReplyFrameCarriesMessageID(t *testing.T) {
 		t.Fatal("reply frame must carry a message_id")
 	}
 }
+
+// 最终回复要能带着产出团队：origin 只说明这轮被邮箱消息唤醒，一轮里多条
+// 来自不同 Team 的消息 origin 全都一样，客户端无法区分。
+func TestBridge_SendWithTeamCarriesTeam(t *testing.T) {
+	bs, wsURL := startTestBridge(t, "")
+	bp := bs.NewPlatform("test-proj")
+	e := core.NewEngine("test-proj", &stubAgent{}, []core.Platform{bp}, "", core.LangEnglish)
+	bs.RegisterEngine("test-proj", e, bp)
+	bp.handler = func(p core.Platform, msg *core.Message) {
+		labeled, ok := p.(core.TeamLabeledSender)
+		if !ok {
+			t.Fatalf("bridge platform must implement TeamLabeledSender")
+		}
+		if err := labeled.SendWithTeam(context.TODO(), msg.ReplyCtx, "owner", "pong"); err != nil {
+			t.Fatalf("SendWithTeam: %v", err)
+		}
+	}
+
+	conn := dialWS(t, wsURL, nil)
+	register(t, conn, "rc", []string{"text"})
+	mustWriteJSON(t, conn, map[string]any{
+		"type":        "message",
+		"msg_id":      "m1",
+		"session_key": "rc:u1:u1",
+		"user_id":     "u1",
+		"content":     "ping",
+		"reply_ctx":   "ctx-1",
+	})
+
+	reply := readMsg(t, conn)
+	if reply["team"] != "owner" {
+		t.Fatalf("team = %v, want owner", reply["team"])
+	}
+}
+
+// 没有团队信息时帧里不出现 team 字段，旧客户端行为不变。
+func TestBridge_ReplyWithoutTeamOmitsField(t *testing.T) {
+	bs, wsURL := startTestBridge(t, "")
+	bp := bs.NewPlatform("test-proj")
+	e := core.NewEngine("test-proj", &stubAgent{}, []core.Platform{bp}, "", core.LangEnglish)
+	bs.RegisterEngine("test-proj", e, bp)
+	bp.handler = func(p core.Platform, msg *core.Message) {
+		if err := p.Reply(context.TODO(), msg.ReplyCtx, "pong"); err != nil {
+			t.Fatalf("Reply: %v", err)
+		}
+	}
+
+	conn := dialWS(t, wsURL, nil)
+	register(t, conn, "rc", []string{"text"})
+	mustWriteJSON(t, conn, map[string]any{
+		"type":        "message",
+		"msg_id":      "m1",
+		"session_key": "rc:u1:u1",
+		"user_id":     "u1",
+		"content":     "ping",
+		"reply_ctx":   "ctx-1",
+	})
+
+	reply := readMsg(t, conn)
+	if _, ok := reply["team"]; ok {
+		t.Fatalf("team must be absent, got %v", reply["team"])
+	}
+}

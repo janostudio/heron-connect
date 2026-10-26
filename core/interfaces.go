@@ -726,6 +726,14 @@ const (
 	CardStatusError    CardStatus = "error"    // red
 )
 
+// TeamLabeledSender is implemented by platforms that can attribute a message to
+// the Team that produced it. The engine only calls it for a turn's final reply,
+// and only when the agent reported a Team; platforms that don't implement it
+// keep sending through Send exactly as before.
+type TeamLabeledSender interface {
+	SendWithTeam(ctx context.Context, replyCtx any, team, content string) error
+}
+
 // PreviewStatusUpdater is an optional interface for platforms that support
 // updating the visual status of a preview card header.
 type PreviewStatusUpdater interface {
