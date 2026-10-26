@@ -41,15 +41,24 @@ function MessageRowInner({ msg, projectName, onOpenFile, onCardAction }: Props) 
 
   return (
     <div className={cn('flex flex-col gap-1', isUser ? 'items-end' : 'items-start')}>
-      {timeLabel && (
+      {(timeLabel || (msg.repeatCount ?? 1) > 1) && (
         <span
           title={timeTitle}
           className={cn(
-            'px-1 text-[10px] leading-none text-gray-400 dark:text-gray-500 select-none tabular-nums',
+            'px-1 flex items-center gap-1.5 text-[10px] leading-none select-none tabular-nums',
+            'text-gray-400 dark:text-gray-500',
             isUser ? 'mr-11' : 'ml-11',
           )}
         >
           {timeLabel}
+          {(msg.repeatCount ?? 1) > 1 && (
+            // The same text arrived again from a later turn. Showing the count
+            // keeps the fact visible without rendering identical bubbles that
+            // read as a delivery bug.
+            <span className="rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+              {t('chat.repeated', '相同内容 ×{{count}}', { count: msg.repeatCount })}
+            </span>
+          )}
         </span>
       )}
       <div className={cn('flex gap-3 w-full', isUser ? 'justify-end' : 'justify-start')}>

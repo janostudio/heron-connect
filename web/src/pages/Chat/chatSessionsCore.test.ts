@@ -824,7 +824,9 @@ describe('duplicate reply frames', () => {
     expect(second.messages[0].content).toBe('complete');
   });
 
-  it('a different message_id with identical text still shows up', () => {
+  it('coalesces identical text even when the ids differ', () => {
+    // 不同回合说同一句话时 id 不同，但展示上不该出现两个一样的气泡：
+    // 合并成一行并标出次数，内容没有丢。
     const first = applyFrame(emptySlice(), frame({
       type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u1',
       message_id: 'msg-3', content: '主分支是 main', format: 'markdown',
@@ -834,10 +836,11 @@ describe('duplicate reply frames', () => {
       message_id: 'msg-4', content: '主分支是 main', format: 'markdown',
     } as any));
 
-    expect(second.messages).toHaveLength(2);
+    expect(second.messages).toHaveLength(1);
+    expect(second.messages[0].repeatCount).toBe(2);
   });
 
-  it('a reply without an id keeps the append-only behaviour', () => {
+  it('coalesces identical text from a server that sends no id', () => {
     const first = applyFrame(emptySlice(), frame({
       type: 'reply', session_key: KEY_A, session_id: 'sa', content: 'once', format: 'markdown',
     } as any));
@@ -845,7 +848,8 @@ describe('duplicate reply frames', () => {
       type: 'reply', session_key: KEY_A, session_id: 'sa', content: 'once', format: 'markdown',
     } as any));
 
-    expect(second.messages).toHaveLength(2);
+    expect(second.messages).toHaveLength(1);
+    expect(second.messages[0].repeatCount).toBe(2);
   });
 
   it('a reply that settles a streaming placeholder records the id', () => {
@@ -863,5 +867,57 @@ describe('duplicate reply frames', () => {
       message_id: 'msg-5', content: 'done', format: 'markdown',
     } as any));
     expect(replay.messages).toHaveLength(1);
+  });
+});
+
+// ── Coalescing repeated replies ──────────────────────────────
+//
+// s17：任务被阻塞时，协调方每次被唤醒都会把同一句派发话术再发一遍，页面上
+// 会出现三个一模一样的回复气泡，看起来像投递 bug。它们其实是不同回合各说的
+// 一次，所以按 message_id 去重拦不住——改为相邻同文合并，并标出次数。
+
+describe('coalescing repeated replies', () => {
+  it('merges an identical reply into the previous row', () => {
+    const dispatch = '已转给执行侧，让它去查 cls 线上日志里 workbuddy.host 一天的请求数。';
+    const first = applyFrame(emptySlice(), frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u1',
+      content: dispatch, format: 'markdown',
+    } as any));
+
+    const second = applyFrame(first, frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u2',
+      content: `${dispatch}\n\n*[ctx: ~4%] · heron-ai*`, format: 'markdown',
+    } as any));
+
+    expect(second.messages).toHaveLength(1);
+    expect(second.messages[0].repeatCount).toBe(2);
+  });
+
+  it('keeps replies with different bodies apart', () => {
+    const first = applyFrame(emptySlice(), frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u1',
+      content: '已转给执行侧核实。', format: 'markdown',
+    } as any));
+    const second = applyFrame(first, frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u2',
+      content: 'genie-agent 的主分支是 main。', format: 'markdown',
+    } as any));
+
+    expect(second.messages).toHaveLength(2);
+    expect(second.messages[1].repeatCount).toBeUndefined();
+  });
+
+  it('does not merge across a user message', () => {
+    const first = applyFrame(emptySlice(), frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u1',
+      content: '收到。', format: 'markdown',
+    } as any));
+    const withUser = { ...first, messages: [...first.messages, user('u2', '再问一句')] };
+    const second = applyFrame(withUser, frame({
+      type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u3',
+      content: '收到。', format: 'markdown',
+    } as any));
+
+    expect(second.messages).toHaveLength(3);
   });
 });
