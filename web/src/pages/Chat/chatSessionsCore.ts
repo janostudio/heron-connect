@@ -255,6 +255,7 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
       // the coordinating reply, or a frame replayed after a reconnect — updates
       // the row it already produced instead of appending a duplicate.
       const bridgeId = (reply as any).message_id as string | undefined;
+      const producer = ((reply as any).team as string | undefined) || undefined;
       if (bridgeId) {
         const seen = slice.messages.findIndex(m => m.bridgeMessageId === bridgeId);
         if (seen >= 0) {
@@ -277,6 +278,7 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
           format,
           timestamp: stampFor(prev.timestamp, stamp),
           ...(bridgeId ? { bridgeMessageId: bridgeId } : {}),
+          ...(producer ? { producer } : {}),
         }), typing: false };
       }
       // No matching placeholder (e.g. the turn started while this conversation
@@ -314,6 +316,7 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
           timestamp: stamp,
           streaming: false,
           ...(bridgeId ? { bridgeMessageId: bridgeId } : {}),
+          ...(producer ? { producer } : {}),
         }],
         typing: false,
       };

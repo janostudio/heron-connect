@@ -407,11 +407,22 @@ func (bp *BridgePlatform) Start(handler core.MessageHandler) error {
 func (bp *BridgePlatform) Stop() error { return nil }
 
 func (bp *BridgePlatform) Reply(ctx context.Context, replyCtx any, content string) error {
+	return bp.reply(replyCtx, "", content)
+}
+
+// SendWithTeam labels the reply with the Team that produced it. The label is
+// what lets the client tell two Teams' messages apart: every one of them
+// arrives through the same channel and carries the same origin.
+func (bp *BridgePlatform) SendWithTeam(ctx context.Context, replyCtx any, team, content string) error {
+	return bp.reply(replyCtx, team, content)
+}
+
+func (bp *BridgePlatform) reply(replyCtx any, team, content string) error {
 	rc, ok := replyCtx.(*bridgeReplyCtx)
 	if !ok {
 		return fmt.Errorf("bridge: invalid reply context type %T", replyCtx)
 	}
-	return bp.server.sendToAdapter(rc.Platform, map[string]any{
+	frame := map[string]any{
 		"type":        "reply",
 		"session_key": rc.SessionKey,
 		"session_id":  rc.SessionID,
@@ -419,7 +430,11 @@ func (bp *BridgePlatform) Reply(ctx context.Context, replyCtx any, content strin
 		"message_id":  replyMessageID(rc, content),
 		"content":     content,
 		"format":      "text",
-	})
+	}
+	if team != "" {
+		frame["team"] = team
+	}
+	return bp.server.sendToAdapter(rc.Platform, frame)
 }
 
 // replyMessageID derives a stable identifier for one reply frame.

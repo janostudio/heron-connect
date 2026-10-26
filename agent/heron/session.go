@@ -107,10 +107,13 @@ type heronJSONRPCError struct {
 }
 
 type heronTurnResult struct {
-	SessionID        string                 `json:"session_id"`
-	FlowTurnID       string                 `json:"flow_turn_id"`
-	Status           string                 `json:"status"`
-	Reply            string                 `json:"reply"`
+	SessionID  string `json:"session_id"`
+	FlowTurnID string `json:"flow_turn_id"`
+	Status     string `json:"status"`
+	Reply      string `json:"reply"`
+	// Team is the Team that wrote Reply. Origin says how the turn was woken,
+	// never who produced the text.
+	Team             string                 `json:"team"`
 	Error            string                 `json:"error"`
 	PendingApprovals []heronPendingApproval `json:"pending_approvals"`
 	Usage            heronUsage             `json:"usage"`
@@ -166,6 +169,10 @@ type heronProgress struct {
 	// rather than an answer for the user (a Team handing work back to its
 	// activator). Such replies are never relayed.
 	Intermediate bool `json:"intermediate"`
+	// Team is the Team that wrote Reply. Origin only says how the turn was
+	// woken (a mailbox message); a turn can carry several Teams' results, so
+	// attribution must use this and not Origin.
+	Team string `json:"team"`
 	// Deliveries are mailbox results the engine wants the user to receive as
 	// their own messages, attributed to the Team that produced them. The
 	// engine decides this from state (a delivered result), not from the
@@ -446,6 +453,7 @@ func (s *heronSession) handleResponse(response heronJSONRPCResponse) error {
 			Metadata: map[string]any{
 				"flow_turn_id": result.FlowTurnID,
 				"status":       result.Status,
+				"team":         result.Team,
 				"empty_reply":  true,
 			},
 		})
@@ -460,6 +468,7 @@ func (s *heronSession) handleResponse(response heronJSONRPCResponse) error {
 		Metadata: map[string]any{
 			"flow_turn_id": result.FlowTurnID,
 			"status":       result.Status,
+			"team":         result.Team,
 		},
 	})
 }
@@ -734,6 +743,7 @@ func (s *heronSession) emitUnattendedTurn(progress heronProgress, sessionID stri
 			"flow_turn_id": progress.FlowTurnID,
 			"status":       progress.Status,
 			"origin":       progress.Origin,
+			"team":         progress.Team,
 		},
 	}); err != nil {
 		return err

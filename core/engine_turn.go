@@ -906,8 +906,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				}
 				continue
 			}
-		if display.Mode == displayModeStream && display.ToolMessages {
-			toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, displayToolName, formattedInput)
+			if display.Mode == displayModeStream && display.ToolMessages {
+				toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, displayToolName, formattedInput)
 				prefix := ""
 				if len(textParts) > 0 {
 					textParts = append(textParts, "\n\n")
@@ -973,16 +973,16 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				if previewActive {
 					sp.detachPreview() // keep frozen preview visible as permanent message
 				}
-			toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, displayToolName, formattedInput)
-			if !cp.AppendStructured(ProgressCardEntry{
-				Kind:           ProgressEntryToolUse,
-				Text:           toolInput,
-				Tool:           event.ToolName,
-				ID:             event.ToolID,
-				CorrelationKey: event.ToolID,
-				ParentID:       event.ParentToolID,
-				Subagent:       event.SubagentType,
-			}, toolMsg) {
+				toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, displayToolName, formattedInput)
+				if !cp.AppendStructured(ProgressCardEntry{
+					Kind:           ProgressEntryToolUse,
+					Text:           toolInput,
+					Tool:           event.ToolName,
+					ID:             event.ToolID,
+					CorrelationKey: event.ToolID,
+					ParentID:       event.ParentToolID,
+					Subagent:       event.SubagentType,
+				}, toolMsg) {
 					for _, chunk := range SplitMessageCodeFenceAware(toolMsg, maxPlatformMessageLen) {
 						sendWorkspace(p, replyCtx, chunk)
 					}
@@ -1020,10 +1020,10 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						break
 					}
 					resultToolName := event.ToolName
-				if event.IsSubagent {
-					resultToolName = "↳ " + event.ToolName
-				}
-				resultMsg := e.formatToolResultEventFallback(resultToolName, result, event.ToolStatus, event.ToolExitCode, event.ToolSuccess)
+					if event.IsSubagent {
+						resultToolName = "↳ " + event.ToolName
+					}
+					resultMsg := e.formatToolResultEventFallback(resultToolName, result, event.ToolStatus, event.ToolExitCode, event.ToolSuccess)
 					if streamPreviewToolHold {
 						if display.ToolMessages {
 							// Route tool result to ProgressAssembler side-channel.
@@ -1047,17 +1047,17 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						}
 						break
 					}
-				entry := ProgressCardEntry{
-					Kind:           ProgressEntryToolResult,
-					Tool:           event.ToolName,
-					ID:             event.ToolID,
-					CorrelationKey: event.ToolID,
-					ParentID:       event.ParentToolID,
-					Text:           result,
-					Status:         event.ToolStatus,
-					ExitCode:       event.ToolExitCode,
-					Success:        event.ToolSuccess,
-				}
+					entry := ProgressCardEntry{
+						Kind:           ProgressEntryToolResult,
+						Tool:           event.ToolName,
+						ID:             event.ToolID,
+						CorrelationKey: event.ToolID,
+						ParentID:       event.ParentToolID,
+						Text:           result,
+						Status:         event.ToolStatus,
+						ExitCode:       event.ToolExitCode,
+						Success:        event.ToolSuccess,
+					}
 					if !cp.AppendStructured(entry, resultMsg) {
 						if !SuppressStandaloneToolResultEvent(p) {
 							e.sendRaw(p, replyCtx, resultMsg)
@@ -1259,23 +1259,23 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			// Use state.agentSession.CurrentSessionID() instead of event.SessionID.
 			// event.SessionID may be empty in some cases, causing the agent_session_id
 			// to not be persisted to disk, breaking session resume on next startup.
-		if state != nil && state.agentSession != nil {
-			if currentID := state.agentSession.CurrentSessionID(); currentID != "" {
-				if session.CompareAndSetAgentSessionID(currentID, e.agent.Name()) {
-					pendingName := session.GetName()
-					if !isPlaceholderSessionName(pendingName) && !session.GetNameAuto() {
-						sessions.SetSessionName(currentID, pendingName)
+			if state != nil && state.agentSession != nil {
+				if currentID := state.agentSession.CurrentSessionID(); currentID != "" {
+					if session.CompareAndSetAgentSessionID(currentID, e.agent.Name()) {
+						pendingName := session.GetName()
+						if !isPlaceholderSessionName(pendingName) && !session.GetNameAuto() {
+							sessions.SetSessionName(currentID, pendingName)
+						}
 					}
+					sessions.Save()
 				}
-				sessions.Save()
 			}
-		}
 
-		// Auto-title the session after its first completed turn: prefer the
-		// agent's own session summary, fall back to the first user message.
-		// Async because ListSessions may do real I/O (e.g. claudecode scans
-		// its projects dir) and must not delay reply delivery below.
-		go e.maybeAutoTitleSession(e.agent, sessions, session)
+			// Auto-title the session after its first completed turn: prefer the
+			// agent's own session summary, fall back to the first user message.
+			// Async because ListSessions may do real I/O (e.g. claudecode scans
+			// its projects dir) and must not delay reply delivery below.
+			go e.maybeAutoTitleSession(e.agent, sessions, session)
 
 			// Mark clean exit so unsolicited reader preserves buffered events.
 			state.mu.Lock()
@@ -1448,7 +1448,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						"msg_id", msgID)
 					// Fallback: send the response as a normal message
 					for _, chunk := range splitMessage(deliverResponse, maxPlatformMessageLen) {
-						if err := sendWorkspaceWithError(p, replyCtx, chunk); err != nil {
+						if err := e.sendFinalWithError(p, replyCtx, replyTeam(event.Metadata), chunk, workspaceDir); err != nil {
 							return
 						}
 					}
@@ -1520,7 +1520,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				}
 				if unsent != "" {
 					for _, chunk := range splitMessage(unsent, maxPlatformMessageLen) {
-						if err := sendWorkspaceWithError(p, replyCtx, chunk); err != nil {
+						if err := e.sendFinalWithError(p, replyCtx, replyTeam(event.Metadata), chunk, workspaceDir); err != nil {
 							return
 						}
 					}
@@ -1533,7 +1533,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			} else {
 				slog.Debug("EventResult: sending via p.Send (preview inactive or failed)", "response_len", len(deliverResponse), "chunks", len(splitMessage(deliverResponse, maxPlatformMessageLen)))
 				for _, chunk := range splitMessage(deliverResponse, maxPlatformMessageLen) {
-					if err := sendWorkspaceWithError(p, replyCtx, chunk); err != nil {
+					if err := e.sendFinalWithError(p, replyCtx, replyTeam(event.Metadata), chunk, workspaceDir); err != nil {
 						return
 					}
 				}
@@ -1743,18 +1743,18 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				platformName = state.platformName
 				state.mu.Unlock()
 				e.recordTurnStats(statsTurnInput{
-					session:       session,
-					sessionKey:    sessionKey,
-					platformName:  platformName,
-					agentName:     replyAgent.Name(),
-					userID:        userID,
-					userName:      userName,
-					msgID:         msgID,
-					turnStart:     turnStart,
-					duration:      time.Since(turnStart),
-					toolCalls:     toolCount,
-					tools:         toolCounts,
-					err:           statsErr,
+					session:      session,
+					sessionKey:   sessionKey,
+					platformName: platformName,
+					agentName:    replyAgent.Name(),
+					userID:       userID,
+					userName:     userName,
+					msgID:        msgID,
+					turnStart:    turnStart,
+					duration:     time.Since(turnStart),
+					toolCalls:    toolCount,
+					tools:        toolCounts,
+					err:          statsErr,
 				})
 			}
 			if hasRichCard && cardMessageID != nil {

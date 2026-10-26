@@ -469,6 +469,35 @@ func (e *Engine) sendWithErrorForWorkspace(p Platform, replyCtx any, content, wo
 	return e.sendAlreadyRenderedWithError(p, replyCtx, content)
 }
 
+// replyTeam reads the Team label the agent attached to a result event.
+func replyTeam(metadata map[string]any) string {
+	if metadata == nil {
+		return ""
+	}
+	team, _ := metadata["team"].(string)
+	return team
+}
+
+// sendFinalWithError sends a turn's final reply, labelling it with the Team that
+// wrote it when the platform can carry the label.
+//
+// origin is not a substitute: it says how the turn was woken (a mailbox
+// message), and one turn can carry several Teams' results, so every one of them
+// would look identical.
+func (e *Engine) sendFinalWithError(p Platform, replyCtx any, team, content, workspaceDir string) error {
+	if team != "" {
+		if labeled, ok := p.(TeamLabeledSender); ok {
+			if err := e.waitOutgoing(p); err != nil {
+				slog.Warn("outgoing rate limit: context cancelled", "platform", p.Name(), "error", err)
+				return err
+			}
+			content = e.renderOutgoingContentForWorkspace(p, content, workspaceDir)
+			return labeled.SendWithTeam(e.ctx, replyCtx, team, content)
+		}
+	}
+	return e.sendWithErrorForWorkspace(p, replyCtx, content, workspaceDir)
+}
+
 func (e *Engine) sendForWorkspace(p Platform, replyCtx any, content, workspaceDir string) {
 	_ = e.sendWithErrorForWorkspace(p, replyCtx, content, workspaceDir)
 }
