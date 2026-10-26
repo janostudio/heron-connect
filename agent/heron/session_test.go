@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/janostudio/heron-connect/core"
 )
@@ -197,6 +198,36 @@ func TestHeronSessionEmptyReplyIsNotError(t *testing.T) {
 	}
 	if empty, _ := event.Metadata["empty_reply"].(bool); !empty {
 		t.Fatalf("empty reply metadata = %#v", event.Metadata)
+	}
+}
+
+// An intermediate turn has no answer yet: it handed work off and is waiting.
+// It must not be rendered as "（本轮无回复）" — that read as a failed turn while
+// the session was in fact working, and the conclusion arrived later with the
+// user already told there was nothing.
+func TestHeronSessionIntermediateTurnEmitsNoPlaceholder(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	err := session.handleResponse(heronJSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Result: mustJSON(map[string]any{
+			"session_id":   "fs-9",
+			"flow_turn_id": "ft-9",
+			"status":       "waiting_input",
+			"reply":        "",
+			"intermediate": true,
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case event := <-session.events:
+		t.Fatalf("intermediate turn must not emit, got %+v", event)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

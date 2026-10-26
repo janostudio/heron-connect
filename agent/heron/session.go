@@ -113,7 +113,12 @@ type heronTurnResult struct {
 	Reply      string `json:"reply"`
 	// Team is the Team that wrote Reply. Origin says how the turn was woken,
 	// never who produced the text.
-	Team             string                 `json:"team"`
+	Team string `json:"team"`
+	// Intermediate marks a turn that is still waiting for work it dispatched.
+	// Its Reply is a progress line, not an answer: rendering the empty Reply as
+	// "（本轮无回复）" tells the user a turn produced nothing when in fact the
+	// conclusion is still coming.
+	Intermediate     bool                   `json:"intermediate"`
 	Error            string                 `json:"error"`
 	PendingApprovals []heronPendingApproval `json:"pending_approvals"`
 	Usage            heronUsage             `json:"usage"`
@@ -441,6 +446,15 @@ func (s *heronSession) handleResponse(response heronJSONRPCResponse) error {
 	// from ever starting — and with it every background result. A terminal
 	// EventResult carrying a placeholder keeps the reader alive and still tells
 	// the user the turn produced nothing.
+	if strings.TrimSpace(result.Reply) == "" && result.Intermediate {
+		// The turn handed work off and is waiting. There is nothing to show yet,
+		// and the conclusion will arrive on its own turn — emitting the
+		// placeholder here is what produced "（本轮无回复）" for a session that
+		// was in fact working.
+		slog.Debug("heronSession: intermediate turn has no reply yet",
+			"session_id", result.SessionID, "flow_turn_id", result.FlowTurnID)
+		return nil
+	}
 	if strings.TrimSpace(result.Reply) == "" {
 		slog.Warn("heronSession: turn returned empty reply", "session_id", result.SessionID)
 		return s.emit(core.Event{
