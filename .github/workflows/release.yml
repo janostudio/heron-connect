@@ -30,6 +30,22 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Restore web dependencies
+        # `make web` installs only when web/node_modules is missing, and every
+        # CI run starts from a fresh checkout — so each release re-downloaded
+        # the whole frontend dependency tree. That download is the slowest and
+        # most fragile step of the pipeline: 2026-10-28 gave two consecutive
+        # releases killed by `npm error network read ECONNRESET` after ~3.5
+        # minutes each, and the successful run still spent 196s there.
+        #
+        # The cache key is the lockfile hash, so a changed dependency list
+        # misses the cache and installs from scratch; identical lists restore
+        # the tree and `make web` goes straight to `npm run build`.
+        uses: actions/cache@v4
+        with:
+          path: web/node_modules
+          key: web-deps-${{ runner.os }}-node20-${{ hashFiles('web/package-lock.json') }}
+
       - name: Build web assets
         # web/embed.go embeds all:dist, so every package that links the
         # connector fails to compile until the frontend is built. Doing it
