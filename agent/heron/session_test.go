@@ -415,6 +415,8 @@ func TestHeronSessionStructuredProgressMapsAssistantAndToolEvents(t *testing.T) 
 		`{"session_id":"fs-1","flow_turn_id":"ft-1","seq":9,"event_id":"fs-1-9","type":"tool_use","tool_use_id":"ct-1/1/tc-1","name":"Read","input":{"file":"README.md"}}`,
 		`{"session_id":"fs-1","flow_turn_id":"ft-1","seq":10,"event_id":"fs-1-10","type":"tool_result","tool_use_id":"ct-1/1/tc-1","name":"Read","content":"file contents","is_error":false,"status":"completed","exit_code":0}`,
 		`{"session_id":"fs-1","flow_turn_id":"ft-1","seq":11,"event_id":"fs-1-11","type":"assistant","content":[{"type":"text","text":"Here is the summary."}]}`,
+		// 这项轮以"非中间步"收尾，缓冲的正文才算答复、才放行（见 releaseTurnText）。
+		`{"session_id":"fs-1","flow_turn_id":"ft-1","seq":12,"event_id":"fs-1-12","type":"status","status":"waiting_input","reply":"","intermediate":false}`,
 	}
 	for _, frame := range frames {
 		if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
@@ -503,6 +505,11 @@ func TestHeronSessionProgressSequenceDeduplicatesAndAllowsGaps(t *testing.T) {
 		if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
 			t.Fatal(err)
 		}
+	}
+
+	// 正文先缓冲，等该轮被判定为答复时按到达顺序一次性放行。
+	if err := session.handleNotification("progress", json.RawMessage(`{"session_id":"fs-1","flow_turn_id":"ft-1","seq":10,"event_id":"fs-1-10","type":"status","status":"waiting_input","reply":"","intermediate":false}`)); err != nil {
+		t.Fatal(err)
 	}
 
 	if got := <-session.events; got.Type != core.EventText || got.Content != "first" {
@@ -943,5 +950,108 @@ func TestHeronSessionDropsDuplicateTerminalFrames(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("duplicate terminal frames must not produce two messages, got %d", count)
+	}
+}
+
+// 派活轮的正文是"已转给执行侧…"这类交接话术，不是答复。以前它被当成正文
+// 实时发给客户端，客户端再和真正的结论合并，就出现"已转给执行侧…\n\n<答案>"
+// 这种一条消息里两个回合文本的形态（s26）。
+func TestHeronIntermediateTurnDropsBufferedText(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	frames := []string{
+		`{"session_id":"fs-1","flow_turn_id":"ft-1","seq":1,"event_id":"fs-1-1","type":"assistant","content":[{"type":"text","text":"已转给执行侧统计 commit 数，稍后给你结论。"}]}`,
+		`{"session_id":"fs-1","flow_turn_id":"ft-1","seq":2,"event_id":"fs-1-2","type":"status","status":"waiting_input","reply":"","intermediate":true}`,
+	}
+	for _, frame := range frames {
+		if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if len(session.events) != 0 {
+		event := <-session.events
+		t.Fatalf("中间步的交接话术不能作为正文发出: %+v", event)
+	}
+}
+
+// 同一段结论会被两个不同的 FlowTurn 各送一次：结束调用方回合的 JSON-RPC 响应，
+// 以及产生它的那一轮的自发帧。s26 因此出现了两条一模一样的消息。
+func TestHeronSuppressesDuplicateAnswerAcrossTurns(t *testing.T) {	session := newTestHeronSession()
+	defer session.cancel()
+
+	answer := "heron-ai 仓库 commit 统计结果：主分支 299。"
+
+	// 回合响应先送出结论。
+	session.noteBodySent(answer)
+	session.progressMu.Lock()
+	session.progressOrder = map[string]uint64{"ft-1": 1, "ft-2": 2}
+	session.progressSeen = map[string]int64{"ft-1": 10, "ft-2": 10}
+	session.progressMu.Unlock()
+
+	// 之后另一轮带着同样文本的自发帧到达。
+	frame := fmt.Sprintf(`{"session_id":"fs-1","flow_turn_id":"ft-2","seq":11,"event_id":"fs-1-11","type":"status","status":"waiting_input","reply":%q,"intermediate":false,"origin":"tool"}`, answer)
+	if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(session.events) != 0 {
+		event := <-session.events
+		t.Fatalf("跨回合的同一段结论不能重复投递: %+v", event)
+	}
+}
+
+// 答复只以 assistant 正文形式出现（响应 reply 为空）时，不能把它盖成
+// "（本轮无回复）"。缓冲的正文就是结论。
+func TestHeronAnswerOnlyInAssistantTextIsNotReplacedByPlaceholder(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	if err := session.handleNotification("progress", json.RawMessage(
+		`{"session_id":"fs-1","flow_turn_id":"ft-1","seq":1,"event_id":"fs-1-1","type":"assistant","content":[{"type":"text","text":"主分支是 master。"}]}`),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.handleResponse(heronJSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Result:  mustJSON(map[string]any{"session_id": "fs-1", "flow_turn_id": "ft-1", "status": "waiting_input", "reply": ""}),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := <-session.events
+	if got.Type != core.EventResult || got.Content != "主分支是 master。" {
+		t.Fatalf("正文即答案时必须作为结果送出，得到 %+v", got)
+	}
+	if len(session.events) != 0 {
+		t.Fatalf("不应再补一条占位结果")
+	}
+}
+
+// 去重只在一次用户请求内生效：用户重复问同一个问题、答案文本又完全相同，
+// 第二次提问必须照常答复。
+func TestHeronDuplicateDedupIsScopedToOneRequest(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+
+	session := newTestHeronSession()
+	session.stdin = writer
+	defer session.cancel()
+
+	session.noteBodySent("主分支是 master。")
+	if !session.bodyRecentlySent("主分支是 master。") {
+		t.Fatal("前提：同一请求内应判为重复")
+	}
+
+	if err := session.Send("再问一次", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if session.bodyRecentlySent("主分支是 master。") {
+		t.Fatal("新请求不能被上一次请求的去重状态抑制")
 	}
 }

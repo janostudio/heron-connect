@@ -57,4 +57,8 @@ export interface ChatMsg {
   // rendering. `content` is still kept verbatim so the message survives a
   // downgrade (server without the prefix, history replay, etc.).
   progressCard?: import('./ProgressCard').ProgressCardPayload;
+  // True when the card was assembled from per-event tool frames instead of the
+  // backend's structured payload (heron sends plain preview text). Only such a
+  // card may absorb further frames; a backend card already lists them.
+  frameTools?: boolean;
 }

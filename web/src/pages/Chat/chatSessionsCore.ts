@@ -21,6 +21,7 @@
 import type { ChatMsg } from './chatMessage';
 import type { CommandResult } from './CommandResultPanel';
 import type { BridgeIncoming, BridgeStatus } from '@/hooks/useBridgeSocket';
+import type { ProgressCardEntry, ProgressCardPayload } from './ProgressCard';
 import { nowStamp } from './messageTime';
 
 /**
@@ -201,6 +202,94 @@ function normalizeBody(text: string): string {
 }
 
 /**
+ * A tool event forwarded by an agent adapter. Heron reaches the tool layer
+ * through this shape only: its preview text stays plain, so without these
+ * frames the calls never become cards in the web transcript.
+ */
+interface ToolFrame {
+  type: 'tool_use' | 'tool_result';
+  name?: string;
+  tool?: string;
+  id?: string;
+  tool_use_id?: string;
+  input?: string;
+  content?: string;
+  result?: string;
+  status?: string;
+  exit_code?: number | null;
+  success?: boolean | null;
+}
+
+function toolEntryFromFrame(frame: ToolFrame): ProgressCardEntry {
+  const isUse = frame.type === 'tool_use';
+  const text = isUse ? frame.input : (frame.result ?? frame.content);
+  const entry: ProgressCardEntry = {
+    kind: isUse ? 'tool_use' : 'tool_result',
+    text: typeof text === 'string' ? text : '',
+    tool: frame.tool || frame.name || '',
+  };
+  const id = frame.id || frame.tool_use_id;
+  if (id) entry.id = id;
+  if (frame.status) entry.status = frame.status;
+  if (frame.exit_code !== undefined) entry.exit_code = frame.exit_code;
+  if (frame.success !== undefined) entry.success = frame.success;
+  return entry;
+}
+
+/**
+ * Attach a tool event to the row that is currently producing the turn.
+ *
+ * The structured progress card is normally built by the backend from its own
+ * progress writer; when that card exists the frame is redundant and ignored.
+ * When the preview carried only plain text (the heron path), the card is
+ * created here so the call renders as a tool block instead of vanishing.
+ */
+function appendToolFrame(slice: SessionSlice, frame: ToolFrame, stamp: string): SessionSlice {
+  const entry = toolEntryFromFrame(frame);
+  if (!entry.tool && !entry.text) return slice;
+
+  let idx = -1;
+  for (let i = slice.messages.length - 1; i >= 0; i -= 1) {
+    const m = slice.messages[i];
+    // 只认当前这一轮还在产出的行：历史 preview 行（streaming=false，但仍带
+    // previewHandle）不该吸收新帧，否则工具会挂到上一轮的消息上。
+    if (m.role === 'assistant' && m.streaming) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx < 0) {
+    return {
+      ...slice,
+      messages: [...settledMessages(slice.messages), {
+        id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        role: 'assistant' as const,
+        content: '',
+        format: 'markdown' as const,
+        timestamp: stamp,
+        streaming: true,
+        frameTools: true,
+        progressCard: { items: [entry] } as ProgressCardPayload,
+      }],
+    };
+  }
+
+  const prev = slice.messages[idx];
+  // 后端已经给了结构化卡片：以它为准，帧只是同一信息的第二次投递。
+  // 只对自己造出来的卡片继续追加，否则同一个工具会出现两次。
+  if (prev.progressCard && prev.progressCard.items.length > 0 && !prev.frameTools) return slice;
+
+  const items = prev.frameTools && prev.progressCard ? [...prev.progressCard.items, entry] : [entry];
+  const messages = [...slice.messages];
+  messages[idx] = {
+    ...prev,
+    frameTools: true,
+    progressCard: { items } as ProgressCardPayload,
+  };
+  return { ...slice, messages };
+}
+
+/**
  * Apply one bridge frame to one conversation slice. Pure: (slice, frame) →
  * slice. Unknown frame types return the input unchanged.
  *
@@ -212,8 +301,7 @@ function normalizeBody(text: string): string {
  * and is injectable so the timestamp rules (first-visible-response wins, never
  * overwritten) can be asserted deterministically in tests.
  */
-export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHandle?: string, now?: string): SessionSlice {
-  const stamp = now || nowStamp();
+export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHandle?: string, now?: string): SessionSlice {  const stamp = now || nowStamp();
 
   // A pending slash command claims the next reply/card and routes it to the
   // command result panel instead of the transcript.
@@ -410,9 +498,12 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
       };
     }
 
+    case 'tool_use':
+    case 'tool_result':
+      return appendToolFrame(slice, msg as ToolFrame, stamp);
+
     case 'typing_start':
       return slice.typing ? slice : { ...slice, typing: true };
-
     case 'typing_stop':
       return { ...slice, typing: false, messages: settledMessages(slice.messages) };
 
@@ -450,6 +541,8 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
           // progress without losing previously-toggled expand state (the
           // ProgressCard component holds that state by stable content key).
           progressCard: parseProgressCard(um.content) ?? messages[idx].progressCard,
+          // 后端卡片一旦出现就由它接管，帧不再追加（否则同一工具两遍）。
+          frameTools: parseProgressCard(um.content) ? false : messages[idx].frameTools,
         };
         return { ...slice, messages };
       }
