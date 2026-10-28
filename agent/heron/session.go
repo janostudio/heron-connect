@@ -383,6 +383,22 @@ func (s *heronSession) handleResponse(response heronJSONRPCResponse) error {
 		if response.Error.Message == "" {
 			response.Error.Message = "Heron request failed"
 		}
+		// The engine no longer has the session this adapter resumed: its data
+		// directory was cleared, the session was deleted, or the engine was
+		// reinstalled. Keeping the stale id makes every later turn fail the
+		// same way, and the user sees "file not found" for a request that has
+		// nothing to do with files. Forget it so the next turn starts a fresh
+		// session, and say what happened in terms the user can act on.
+		if response.Error.Code == -32002 && strings.Contains(strings.ToLower(response.Error.Message), "file not found") {
+			s.sessionID.Store("")
+			slog.Warn("heron: resumed session is gone, next turn starts a new one",
+				"error", response.Error.Message)
+			return s.emit(core.Event{
+				Type:      core.EventError,
+				Error:     errors.New("heron: 会话已失效（引擎侧数据被清理），请重发本条消息"),
+				SessionID: s.sessionIDFromError(response.Error.Data),
+			})
+		}
 		return s.emit(core.Event{
 			Type:      core.EventError,
 			Error:     fmt.Errorf("heron: JSON-RPC %d: %s", response.Error.Code, response.Error.Message),
