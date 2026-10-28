@@ -1534,6 +1534,11 @@ func (bs *BridgeServer) sendToAdapter(platform string, msg map[string]any) error
 			lastErr = err
 		}
 	}
+	// One line per outbound frame: when a user says "I got nothing", the first
+	// question is whether anything was written and to how many adapters. At
+	// info level this fires for every reply; debug keeps it available without
+	// spamming a busy deployment.
+	slog.Debug("bridge: sendToAdapter", "platform", platform, "clients", len(clients), "type", msg["type"], "session_key", msg["session_key"])
 	return lastErr
 }
 

@@ -294,8 +294,15 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 					if e.showContextIndicator && event.InputTokens >= 100 {
 						fullResponse += contextIndicator(event.InputTokens)
 					}
+					// A background turn's answer has to name the Team that wrote
+					// it, exactly like a foreground answer does. Sending it through
+					// e.send dropped the label: the platform received the text with
+					// no attribution, so the client could not tell which Team's
+					// result it was showing (A→B fixture, 2026-10-28).
 					for _, chunk := range splitMessage(fullResponse, maxPlatformMessageLen) {
-						e.send(p, replyCtx, chunk)
+						if err := e.sendFinalWithError(p, replyCtx, replyTeam(event.Metadata), chunk, workspaceDir); err != nil {
+							slog.Warn("unsolicited reply send failed", "session", sessionKey, "error", err)
+						}
 					}
 				}
 

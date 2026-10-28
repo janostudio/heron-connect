@@ -762,21 +762,21 @@ func mergeStreamDisplayContent(streamContent, lastAssistantSegment, finalRespons
 	if strings.HasPrefix(streamContent, finalResponse) {
 		return streamContent
 	}
-	// Dedup 3: remove the last assistant segment from streamContent
-	// if it appears as a suffix, so we don't duplicate the final
-	// chunk that the assistant already echoed.
+	// Dedup 3: the final answer belongs to the turn that produced it. When the
+	// streamed content already contains that answer, the earlier paragraphs are
+	// PROGRESS (what the agent said while working), not part of the answer.
+	// Repeating them here puts two turns' worth of text into one message — the
+	// exact "已派发… / 已派发…" duplication seen in the A→B fixture on
+	// 2026-10-27. Progress is shown by the preview or by the per-event
+	// messages; the final message carries the answer alone.
 	lastAssistantSegment = strings.TrimSpace(lastAssistantSegment)
+	if finalResponse != "" && strings.Contains(streamContent, finalResponse) {
+		return finalResponse
+	}
 	if lastAssistantSegment != "" {
 		trimmedStream := strings.TrimSpace(streamContent)
 		if strings.HasSuffix(trimmedStream, lastAssistantSegment) {
-			suffixIdx := strings.LastIndex(streamContent, lastAssistantSegment)
-			if suffixIdx >= 0 {
-				prefix := strings.TrimRight(streamContent[:suffixIdx], "\n ")
-				if prefix == "" {
-					return finalResponse
-				}
-				return prefix + "\n\n" + finalResponse
-			}
+			return finalResponse
 		}
 	}
 
