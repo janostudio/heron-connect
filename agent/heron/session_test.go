@@ -978,8 +978,7 @@ func TestHeronIntermediateTurnDropsBufferedText(t *testing.T) {
 
 // 同一段结论会被两个不同的 FlowTurn 各送一次：结束调用方回合的 JSON-RPC 响应，
 // 以及产生它的那一轮的自发帧。s26 因此出现了两条一模一样的消息。
-func TestHeronSuppressesDuplicateAnswerAcrossTurns(t *testing.T) {
-	session := newTestHeronSession()
+func TestHeronSuppressesDuplicateAnswerAcrossTurns(t *testing.T) {	session := newTestHeronSession()
 	defer session.cancel()
 
 	answer := "heron-ai 仓库 commit 统计结果：主分支 299。"
@@ -1000,5 +999,59 @@ func TestHeronSuppressesDuplicateAnswerAcrossTurns(t *testing.T) {
 	if len(session.events) != 0 {
 		event := <-session.events
 		t.Fatalf("跨回合的同一段结论不能重复投递: %+v", event)
+	}
+}
+
+// 答复只以 assistant 正文形式出现（响应 reply 为空）时，不能把它盖成
+// "（本轮无回复）"。缓冲的正文就是结论。
+func TestHeronAnswerOnlyInAssistantTextIsNotReplacedByPlaceholder(t *testing.T) {
+	session := newTestHeronSession()
+	defer session.cancel()
+
+	if err := session.handleNotification("progress", json.RawMessage(
+		`{"session_id":"fs-1","flow_turn_id":"ft-1","seq":1,"event_id":"fs-1-1","type":"assistant","content":[{"type":"text","text":"主分支是 master。"}]}`),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.handleResponse(heronJSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Result:  mustJSON(map[string]any{"session_id": "fs-1", "flow_turn_id": "ft-1", "status": "waiting_input", "reply": ""}),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := <-session.events
+	if got.Type != core.EventResult || got.Content != "主分支是 master。" {
+		t.Fatalf("正文即答案时必须作为结果送出，得到 %+v", got)
+	}
+	if len(session.events) != 0 {
+		t.Fatalf("不应再补一条占位结果")
+	}
+}
+
+// 去重只在一次用户请求内生效：用户重复问同一个问题、答案文本又完全相同，
+// 第二次提问必须照常答复。
+func TestHeronDuplicateDedupIsScopedToOneRequest(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+
+	session := newTestHeronSession()
+	session.stdin = writer
+	defer session.cancel()
+
+	session.noteBodySent("主分支是 master。")
+	if !session.bodyRecentlySent("主分支是 master。") {
+		t.Fatal("前提：同一请求内应判为重复")
+	}
+
+	if err := session.Send("再问一次", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if session.bodyRecentlySent("主分支是 master。") {
+		t.Fatal("新请求不能被上一次请求的去重状态抑制")
 	}
 }

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { emptySlice, applyFrame, type SessionSlice } from './chatSessionsCore';
 import type { ChatMsg } from './chatMessage';
 import type { BridgeIncoming } from '@/hooks/useBridgeSocket';
+import { PROGRESS_CARD_PREFIX } from './ProgressCard';
 
 // ── Heron 的工具帧 → 工具卡片 ─────────────────────────────────
 //
@@ -74,5 +75,20 @@ describe('tool frames become progress-card entries', () => {
   it('drops frames that carry neither a tool name nor text', () => {
     const slice = streaming();
     expect(applyFrame(slice, frame({ type: 'tool_use' }))).toBe(slice);
+  });
+
+  it('hands the card over to the backend payload once update_message carries one', () => {
+    let slice = streaming();
+    slice = applyFrame(slice, frame({ type: 'tool_use', name: 'Bash', tool_use_id: 'tc-1', input: 'git log' }));
+
+    const payload = `${PROGRESS_CARD_PREFIX}${JSON.stringify({
+      items: [{ kind: 'tool_use', tool: 'Bash', text: 'git log', id: 'tc-1' }],
+    })}`;
+    slice = applyFrame(slice, frame({ type: 'update_message', preview_handle: 'h1', content: payload }));
+    // 后端卡片接管后，帧不再追加（否则同一工具两遍）。
+    slice = applyFrame(slice, frame({ type: 'tool_use', name: 'Bash', tool_use_id: 'tc-1', input: 'git log' }));
+
+    expect(slice.messages[1].progressCard?.items).toHaveLength(1);
+    expect(slice.messages[1].frameTools).toBe(false);
   });
 });

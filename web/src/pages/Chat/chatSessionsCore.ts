@@ -251,7 +251,9 @@ function appendToolFrame(slice: SessionSlice, frame: ToolFrame, stamp: string): 
   let idx = -1;
   for (let i = slice.messages.length - 1; i >= 0; i -= 1) {
     const m = slice.messages[i];
-    if (m.role === 'assistant' && (m.streaming || m.previewHandle)) {
+    // 只认当前这一轮还在产出的行：历史 preview 行（streaming=false，但仍带
+    // previewHandle）不该吸收新帧，否则工具会挂到上一轮的消息上。
+    if (m.role === 'assistant' && m.streaming) {
       idx = i;
       break;
     }
@@ -539,6 +541,8 @@ export function applyFrame(slice: SessionSlice, msg: BridgeIncoming, previewHand
           // progress without losing previously-toggled expand state (the
           // ProgressCard component holds that state by stable content key).
           progressCard: parseProgressCard(um.content) ?? messages[idx].progressCard,
+          // 后端卡片一旦出现就由它接管，帧不再追加（否则同一工具两遍）。
+          frameTools: parseProgressCard(um.content) ? false : messages[idx].frameTools,
         };
         return { ...slice, messages };
       }

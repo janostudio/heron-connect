@@ -300,6 +300,10 @@ func (s *heronSession) Send(prompt string, images []core.ImageAttachment, files 
 	s.deliveredIDs = nil
 	s.sentBodies = make(map[string]map[string]bool)
 	s.pendingText = make(map[string][]string)
+	// Cross-turn dedup is scoped to one user request: asking the same question
+	// again is a new request and must get its answer again, even when the text
+	// is identical.
+	s.recentBodies = nil
 	s.progressMu.Unlock()
 
 	id := s.nextID.Add(1)
@@ -487,6 +491,27 @@ func (s *heronSession) handleResponse(response heronJSONRPCResponse) error {
 		return s.releaseTurnText(result.FlowTurnID, true, result.SessionID)
 	}
 	if strings.TrimSpace(result.Reply) == "" {
+		// The conclusion may have arrived only as assistant text (no reply on
+		// the response). Release it instead of announcing "本轮无回复".
+		if text := s.takeTurnText(result.FlowTurnID); strings.TrimSpace(text) != "" {
+			if err := s.emit(core.Event{
+				Type:         core.EventResult,
+				Content:      text,
+				SessionID:    result.SessionID,
+				Done:         true,
+				InputTokens:  result.Usage.PromptTokens,
+				OutputTokens: result.Usage.CompletionTokens,
+				Metadata: map[string]any{
+					"flow_turn_id": result.FlowTurnID,
+					"status":       result.Status,
+					"team":         result.Team,
+				},
+			}); err != nil {
+				return err
+			}
+			s.noteBodySent(text)
+			return nil
+		}
 		slog.Warn("heronSession: turn returned empty reply", "session_id", result.SessionID)
 		return s.emit(core.Event{
 			Type:         core.EventResult,
@@ -521,6 +546,7 @@ func (s *heronSession) handleResponse(response heronJSONRPCResponse) error {
 	// Remember the conclusion so the turn that produced it cannot deliver the
 	// same text again through its unsolicited frame (s26: 19:38:45 and 19:38:53).
 	s.noteBodySent(result.Reply)
+	s.dropTurnText(result.FlowTurnID)
 	return nil
 }
 
@@ -1063,6 +1089,26 @@ func (s *heronSession) releaseTurnText(flowTurnID string, intermediate bool, ses
 		}
 	}
 	return nil
+}
+
+// takeTurnText pops the buffered assistant text of one turn, joined in arrival
+// order. Used when the response itself carries no reply but the turn did speak.
+func (s *heronSession) takeTurnText(flowTurnID string) string {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	texts := s.pendingText[flowTurnID]
+	delete(s.pendingText, flowTurnID)
+	if len(texts) == 0 {
+		return ""
+	}
+	return strings.Join(texts, "\n\n")
+}
+
+// dropTurnText discards the buffered text of a turn that will not show it.
+func (s *heronSession) dropTurnText(flowTurnID string) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	delete(s.pendingText, flowTurnID)
 }
 
 // recentBodyWindow bounds the cross-turn duplicate window. A settled flow
