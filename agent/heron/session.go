@@ -79,6 +79,18 @@ type heronSession struct {
 	// 941 identical characters delivered twice). Dedup is per turn so a later
 	// turn repeating the same wording still reaches the user.
 	sentBodies map[string]map[string]bool
+	// recentBodies suppresses the same conclusion arriving from two different
+	// turns. A settled flow repeats the answer: the JSON-RPC response that ends
+	// the caller's turn carries it, and the turn that produced it also arrives
+	// as an unsolicited status frame seconds later (s26: the same 398-byte
+	// answer was delivered at 19:38:45 and again at 19:38:53). Per-turn dedup
+	// cannot see that — the two copies belong to different turn ids.
+	recentBodies map[string]time.Time
+	// pendingText holds the assistant text of the user's turn until the turn
+	// proves it is an answer. Heron's dispatch turn says "已转给执行侧…" and
+	// hands the work over; emitting that line live made the client glue it onto
+	// the final answer ("已转给执行侧…\n\n<答案>", the 475-byte message in s26).
+	pendingText map[string][]string
 
 	writeMu    sync.Mutex
 	turnMu     sync.Mutex
@@ -287,6 +299,7 @@ func (s *heronSession) Send(prompt string, images []core.ImageAttachment, files 
 	s.pendingApprovals = nil
 	s.deliveredIDs = nil
 	s.sentBodies = make(map[string]map[string]bool)
+	s.pendingText = make(map[string][]string)
 	s.progressMu.Unlock()
 
 	id := s.nextID.Add(1)
@@ -469,7 +482,9 @@ func (s *heronSession) handleResponse(response heronJSONRPCResponse) error {
 		// was in fact working.
 		slog.Debug("heronSession: intermediate turn has no reply yet",
 			"session_id", result.SessionID, "flow_turn_id", result.FlowTurnID)
-		return nil
+		// The buffered text of this turn is the hand-over note itself; it must
+		// not reach the client as if it were the answer.
+		return s.releaseTurnText(result.FlowTurnID, true, result.SessionID)
 	}
 	if strings.TrimSpace(result.Reply) == "" {
 		slog.Warn("heronSession: turn returned empty reply", "session_id", result.SessionID)
@@ -488,7 +503,7 @@ func (s *heronSession) handleResponse(response heronJSONRPCResponse) error {
 			},
 		})
 	}
-	return s.emit(core.Event{
+	if err := s.emit(core.Event{
 		Type:         core.EventResult,
 		Content:      result.Reply,
 		SessionID:    result.SessionID,
@@ -500,7 +515,13 @@ func (s *heronSession) handleResponse(response heronJSONRPCResponse) error {
 			"status":       result.Status,
 			"team":         result.Team,
 		},
-	})
+	}); err != nil {
+		return err
+	}
+	// Remember the conclusion so the turn that produced it cannot deliver the
+	// same text again through its unsolicited frame (s26: 19:38:45 and 19:38:53).
+	s.noteBodySent(result.Reply)
+	return nil
 }
 
 func (s *heronSession) handleNotification(method string, params json.RawMessage) error {
@@ -560,9 +581,10 @@ func (s *heronSession) handleNotification(method string, params json.RawMessage)
 			if !applyToUserTurn {
 				continue
 			}
-			if err := s.emit(core.Event{Type: core.EventText, Content: block.Text, SessionID: sessionID}); err != nil {
-				return err
-			}
+			// Held, not emitted: this text may be the hand-over note of a
+			// dispatch turn ("已转给执行侧…"). Only the turn that turns out to
+			// be an answer may show it, see releaseTurnText.
+			s.holdTurnText(progress.FlowTurnID, block.Text)
 		}
 	case "tool_use":
 		return s.emit(core.Event{
@@ -604,7 +626,9 @@ func (s *heronSession) handleNotification(method string, params json.RawMessage)
 		// which carries the reply and the usage. Relaying the event as well
 		// would duplicate that reply in the same bubble.
 		if applyToUserTurn {
-			return nil
+			// Before the response arrives, let the turn's buffered text out —
+			// but only when this turn is an answer, not a hand-over.
+			return s.releaseTurnText(progress.FlowTurnID, progress.Intermediate, sessionID)
 		}
 		return s.emitUnattendedTurn(progress, sessionID)
 	case "flow_turn_started":
@@ -639,7 +663,10 @@ func (s *heronSession) handleNotification(method string, params json.RawMessage)
 		// flow_turn_completed as terminal is why a background answer never
 		// reaches the user even when the engine delivered it.
 		if applyToUserTurn {
-			return nil
+			// The user's turn ended. Its buffered text may be shown only when
+			// this turn is an answer; an intermediate turn's text is a progress
+			// note, and showing it is what glued "已转给执行侧…" onto the answer.
+			return s.releaseTurnText(progress.FlowTurnID, progress.Intermediate, sessionID)
 		}
 		return s.emitUnattendedTurn(progress, sessionID)
 	case "call_completed":
@@ -764,6 +791,12 @@ func (s *heronSession) emitUnattendedTurn(progress heronProgress, sessionID stri
 	if s.bodyAlreadySent(progress.FlowTurnID, reply) {
 		return nil
 	}
+	// Cross-turn dedup: the turn that produced the answer hands it over twice —
+	// once through the JSON-RPC response that ends the caller's turn, once as
+	// this unattended frame. Both are "the answer", but only one bubble.
+	if s.bodyRecentlySent(reply) {
+		return nil
+	}
 	if err := s.emit(core.Event{
 		Type:      core.EventResult,
 		Content:   reply,
@@ -779,6 +812,7 @@ func (s *heronSession) emitUnattendedTurn(progress heronProgress, sessionID stri
 		return err
 	}
 	s.markBodySent(progress.FlowTurnID, reply)
+	s.noteBodySent(reply)
 	return nil
 }
 
@@ -995,4 +1029,77 @@ func (s *heronSession) closeEvents() {
 func mustJSON(value any) json.RawMessage {
 	data, _ := json.Marshal(value)
 	return data
+}
+
+// holdTurnText buffers the assistant text of the caller's turn until the turn
+// ends and proves whether it is an answer. Emitting it live is what turned the
+// dispatch note "已转给执行侧…" into a prefix of the final answer.
+func (s *heronSession) holdTurnText(flowTurnID, text string) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	if s.pendingText == nil {
+		s.pendingText = make(map[string][]string)
+	}
+	s.pendingText[flowTurnID] = append(s.pendingText[flowTurnID], text)
+}
+
+// releaseTurnText ends the hold for one turn: an answer flushes its text, an
+// intermediate turn drops it. Dropping is the point — a hand-over note is not
+// the conclusion, and it is already visible in the progress card.
+func (s *heronSession) releaseTurnText(flowTurnID string, intermediate bool, sessionID string) error {
+	s.progressMu.Lock()
+	texts := s.pendingText[flowTurnID]
+	delete(s.pendingText, flowTurnID)
+	s.progressMu.Unlock()
+	if intermediate {
+		return nil
+	}
+	for _, text := range texts {
+		if err := s.emit(core.Event{Type: core.EventText, Content: text, SessionID: sessionID}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// recentBodyWindow bounds the cross-turn duplicate window. A settled flow
+// repeats its conclusion within seconds, not minutes; the bound keeps the map
+// from growing with the conversation.
+const recentBodyWindow = 30 * time.Minute
+
+// bodyRecentlySent reports whether this exact conclusion was already handed to
+// the event channel, regardless of which turn produced it.
+func (s *heronSession) bodyRecentlySent(text string) bool {
+	key := bodyKey(text)
+	if key == "" {
+		return false
+	}
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	now := time.Now()
+	for k, at := range s.recentBodies {
+		if now.Sub(at) > recentBodyWindow {
+			delete(s.recentBodies, k)
+		}
+	}
+	_, seen := s.recentBodies[key]
+	return seen
+}
+
+// noteBodySent records a conclusion that reached the event channel, so a later
+// turn repeating it verbatim is suppressed.
+func (s *heronSession) noteBodySent(text string) {
+	key := bodyKey(text)
+	if key == "" {
+		return
+	}
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	if s.recentBodies == nil {
+		s.recentBodies = make(map[string]time.Time)
+	}
+	s.recentBodies[key] = time.Now()
 }
