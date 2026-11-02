@@ -33,6 +33,20 @@ type Agent struct {
 	extraEnv   []string
 	sessionEnv []string
 
+	// serveURL switches the adapter from "one CLI process per conversation"
+	// to "one long-lived engine serving every conversation". Empty means the
+	// stdio mode, unchanged.
+	serveURL string
+	// serveToken is the bearer token the engine's --serve requires when it
+	// listens beyond loopback.
+	serveToken string
+	// serveManage makes this connector start (and stop) the engine itself.
+	// Off by default: an operator who already runs `heron-ai --serve` under a
+	// supervisor does not want a second copy appearing next to it.
+	serveManage bool
+	// serverCmd is the engine this connector started, nil when it did not.
+	serverCmd *exec.Cmd
+
 	mu sync.RWMutex
 }
 
@@ -45,6 +59,12 @@ type Agent struct {
 //     against its own .agents/models.json)
 //   - args: extra arguments; --json-rpc is added when absent
 //   - env: map of environment overrides
+//   - serve: base URL of an already-running `heron-ai --serve`. When set, the
+//     adapter talks HTTP instead of starting a CLI process per conversation;
+//     empty keeps the stdio behaviour. Serve mode is what makes a scheduled
+//     wake-up reachable: the engine outlives its turns, and the session's
+//     event stream stays open, so a turn it starts on its own still arrives.
+//   - serve_token: bearer token for that server, when it requires one.
 func New(opts map[string]any) (core.Agent, error) {
 	workDir, _ := opts["work_dir"].(string)
 	if strings.TrimSpace(workDir) == "" {
@@ -59,6 +79,29 @@ func New(opts map[string]any) (core.Agent, error) {
 
 	model, _ := opts["model"].(string)
 	model = strings.TrimSpace(model)
+
+	serveURL, _ := opts["serve"].(string)
+	serveURL = strings.TrimSpace(serveURL)
+	serveToken, _ := opts["serve_token"].(string)
+	serveToken = strings.TrimSpace(serveToken)
+	serveManage := false
+	if value, ok := opts["serve_manage"].(bool); ok {
+		serveManage = value
+	}
+
+	if serveURL != "" {
+		// No CLI process is started in this mode, so the binary does not have
+		// to be on this machine's PATH at all.
+		return &Agent{
+			workDir:     workDir,
+			command:     command,
+			model:       model,
+			extraEnv:    envPairsFromOpts(opts["env"]),
+			serveURL:    serveURL,
+			serveToken:  serveToken,
+			serveManage: serveManage,
+		}, nil
+	}
 
 	args := parseStringSlice(opts["args"])
 	if !hasArg(args, "--json-rpc") {
@@ -160,6 +203,20 @@ func (a *Agent) AvailableModels(_ context.Context) []core.ModelOption {
 
 func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentSession, error) {
 	a.mu.RLock()
+	serveURL := a.serveURL
+	serveToken := a.serveToken
+	a.mu.RUnlock()
+	if serveURL != "" {
+		// The engine owns the conversation; this handle is a client of it. The
+		// session id is the engine's, so a restart of this connector resumes
+		// the same conversation.
+		if err := a.ensureServeProcess(ctx); err != nil {
+			return nil, err
+		}
+		return newHTTPSession(serveURL, serveToken, sessionID), nil
+	}
+
+	a.mu.RLock()
 	workDir := a.workDir
 	command := a.command
 	args := append([]string(nil), a.args...)
@@ -182,7 +239,13 @@ func (a *Agent) ListSessions(_ context.Context) ([]core.AgentSessionInfo, error)
 	return nil, nil
 }
 
-func (a *Agent) Stop() error { return nil }
+// Stop asks an engine this connector started to exit. The engine's shutdown
+// path releases the port; --exit-with-parent covers the case where this
+// process is killed before reaching here.
+func (a *Agent) Stop() error {
+	a.stopServeProcess()
+	return nil
+}
 
 func parseStringSlice(value any) []string {
 	switch v := value.(type) {

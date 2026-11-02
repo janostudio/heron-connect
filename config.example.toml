@@ -1910,3 +1910,39 @@ app_secret = "your-feishu-app-secret"
 #
 # [projects.platforms.options]
 # token = "your-discord-bot-token"
+
+# =============================================================================
+# Heron AI in serve mode / Heron AI 常驻服务模式
+# =============================================================================
+#
+# By default the heron adapter starts one `heron-ai --json-rpc` process per
+# conversation. In serve mode it talks to a single long-lived
+# `heron-ai --serve` instead.
+#
+# Set `serve` only when you need scheduled wake-ups: a wake-up starts a turn
+# with no request carrying it, so it can only reach the chat while a server
+# outlives its turns. In the default stdio mode the engine does not even expose
+# ScheduleWakeup to the model.
+#
+# 默认每个会话起一个 `heron-ai --json-rpc` 进程。serve 模式下改为连接一个常驻的
+# `heron-ai --serve`。只有 serve 模式才向模型开放 ScheduleWakeup：定时唤醒没有请求
+# 携带，必须由一个常驻进程在其轮次之外启动，才可能送到聊天里。
+#
+# [[projects]]
+# name = "my-project"
+#
+# [projects.agent]
+# type = "heron"
+#
+# [projects.agent.options]
+# work_dir = "/path/to/project"
+# command = "heron"
+# serve = "http://127.0.0.1:8080"   # empty/absent = stdio mode / 留空即 stdio 模式
+# serve_token = "${HERON_SERVE_TOKEN}"  # required when the server listens beyond loopback
+#
+# # serve_manage = true starts (and stops) the engine from this connector.
+# # The child is started with --exit-with-parent, so it exits on its own if this
+# # process is killed without a chance to clean up.
+# # serve_manage = true 时由本进程负责起停引擎；引擎带 --exit-with-parent 启动，
+# # 本进程被强杀时它会自行退出，不会留下占用端口的孤儿进程。
+# serve_manage = false
