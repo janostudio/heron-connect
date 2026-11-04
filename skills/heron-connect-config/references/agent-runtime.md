@@ -31,7 +31,7 @@ heron-connect 把 CLI Agent 接到 IM 平台上。默认情况下 Agent 是**叶
 
 | 变量 | 含义 | 示例值 |
 |------|------|--------|
-| `HERON_PROJECT` | 当前 project 名（`[[projects]].name`） | `auto-bugfix` |
+| `HERON_PROJECT` | 当前 project 名（`[[projects]].name`） | `demo-project` |
 | `HERON_SESSION_KEY` | 当前会话 key，格式 `<platform>:<chatID>:<userID>` | `wecom:T1226...:zhangsan` |
 | `PATH` | 追加了 heron-connect 二进制所在目录，因此可直接敲 `heron-connect` | — |
 

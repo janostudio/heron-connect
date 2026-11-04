@@ -313,8 +313,8 @@ Options:
   -h, --help           Show this help
 
 Examples:
-  heron-connect share auto-bugfix reports/q3.md
-  heron-connect share auto-bugfix reports/q3.md | pbcopy
-  heron-connect share list auto-bugfix
+  heron-connect share demo-project reports/q3.md
+  heron-connect share demo-project reports/q3.md | pbcopy
+  heron-connect share list demo-project
   heron-connect share revoke https://host/api/v1/share/ab12...`)
 }

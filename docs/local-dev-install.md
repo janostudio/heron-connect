@@ -13,7 +13,7 @@ npm install -g heron-connect
 那么 PATH 里的 `heron-connect` 往往不是最终可执行二进制，而是 npm 放出来的入口脚本。以当前机器为例：
 
 ```bash
-/Users/jahweijiang/.nvm/versions/node/v24.11.0/bin/heron-connect
+<node-bin>/heron-connect
 ```
 
 这个路径通常是一个软链接，最后会跳到全局 npm 包目录中的 `run.js`，再由 `run.js` 去执行真正的 Go 二进制：
@@ -47,7 +47,7 @@ npm install -g heron-connect
 
 ## 现在的做法
 
-仓库里已经增加了 `make build-local` 目标，位置见 [Makefile](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/Makefile)。
+仓库里已经增加了 `make build-local` 目标，位置见 [Makefile](Makefile)。
 
 执行：
 

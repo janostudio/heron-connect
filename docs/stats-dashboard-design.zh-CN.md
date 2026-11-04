@@ -2,7 +2,7 @@
 
 > 状态：Draft v1.1（待评审）
 > 日期：2026-08-31（v1.1 增补"业务报告中心"轨道）
-> 目标：回答"今天/本周干了什么"——多少会话、多少轮对话、token 消耗、谁在哪些平台/项目上活跃、每个会话大致在做什么；并为业务自产报告（如 auto_bugfix 每日复盘的 HTML/MD 产物）提供统一的 Web 托管与入口。
+> 目标：回答"今天/本周干了什么"——多少会话、多少轮对话、token 消耗、谁在哪些平台/项目上活跃、每个会话大致在做什么；并为业务自产报告（如 demo-project 每日复盘的 HTML/MD 产物）提供统一的 Web 托管与入口。
 
 ## 1. 背景与现状缺口
 
@@ -12,7 +12,7 @@
 | 会话数据 | JSON 快照有 CreatedAt/UpdatedAt/History（core/session.go） | 缺 turn 级维度（平台/用户/工具数/时长不在快照里） |
 | 定时推送 | CronJob 基础设施完备（core/cron.go），prompt 型 job + 主动推送可用 | prompt 是静态文本，**无法注入统计数据** |
 | Web 展示 | Dashboard 只有 version/uptime/平台数 + 最近会话 | 无统计页 |
-| 业务报告（auto_bugfix 每日复盘产物 `reports/<日期>/*.html|md`） | cron 能生成；`GET /api/v1/files/...` 已带鉴权托管项目工作目录文件（mgmt_server.go:472） | **无索引、无 Web 入口**；现状靠企微群播全文，HTML 无法在群内展示、链接不可点 |
+| 业务报告（demo-project 每日复盘产物 `reports/<日期>/*.html|md`） | cron 能生成；`GET /api/v1/files/...` 已带鉴权托管项目工作目录文件（mgmt_server.go:472） | **无索引、无 Web 入口**；现状靠企微群播全文，HTML 无法在群内展示、链接不可点 |
 
 ## 2. 设计原则：引擎通用、业务外置
 
@@ -202,7 +202,7 @@
 时间筛选器仅随标准统计区出现（驱动统计区 + iframe 参数透传）；纯业务数据场景下 insights 区自带 period 标注，独立展示。
 
 ```
-┌─ auto-bugfix ───────────────────────────────────── [💬 进入聊天] ┐
+┌─ demo-project ───────────────────────────────────── [💬 进入聊天] ┐
 │ [日] [周] [月] [自定义 ▾ 2026-08-01 ~ 2026-08-31]                  │
 │ ┌───────┐┌───────┐┌──────────────┐┌────────────┐┌───────┐        │
 │ │会话 12 ││轮次 87 ││Token 1.4M     ││缓存 8.0k/0.5k││错误 2 │        │
@@ -279,7 +279,7 @@
 
 ### 5.1 动机与现状
 
-auto_bugfix 的每日复盘（cron job `daily-workreport`，见 `scripts/cc-connect-qhn/crons/jobs.json`）是典型业务：agent 读 issue 库与知识库、跑分析脚本（token-usage-analyzer / session-analyzer）、落地 `reports/YYYYMMDD/token-daily.html`、`daily-summary.md` 等产物，最后把**文档全文粘进企微群**。痛点：HTML 在群里无法展示、全文播报又臭又长、历史报告无入口可回看。
+demo-project 的每日复盘（cron job `daily-workreport`，见 `scripts/cc-connect-qhn/crons/jobs.json`）是典型业务：agent 读 issue 库与知识库、跑分析脚本（token-usage-analyzer / session-analyzer）、落地 `reports/YYYYMMDD/token-daily.html`、`daily-summary.md` 等产物，最后把**文档全文粘进企微群**。痛点：HTML 在群里无法展示、全文播报又臭又长、历史报告无入口可回看。
 
 关键事实：**文件托管已经存在，不需要另起 python http.server**（那只是多一个无鉴权暴露面）。`GET /api/v1/files/<project>/<relpath>`（management/mgmt_server.go:472）已具备：
 
@@ -287,7 +287,7 @@ auto_bugfix 的每日复盘（cron job `daily-workreport`，见 `scripts/cc-conn
 - `.html` → `text/html`、`.md` → `text/markdown`，浏览器可直接预览；目录访问返回 JSON 列表（name/type/size/mtime）。
 
 即 management server 运行时，`reports/20260816/token-day.html` 今天就能通过
-`/api/v1/files/auto-bugfix/reports/20260816/token-day.html` 访问。真正缺的是四件事：**索引、Web 入口页、可点击链接、播报降载**。
+`/api/v1/files/demo-project/reports/20260816/token-day.html` 访问。真正缺的是四件事：**索引、Web 入口页、可点击链接、播报降载**。
 
 ### 5.2 业务契约（约定目录 + 可选 manifest）
 
@@ -397,7 +397,7 @@ SPA（引擎的壳：导航/鉴权/主题，React）
 - **跳转键命中**（两个 ID 任一能在引擎会话中找到）→ 整行可点击 → `/chat/:project/:session_id`；
 - 未命中（纯 CLI 会话、未经引擎）→ 行不可跳转，仅 `detail` 链接可用；
 - `metrics` 是 label/value 的开放集：业务定义指标语义，引擎定义画法（`tone` 决定颜色）——**字段名固定、指标语义自由**；
-- **tags 渲染**：彩色 chip 徽章（tone 决定颜色，纯字符串 = 中性灰）。引擎不理解含义——"已修复/已整理"是 auto_bugfix 的工作流状态，别的业务写什么都只是展示；点击 chip 前端过滤列表；
+- **tags 渲染**：彩色 chip 徽章（tone 决定颜色，纯字符串 = 中性灰）。引擎不理解含义——"已修复/已整理"是 demo-project 的工作流状态，别的业务写什么都只是展示；点击 chip 前端过滤列表；
 - **合并行布局**（每行 = 引擎基线 + 业务增量，即"单会话维度信息"的完整呈现）：
 
   ```
@@ -411,7 +411,7 @@ SPA（引擎的壳：导航/鉴权/主题，React）
 
 **为什么需要两个跳转键**：业务脚本（analyze_v2.py 等）直读 CLI 会话日志，手里只有 CLI 会话 ID（`.jsonl` 文件名）；引擎会话 ID 与之是映射关系。TurnRecord 已同时记录两者（§3.1），双键设计让业务零成本对齐引擎。
 
-### 5.6 业务引入示例（auto_bugfix daily-workreport）
+### 5.6 业务引入示例（demo-project daily-workreport）
 
 cron job 结构与触发不变，prompt 仅微调第 4/5 步：
 

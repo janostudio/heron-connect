@@ -61,10 +61,10 @@ func TestParseEnv(t *testing.T) {
 
 func TestAgentSetSessionEnvPreservesConfiguredEnvironment(t *testing.T) {
 	a := &Agent{configEnv: []string{"HERON_CONNECT_ENV=cloud"}}
-	a.SetSessionEnv([]string{"HERON_PROJECT=auto-bugfix", "HERON_SESSION_KEY=wecom:chat:user"})
+	a.SetSessionEnv([]string{"HERON_PROJECT=demo-project", "HERON_SESSION_KEY=wecom:chat:user"})
 	want := []string{
 		"HERON_CONNECT_ENV=cloud",
-		"HERON_PROJECT=auto-bugfix",
+		"HERON_PROJECT=demo-project",
 		"HERON_SESSION_KEY=wecom:chat:user",
 	}
 	if !reflect.DeepEqual(a.sessionEnv, want) {

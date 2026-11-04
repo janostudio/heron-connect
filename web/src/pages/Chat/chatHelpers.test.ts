@@ -336,7 +336,7 @@ describe('parseListItemText', () => {
 
 describe('relFromFilesHref', () => {
   it('extracts a nested relative path', () => {
-    expect(relFromFilesHref('/api/v1/files/auto-bugfix/reports/20261008/daily.md', 'auto-bugfix'))
+    expect(relFromFilesHref('/api/v1/files/demo-project/reports/20261008/daily.md', 'demo-project'))
       .toBe('reports/20261008/daily.md');
   });
 

@@ -13610,7 +13610,7 @@ func TestMergeStreamDisplayContent_withTrailingSpaces(t *testing.T) {
 func TestMergeStreamDisplayContent_realWorldCase(t *testing.T) {
 	// Reproduces the actual bug from the log.
 	stream := "哈哈，你好！有什么我可以帮你的吗？"
-	final := "哈哈，你好！有什么我可以帮你的吗？\n\n*deepseek-v4-pro-ioa · 剩余 97% · …/workspace/auto_bugfix*"
+	final := "哈哈，你好！有什么我可以帮你的吗？\n\n*deepseek-v4-pro-ioa · 剩余 97% · …/workspace/demo-project*"
 	got := mergeStreamDisplayContent(stream, "", final)
 	if got != final {
 		t.Fatalf("got %q, want final (stream is prefix of final with metadata)", got)

@@ -11,15 +11,15 @@
 - 已登录 npm：`npm whoami`
 - 已登录 GitHub CLI：`gh auth status`
 - 本地可以正常执行 Go 构建
-- 当前版本号已经在 [npm/package.json](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/npm/package.json) 更新
-- 如有必要，已更新 [CHANGELOG.md](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/CHANGELOG.md)
+- 当前版本号已经在 [npm/package.json](npm/package.json) 更新
+- 如有必要，已更新 [CHANGELOG.md](CHANGELOG.md)
 
 ## 标准发布流程
 
 进入 npm 包目录：
 
 ```bash
-cd /Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/npm
+cd npm
 ```
 
 建议先做一次本地打包检查：
@@ -49,7 +49,7 @@ npm publish
 如果你想分步执行，可以用：
 
 ```bash
-cd /Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/npm
+cd npm
 node release-assets.js build
 node release-assets.js ensure
 npm publish
@@ -100,6 +100,6 @@ heron-connect --version
 
 ### 3. 为什么不能只发 npm，不发 GitHub release
 
-因为这个 npm 包本身只是包装层，安装时会执行 [npm/install.js](/Users/jahweijiang/Documents/agent-qhn/projects/heron-connect/npm/install.js)，再去 GitHub release 下载对应平台的真实二进制。
+因为这个 npm 包本身只是包装层，安装时会执行 [npm/install.js](npm/install.js)，再去 GitHub release 下载对应平台的真实二进制。
 
 如果 release 资源缺失，安装一定失败。
