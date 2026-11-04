@@ -540,7 +540,7 @@ func (s *acpSession) Send(ctx context.Context, sessionID string, content string,
 ```toml
 # config.toml 新增/修改项
 
-[project.auto-bugfix]
+[project.demo-project]
 # 原来 reset_on_idle_mins 默认 0（关闭），现在默认 360
 reset_on_idle_mins = 360
 

@@ -4,6 +4,21 @@
 
 Heron Connect is a bridge that connects AI coding agents (Claude Code, Codex, Gemini CLI, Cursor, etc.) with messaging platforms (Feishu/Lark, Telegram, Discord, Slack, DingTalk, WeChat Work, QQ, LINE). Users interact with their coding agent through their preferred messaging app.
 
+## This repository is public
+
+Code, comments, docs, examples, test fixtures, commit messages and PR descriptions
+are all visible to outside readers.
+
+- Do not write internal project names, internal service names or domains, or local
+  absolute paths.
+- Do not commit real session data as fixtures; anonymize flow, record and role names
+  first.
+- Use neutral sample values: `owner/repo`, `demo-project`, `example.com`, `fs_xxx`,
+  `/path/to/workspace`.
+
+If a piece of content cannot be understood or reproduced by an outside reader, it is
+internal and does not belong here.
+
 ## Architecture
 
 ```

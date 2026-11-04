@@ -610,7 +610,7 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
         <div className="relative flex items-center justify-between gap-2 px-4 h-14 border-b border-gray-200/80 dark:border-white/[0.12] shrink-0">
           {/* Breadcrumb / current dir — click to open dropdown.
               Each segment is its own button so you can jump straight to an
-              ancestor (project / auto_bugfix / docs) instead of only stepping
+              ancestor (project / demo-project / docs) instead of only stepping
               up one level at a time via "上一级". */}
           <div className="flex items-center gap-1 min-w-0 text-sm font-medium">
             <button

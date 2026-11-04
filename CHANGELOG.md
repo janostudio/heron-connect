@@ -197,7 +197,7 @@
 
 - **`skills/heron-connect-config` 同步至 v1.3.18 的能力面**。该 skill 内容此前停在 v1.1.36，与代码跨约 40 个版本，现补齐：文件分享（免登录只读链接及其安全边界）、引擎统计采集（metrics JSONL 路径/字段/聚合/消费方）、codebuddy `mode = "bypassPermissions"` 必须显式声明（headless 不读 `.codebuddy/settings.json`）、`interruptible`（忙时打断语义）、`work_dir` 相对路径按 config 目录锚定（v1.3.15 起，修正旧的「相对 cwd/必须绝对路径」描述）、聊天命令表与源码 `builtinCommands` 对齐（`/ps` 是 P.S. 追加输入而非进程列表；特权命令收紧为 shell/show/dir/restart/upgrade/web/diff 共 7 个；补 `/doctor`、`/delete` 批量语法）。
 - **`gotchas.md` 扩写为完整「故障排查手册」**（66 → 231 行）。新增：第一步先确认部署版本（含后台脚本走 PATH 取全局二进制、导致「改了没用」的坑）；日志读法与关键关键字速查表；分场景 playbook——消息无回复（按断点定位）、**连续发消息后会话卡死**（现象/根因/为何 `/cancel`、`/stop` 救不回/只能 `/new` 或重启）、权限一直弹（mode 归一 + 版本 + `work_dir` 漂移三条支线）、Web 显示异常对照表、平台断连重连与代理变量坑。
-- **skill 副本复制到 auto_bugfix**（`.codebuddy/skills/heron-connect-config`），使其会话可直接加载。源头仍在 `projects/heron-connect/skills/`，后续更新需手动同步两份。
+- **skill 副本复制到使用方项目的 skill 目录**，使其会话可直接加载。源头仍在 `skills/`，后续更新需手动同步两份。
 
 ## v1.3.18 (2026-10-12)
 
@@ -547,7 +547,7 @@
   - 同类问题一并修复：三处 react-markdown 调用点（会话流 `RenderMarkdown`、命令结果面板 `Prose`、报告预览）都把 `[remarkGfm]` / `[rehypeHighlight]` 作为**每次渲染新建的数组字面量**传入，会破坏 react-markdown 内部 memoization 并重跑整条 unified 流水线；现统一提升为模块级常量，且 `Prose` 补上 `memo`。
   - 附带诊断结论：这次的 Heap 快照（63MB）**没有内存泄漏**，detached 节点仅 2.33MB 且全为 native；卡顿是纯 CPU/重渲染问题，不是内存问题。
 
-- **Web 文件浏览器面包屑只能逐级返回**：目录路径（`项目 / auto_bugfix / docs`）原先是**一整条纯文本**、只有「上一级」一个返回入口，想回到两层以上要反复点击。现每一层拆为独立按钮，点 `auto_bugfix` 直接跳到该目录；项目名（根）同样可点；当前层级用强调色高亮并加 `aria-current`；下拉箭头独立成按钮专门负责展开/收起，不再与路径点击混淆。点击后行为与原有「上一级」/子目录一致（切目录并展开下拉）。
+- **Web 文件浏览器面包屑只能逐级返回**：目录路径（`项目 / 子目录 / docs`）原先是**一整条纯文本**、只有「上一级」一个返回入口，想回到两层以上要反复点击。现每一层拆为独立按钮，点某一层目录名直接跳到该目录；项目名（根）同样可点；当前层级用强调色高亮并加 `aria-current`；下拉箭头独立成按钮专门负责展开/收起，不再与路径点击混淆。点击后行为与原有「上一级」/子目录一致（切目录并展开下拉）。
 
 ### Added
 
@@ -643,7 +643,7 @@
 ### Added
 
 - **cron 无投递模式（`no_delivery`）**：`CronJob` 新增 `no_delivery` 字段，为 `true` 时 agent 正常执行并产出文件/副作用，但不向任何平台推送消息，`session_key` 留空即可（会被忽略）。用于「只产数据不推送」的定时任务（如每日复盘只写报告、不打扰群）。此前这类需求只能靠 `NEVER:SEND:TO:USER` 假 session_key 硬凑，引擎第一步按前缀找 platform 就报 `platform not found`，任务根本没执行。
-- **项目大盘业务数据契约权威规范**：新增 `docs/dashboard-contract.md`，字段级、不可歧义地定义 `InsightPayload`/`InsightSession` 契约（字段类型、必填性、跳转键语义、subagent 假会话过滤要求、no_delivery 用法），供业务侧（如 auto_bugfix）照此实现。
+- **项目大盘业务数据契约权威规范**：新增 `docs/dashboard-contract.md`，字段级、不可歧义地定义 `InsightPayload`/`InsightSession` 契约（字段类型、必填性、跳转键语义、subagent 假会话过滤要求、no_delivery 用法），供使用方项目照此实现。
 
 ### Changed
 
@@ -1330,7 +1330,7 @@ Personal fork WeCom stream dedup regression fix for `@qinghuangniao/cc-connect-q
 
 ### Notes
 - Fix WeCom WebSocket stream aggregation so a finalized answer that extends an already streamed partial line no longer repeats the partial prefix in the closing frame.
-- Cover the repeated root-directory markdown reply case from `auto-bugfix/latest/cc-connect.log` with a dedicated regression fixture.
+- Cover the repeated root-directory markdown reply case with a dedicated regression fixture.
 - Keep the earlier long-finalize splitting protection and verify the full `platform/wecom` test suite still passes after the dedup adjustment.
 
 ## v1.3.10 (2026-05-28)

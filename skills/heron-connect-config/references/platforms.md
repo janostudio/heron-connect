@@ -68,7 +68,7 @@ IM，专门用来给「Web 管理后台的会话」附加配置。**Web 后台�
 
 ```toml
 [[projects]]
-name = "auto-bugfix"
+name = "demo-project"
 [projects.display]
 mode = "quiet"              # 默认：平台无覆盖时走这个
 

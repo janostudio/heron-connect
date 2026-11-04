@@ -1267,7 +1267,7 @@ func TestCmdNew_WebPlatform_OnlyAddsConversation(t *testing.T) {
 	e.i18n = NewI18n(LangEnglish)
 
 	p := &stubPlatformEngine{n: "bridge"}
-	convKey := MintWebSessionKey("auto-bugfix")
+	convKey := MintWebSessionKey("demo-project")
 	msg := &Message{SessionKey: convKey, Platform: "web", ReplyCtx: "ctx"}
 
 	// Seed the ongoing conversation: agent binding, history and live state.
@@ -1308,7 +1308,7 @@ func TestCmdNew_WebPlatform_OnlyAddsConversation(t *testing.T) {
 	found := false
 	for _, s := range sm.AllSessions() {
 		key := idToKey[s.ID]
-		if s.ID != old.ID && strings.HasPrefix(key, "bridge:web-admin:auto-bugfix:conv-") && key != convKey {
+		if s.ID != old.ID && strings.HasPrefix(key, "bridge:web-admin:demo-project:conv-") && key != convKey {
 			found = true
 		}
 	}
@@ -1329,7 +1329,7 @@ func TestForceNewSession_FreshKeyCreatesSingleSession(t *testing.T) {
 	e := &Engine{sessions: sm}
 	e.i18n = NewI18n(LangEnglish)
 
-	freshKey := MintWebSessionKey("auto-bugfix")
+	freshKey := MintWebSessionKey("demo-project")
 	created := e.ForceNewSession(freshKey, "")
 
 	if created == nil {
@@ -1396,11 +1396,11 @@ func TestLegacyData_ClearsAfterFirstNewCommand(t *testing.T) {
 }
 
 func TestMintWebSessionKey_ShapeAndUniqueness(t *testing.T) {
-	a := MintWebSessionKey("auto-bugfix")
-	b := MintWebSessionKey("auto-bugfix")
+	a := MintWebSessionKey("demo-project")
+	b := MintWebSessionKey("demo-project")
 	c := MintWebSessionKey("other")
 
-	wantPrefix := "bridge:web-admin:auto-bugfix:conv-"
+	wantPrefix := "bridge:web-admin:demo-project:conv-"
 	if !strings.HasPrefix(a, wantPrefix) {
 		t.Errorf("key %q missing prefix %q", a, wantPrefix)
 	}
@@ -1411,8 +1411,8 @@ func TestMintWebSessionKey_ShapeAndUniqueness(t *testing.T) {
 		t.Errorf("project not reflected in key %q", c)
 	}
 	// The key must route to the bridge/web platform and project.
-	if projectFromWebSessionKey(a) != "auto-bugfix" {
-		t.Errorf("projectFromWebSessionKey(%q) = %q, want auto-bugfix", a, projectFromWebSessionKey(a))
+	if projectFromWebSessionKey(a) != "demo-project" {
+		t.Errorf("projectFromWebSessionKey(%q) = %q, want demo-project", a, projectFromWebSessionKey(a))
 	}
 }
 
@@ -1421,8 +1421,8 @@ func TestDistinctWebConversationKeysYieldDistinctSessions(t *testing.T) {
 	// distinct keys must map to two distinct active agent sessions, never
 	// collapse onto one.
 	sm := NewSessionManager("")
-	keyA := MintWebSessionKey("auto-bugfix")
-	keyB := MintWebSessionKey("auto-bugfix")
+	keyA := MintWebSessionKey("demo-project")
+	keyB := MintWebSessionKey("demo-project")
 
 	sA := sm.GetOrCreateActive(keyA)
 	sB := sm.GetOrCreateActive(keyB)

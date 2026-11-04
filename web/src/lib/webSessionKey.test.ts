@@ -9,7 +9,7 @@ import { newConvKey, webAdminSessionKey, WEB_CONN_ID } from './webSessionKey';
 
 describe('newConvKey', () => {
   it('matches the backend shape', () => {
-    expect(newConvKey('auto-bugfix')).toMatch(/^bridge:web-admin:auto-bugfix:conv-[0-9a-f-]+$/);
+    expect(newConvKey('demo-project')).toMatch(/^bridge:web-admin:demo-project:conv-[0-9a-f-]+$/);
   });
 
   it('returns an empty string for a missing project', () => {

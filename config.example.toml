@@ -132,7 +132,7 @@ level = "info" # debug, info, warn, error
 # （不会建立真实连接）专门定位 Web 管理后台。
 #
 # [[projects]]
-# name = "auto-bugfix"
+# name = "demo-project"
 # [projects.display]
 # mode = "quiet"              # default for platforms without their own override
 #

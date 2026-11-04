@@ -753,7 +753,7 @@ func TestHeronSessionRelaysDeliveriesBeforeTurnReply(t *testing.T) {
 	session.turnSequence = 1
 	session.progressMu.Unlock()
 
-	frame := `{"session_id":"fs-1","flow_turn_id":"ft-bg","seq":8,"event_id":"fs-1-8","type":"status","status":"waiting_input","origin":"mailbox","reply":"稍后给结论","deliveries":[{"message_id":"mb-2","team_id":"owner","text":"缺 CLS 索引/地域/时间范围"}]}`
+	frame := `{"session_id":"fs-1","flow_turn_id":"ft-bg","seq":8,"event_id":"fs-1-8","type":"status","status":"waiting_input","origin":"mailbox","reply":"稍后给结论","deliveries":[{"message_id":"mb-2","team_id":"owner","text":"缺日志索引/地域/时间范围"}]}`
 	if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
 		t.Fatal(err)
 	}
@@ -768,7 +768,7 @@ func TestHeronSessionRelaysDeliveriesBeforeTurnReply(t *testing.T) {
 	if len(contents) != 2 {
 		t.Fatalf("expected delivery + reply, got %#v", contents)
 	}
-	if contents[0] != "缺 CLS 索引/地域/时间范围" {
+	if contents[0] != "缺日志索引/地域/时间范围" {
 		t.Fatalf("delivery must come first, got %#v", contents)
 	}
 	if contents[1] != "稍后给结论" {
@@ -787,7 +787,7 @@ func TestHeronSessionDoesNotRepeatDeliveries(t *testing.T) {
 	session.turnSequence = 1
 	session.progressMu.Unlock()
 
-	delivery := `"deliveries":[{"message_id":"mb-2","team_id":"owner","text":"缺 CLS 索引"}]`
+	delivery := `"deliveries":[{"message_id":"mb-2","team_id":"owner","text":"缺日志索引"}]`
 	for _, seq := range []int{9, 10} {
 		frame := fmt.Sprintf(`{"session_id":"fs-1","flow_turn_id":"ft-bg","seq":%d,"event_id":"fs-1-%d","type":"status","status":"waiting_input","origin":"mailbox","reply":"稍后给结论",%s}`, seq, seq, delivery)
 		if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
@@ -798,7 +798,7 @@ func TestHeronSessionDoesNotRepeatDeliveries(t *testing.T) {
 	deliveries := 0
 	for len(session.events) > 0 {
 		event := <-session.events
-		if event.Type == core.EventResult && event.Content == "缺 CLS 索引" {
+		if event.Type == core.EventResult && event.Content == "缺日志索引" {
 			deliveries++
 		}
 	}
@@ -819,7 +819,7 @@ func TestHeronSessionDropsReplyThatRepeatsDelivery(t *testing.T) {
 	session.turnSequence = 1
 	session.progressMu.Unlock()
 
-	answer := "查看 CLS 线上日志核实结果：**workbuddy.host 的流量并没有消失**，最近 3 小时流量正常。"
+	answer := "查看服务日志核实结果：**example.com 的流量并没有消失**，最近 3 小时流量正常。"
 	frame := fmt.Sprintf(`{"session_id":"fs-1","flow_turn_id":"ft-bg","seq":12,"event_id":"fs-1-12","type":"status","status":"waiting_input","origin":"mailbox","reply":%q,"deliveries":[{"message_id":"mb-9","team_id":"owner","text":%q}]}`, answer, answer)
 	if err := session.handleNotification("progress", json.RawMessage(frame)); err != nil {
 		t.Fatal(err)

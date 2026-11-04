@@ -796,17 +796,17 @@ describe('duplicate reply frames', () => {
   it('the same message_id renders once', () => {
     const first = applyFrame(emptySlice(), frame({
       type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u1',
-      message_id: 'msg-1', content: 'CLS 里流量正常。', format: 'markdown',
+      message_id: 'msg-1', content: '服务日志里流量正常。', format: 'markdown',
     } as any));
     expect(first.messages).toHaveLength(1);
 
     const second = applyFrame(first, frame({
       type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u1',
-      message_id: 'msg-1', content: 'CLS 里流量正常。', format: 'markdown',
+      message_id: 'msg-1', content: '服务日志里流量正常。', format: 'markdown',
     } as any));
 
     expect(second.messages).toHaveLength(1);
-    expect(second.messages[0].content).toBe('CLS 里流量正常。');
+    expect(second.messages[0].content).toBe('服务日志里流量正常。');
     expect(second.typing).toBe(false);
   });
 
@@ -878,7 +878,7 @@ describe('duplicate reply frames', () => {
 
 describe('coalescing repeated replies', () => {
   it('merges an identical reply into the previous row', () => {
-    const dispatch = '已转给执行侧，让它去查 cls 线上日志里 workbuddy.host 一天的请求数。';
+    const dispatch = '已转给执行侧，让它去查服务日志里 example.com 一天的请求数。';
     const first = applyFrame(emptySlice(), frame({
       type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u1',
       content: dispatch, format: 'markdown',

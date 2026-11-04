@@ -941,10 +941,10 @@ func TestShare_EndToEndFullFlow(t *testing.T) {
 	// A sibling that must stay unreachable through the share.
 	writeFile(t, filepath.Join(work, "reports"), "private.md", "PRIVATE")
 
-	ts, _ := newShareMgmtServer(t, "mgmt-token", map[string]string{"auto-bugfix": work})
+	ts, _ := newShareMgmtServer(t, "mgmt-token", map[string]string{"demo-project": work})
 
 	// 1. The authenticated user creates a share.
-	body, _ := json.Marshal(map[string]string{"project": "auto-bugfix", "path": "reports/q3.md"})
+	body, _ := json.Marshal(map[string]string{"project": "demo-project", "path": "reports/q3.md"})
 	resp, raw := doReq(t, http.MethodPost, ts.URL+"/api/v1/share", "mgmt-token", body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("create: %d %s", resp.StatusCode, raw)
@@ -981,7 +981,7 @@ func TestShare_EndToEndFullFlow(t *testing.T) {
 		}
 	}
 	// ...nor the authenticated files endpoint.
-	if r, _ := doReq(t, http.MethodGet, ts.URL+"/api/v1/files/auto-bugfix/reports/private.md", "", nil); r.StatusCode != http.StatusUnauthorized {
+	if r, _ := doReq(t, http.MethodGet, ts.URL+"/api/v1/files/demo-project/reports/private.md", "", nil); r.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("files endpoint should still require auth, got %d", r.StatusCode)
 	}
 
