@@ -58,7 +58,11 @@ func (a *Agent) ensureServeProcess(ctx context.Context) error {
 	// Its own process group: a Ctrl-C in the terminal this connector runs in
 	// must reach the connector, which then stops the engine deliberately,
 	// rather than killing both at once and leaving the port to time out.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	//
+	// Delegated to core so the Windows build stays compilable: syscall.SysProcAttr
+	// has no Setpgid field there (it uses CREATE_NEW_PROCESS_GROUP instead). This
+	// used to be a direct Setpgid literal, which broke every `GOOS=windows` build.
+	core.PrepareCmdForKill(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("heron: start engine at %s: %w", serveURL, err)
