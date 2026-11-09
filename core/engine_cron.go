@@ -191,7 +191,9 @@ func (e *Engine) ExecuteCronJob(job *CronJob) error {
 
 	if useNewSession {
 		msg.SessionKey = runSessionKey
-		session := sessions.NewSideSession(runSessionKey, "cron-"+job.ID)
+		// NewCronSideSession marks the run as scheduled in the same write, so the
+		// list UI can hide it without relying on the "cron-" name prefix.
+		session := sessions.NewCronSideSession(runSessionKey, "cron-"+job.ID)
 		if !session.TryLock() {
 			return fmt.Errorf("session %q is busy", runSessionKey)
 		}
@@ -717,7 +719,7 @@ func (e *Engine) executeCronNoDelivery(job *CronJob) error {
 	}
 
 	if useNewSession {
-		session := sessions.NewSideSession(sessionKey, "cron-"+job.ID)
+		session := sessions.NewCronSideSession(sessionKey, "cron-"+job.ID)
 		if !session.TryLock() {
 			return fmt.Errorf("session %q is busy", sessionKey)
 		}

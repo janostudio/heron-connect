@@ -626,6 +626,39 @@ func TestMgmt_SessionList_IncludesPinned(t *testing.T) {
 	}
 }
 
+func TestMgmt_SessionList_IncludesOrigin(t *testing.T) {
+	_, ts, e := testManagementServer(t, "tok")
+
+	human := e.GetSessions().GetOrCreateActive("user1")
+	cron := e.GetSessions().NewCronSideSession("user1", "cron-daily")
+
+	r := mgmtGet(t, ts.URL+"/api/v1/projects/test-project/sessions", "tok")
+	if !r.OK {
+		t.Fatalf("list failed: %s", r.Error)
+	}
+	var data struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	if err := json.Unmarshal(r.Data, &data); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+
+	origins := map[string]any{}
+	for _, sess := range data.Sessions {
+		id, _ := sess["id"].(string)
+		origins[id] = sess["origin"]
+	}
+	// The key must be present on every entry (empty string for human sessions):
+	// the list UI filters on it, and a missing key would silently disable the
+	// "hide scheduled runs" toggle.
+	if got, ok := origins[cron.ID]; !ok || got != core.OriginCron {
+		t.Fatalf("cron session origin = %v (present=%v), want %q", got, ok, core.OriginCron)
+	}
+	if got, ok := origins[human.ID]; !ok || got != "" {
+		t.Fatalf("human session origin = %v (present=%v), want empty", got, ok)
+	}
+}
+
 func TestMgmt_SessionList_IncludesInterruptible(t *testing.T) {
 	_, ts, e := testManagementServer(t, "tok")
 	e.GetSessions().GetOrCreateActive("user1")

@@ -90,7 +90,9 @@
     "searchPlaceholder": "セッション名、ユーザー、メッセージ内容で検索...",
     "createNew": "新規セッション",
     "selectProject": "プロジェクトを選択",
-    "sessionNameOptional": "セッション名（任意）"
+    "sessionNameOptional": "セッション名（任意）",
+    "showCronSessions": "定期実行セッションを表示",
+    "hiddenCronSessions": "定期実行セッション {{count}} 件を非表示中"
   },
   "providers": {
     "title": "プロバイダー",

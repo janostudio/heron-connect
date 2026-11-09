@@ -462,6 +462,7 @@ Lists sessions for a project with summary info including the last message previe
         "id": "sess_abc123",
         "session_key": "telegram:123:456",
         "name": "work",
+        "origin": "",
         "platform": "telegram",
         "agent_type": "claudecode",
         "active": true,
@@ -488,6 +489,7 @@ Lists sessions for a project with summary info including the last message previe
 | Field          | Type    | Description                                                       |
 |----------------|---------|-------------------------------------------------------------------|
 | `active`       | boolean | Whether this is the selected session for its user key             |
+| `origin`       | string  | Empty for a normal chat session; `cron` for a scheduled job run's isolated session (`session_mode=new_per_run`). The Web session list hides `cron` sessions by default. |
 | `live`         | boolean | Whether there is a running agent process for this session         |
 | `last_message` | object  | Preview of the last message (role, content truncated to 200 chars, timestamp). `null` if no history. |
 | `user_name`    | string  | Display name of the user (from platform metadata)                 |

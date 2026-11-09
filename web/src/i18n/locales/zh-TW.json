@@ -90,7 +90,9 @@
     "searchPlaceholder": "搜尋工作階段名稱、使用者或訊息內容...",
     "createNew": "新增工作階段",
     "selectProject": "選擇專案",
-    "sessionNameOptional": "工作階段名稱（可選）"
+    "sessionNameOptional": "工作階段名稱（可選）",
+    "showCronSessions": "顯示定時任務工作階段",
+    "hiddenCronSessions": "已隱藏 {{count}} 個定時任務工作階段"
   },
   "providers": {
     "title": "模型供應商",

@@ -462,6 +462,7 @@ GET /api/v1/status?token=mgmt-secret
         "id": "sess_abc123",
         "session_key": "telegram:123:456",
         "name": "work",
+        "origin": "",
         "platform": "telegram",
         "active": true,
         "created_at": "2026-03-10T09:00:00Z",
@@ -472,6 +473,8 @@ GET /api/v1/status?token=mgmt-secret
   }
 }
 ```
+
+`origin` 为空表示普通聊天会话；定时任务以 `session_mode=new_per_run` 执行时产生的隔离会话为 `cron`，Web 会话列表默认隐藏这类会话。
 
 ---
 

@@ -90,7 +90,9 @@
     "searchPlaceholder": "搜索会话名称、用户或消息内容...",
     "createNew": "新建会话",
     "selectProject": "选择项目",
-    "sessionNameOptional": "会话名称（可选）"
+    "sessionNameOptional": "会话名称（可选）",
+    "showCronSessions": "显示定时任务会话",
+    "hiddenCronSessions": "已隐藏 {{count}} 条定时任务会话"
   },
   "providers": {
     "title": "模型提供方",

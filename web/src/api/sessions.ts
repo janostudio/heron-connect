@@ -27,6 +27,13 @@ export interface Session {
   interruptible?: boolean;
   /** True when the session is user-pinned (shown first in lists). */
   pinned?: boolean;
+  /**
+   * Who created the session. Absent/empty for ordinary chat sessions;
+   * `cron` for a scheduled job's isolated run session (the job runs with
+   * session_mode=new_per_run). The list UI hides these by default so a daily
+   * or hourly job does not crowd out human conversations.
+   */
+  origin?: string;
   created_at: string;
   updated_at: string;
   /**
@@ -83,6 +90,29 @@ export function sessionTitle(s: Pick<Session, 'name' | 'user_name' | 'chat_name'
 // as secondary context next to the title. Empty when unavailable.
 export function sessionSource(s: Pick<Session, 'user_name' | 'chat_name'>): string {
   return s.user_name || s.chat_name || '';
+}
+
+// CRON_SESSION_ORIGIN is the Session.origin value the backend sets on sessions
+// created by a scheduled job run. Keep in sync with core.OriginCron.
+export const CRON_SESSION_ORIGIN = 'cron';
+
+// isCronSession reports whether the session was created by a scheduled run
+// rather than by a person talking to the agent.
+export function isCronSession(s: Pick<Session, 'origin'>): boolean {
+  return s.origin === CRON_SESSION_ORIGIN;
+}
+
+// splitByOrigin partitions a session list into human conversations and
+// scheduled-run sessions. The list UI hides the latter behind a toggle but
+// still reports the hidden count, so the filter is visible rather than silent.
+export function splitByOrigin<T extends { origin?: string }>(list: T[]): { human: T[]; cron: T[] } {
+  const human: T[] = [];
+  const cron: T[] = [];
+  for (const s of list) {
+    if (isCronSession(s)) cron.push(s);
+    else human.push(s);
+  }
+  return { human, cron };
 }
 
 // listSessions fetches the session list. When `q` is set the backend filters

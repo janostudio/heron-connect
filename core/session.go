@@ -15,6 +15,20 @@ import (
 // to use --continue (resume most recent session) instead of a specific session ID.
 const ContinueSession = "__continue__"
 
+// OriginCron is the Session.Origin value for sessions created by a scheduled
+// job run. Such sessions are isolated one-run conversations: the list UI hides
+// them by default so the human conversation list stays readable.
+const OriginCron = "cron"
+
+// cronSideSessionNamePrefix is the name every scheduled run's isolated session
+// gets ("cron-<jobID>"). Only used to backfill Origin for snapshots written
+// before the field existed — never as the runtime classification.
+const cronSideSessionNamePrefix = "cron-"
+
+// cronNoopUserKeyPrefix is the synthetic session_key prefix for no-delivery
+// cron jobs (see executeCronNoDelivery). Also backfill-only.
+const cronNoopUserKeyPrefix = "cron-noop:"
+
 // MintWebSessionKey returns a fresh, unique session_key for a Web admin
 // conversation under the given project. Unlike the legacy per-tab key
 // (bridge:web-admin:<project>:<WC_CONN_ID>), which all conversations in one
@@ -40,6 +54,12 @@ type Session struct {
 	// which correctly reads as "user-chosen name".
 	NameAuto            bool           `json:"name_auto,omitempty"`
 	Pinned              bool           `json:"pinned,omitempty"` // user-pinned session (shown first)
+	// Origin records who created a session that is not a normal user
+	// conversation. OriginCron marks a scheduled run's isolated session
+	// (cron session_mode=new_per_run). Empty means an ordinary chat session.
+	// Persisted so the session list can filter scheduled runs without relying
+	// on the "cron-" name prefix, which a rename would erase.
+	Origin              string         `json:"origin,omitempty"`
 	AgentSessionID      string         `json:"agent_session_id"`
 	AgentType           string         `json:"agent_type,omitempty"`
 	PastAgentSessionIDs []string       `json:"past_agent_session_ids,omitempty"`
@@ -332,6 +352,17 @@ func (sm *SessionManager) NewSession(userKey, name string) *Session {
 // session. Used for isolated one-off runs (e.g. cron with session_mode=new_per_run)
 // so the user's current chat remains the default target for normal messages.
 func (sm *SessionManager) NewSideSession(userKey, name string) *Session {
+	return sm.newSideSession(userKey, name, "")
+}
+
+// NewCronSideSession is NewSideSession for a scheduled run: the origin is set
+// in the same write, so a run that fails before its turn completes cannot leave
+// an unmarked session behind for the list UI to show.
+func (sm *SessionManager) NewCronSideSession(userKey, name string) *Session {
+	return sm.newSideSession(userKey, name, OriginCron)
+}
+
+func (sm *SessionManager) newSideSession(userKey, name, origin string) *Session {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	id := sm.nextID()
@@ -339,6 +370,7 @@ func (sm *SessionManager) NewSideSession(userKey, name string) *Session {
 	s := &Session{
 		ID:        id,
 		Name:      name,
+		Origin:    origin,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -657,6 +689,7 @@ func (sm *SessionManager) saveLocked() {
 			Name:                s.Name,
 			NameAuto:            s.NameAuto,
 			Pinned:              s.Pinned,
+			Origin:              s.Origin,
 			AgentSessionID:      agentSID,
 			AgentType:           s.AgentType,
 			PastAgentSessionIDs: append([]string(nil), s.PastAgentSessionIDs...),
@@ -764,8 +797,52 @@ func (sm *SessionManager) load() {
 	for _, s := range sm.sessions {
 		s.stripContinueSessionSentinel()
 	}
+	sm.backfillCronOrigins()
 
 	slog.Info("session: loaded from disk", "path", sm.storePath, "sessions", len(sm.sessions))
+}
+
+// backfillCronOrigins marks scheduled-run sessions written before Session.Origin
+// existed, so the session list can filter them right after an upgrade instead of
+// only once new runs accumulate. The value is derived state and is persisted by
+// the next Save, not written here.
+//
+// Two markers qualify. A synthetic "cron-noop:" user key is conclusive — no user
+// conversation can own one. The "cron-<jobID>" name needs a second signal: the
+// runner leaves one such session per execution, so the name repeats. A name seen
+// only once is left alone, because that is more likely a person who happened to
+// name a chat "cron-..." than a job that ran once.
+func (sm *SessionManager) backfillCronOrigins() {
+	if len(sm.sessions) == 0 {
+		return
+	}
+	nameCount := make(map[string]int, len(sm.sessions))
+	for _, s := range sm.sessions {
+		if name := s.GetName(); name != "" {
+			nameCount[name]++
+		}
+	}
+	marked := 0
+	for userKey, ids := range sm.userSessions {
+		noopKey := strings.HasPrefix(userKey, cronNoopUserKeyPrefix)
+		for _, id := range ids {
+			s := sm.sessions[id]
+			if s == nil || s.GetOrigin() != "" {
+				continue
+			}
+			name := s.GetName()
+			repeatedCronName := strings.HasPrefix(name, cronSideSessionNamePrefix) &&
+				len(name) > len(cronSideSessionNamePrefix) &&
+				nameCount[name] >= 2
+			if noopKey || repeatedCronName {
+				s.SetOrigin(OriginCron)
+				marked++
+			}
+		}
+	}
+	if marked > 0 {
+		slog.Info("session: backfilled scheduled-run origin", "count", marked)
+	}
 }
 
 // InvalidateForAgent clears AgentSessionID on all sessions whose AgentType
@@ -805,6 +882,7 @@ type SessionSnapshot struct {
 	ID             string
 	Name           string
 	Pinned         bool
+	Origin         string
 	AgentSessionID string
 	AgentType      string
 	History        []HistoryEntry
@@ -822,6 +900,7 @@ func (s *Session) Snapshot() SessionSnapshot {
 		ID:             s.ID,
 		Name:           s.Name,
 		Pinned:         s.Pinned,
+		Origin:         s.Origin,
 		AgentSessionID: s.AgentSessionID,
 		AgentType:      s.AgentType,
 		History:        hist,
@@ -856,6 +935,21 @@ func (s *Session) IsPinned() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.Pinned
+}
+
+// SetOrigin records the session's creator (OriginCron for scheduled runs).
+// The caller persists via SessionManager.Save.
+func (s *Session) SetOrigin(origin string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Origin = origin
+}
+
+// GetOrigin returns the session's creator, empty for ordinary chat sessions.
+func (s *Session) GetOrigin() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Origin
 }
 
 // GetNameAuto reports whether the current name was auto-generated.

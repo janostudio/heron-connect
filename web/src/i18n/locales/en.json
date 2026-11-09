@@ -90,7 +90,9 @@
     "searchPlaceholder": "Search by session name, user, or message content...",
     "createNew": "New Session",
     "selectProject": "Select project",
-    "sessionNameOptional": "Session name (optional)"
+    "sessionNameOptional": "Session name (optional)",
+    "showCronSessions": "Show scheduled-run sessions",
+    "hiddenCronSessions": "{{count}} scheduled-run sessions hidden"
   },
   "providers": {
     "title": "Providers",

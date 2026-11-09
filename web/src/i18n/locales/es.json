@@ -90,7 +90,9 @@
     "searchPlaceholder": "Buscar por nombre de sesión, usuario o contenido del mensaje...",
     "createNew": "Nueva sesión",
     "selectProject": "Seleccionar proyecto",
-    "sessionNameOptional": "Nombre de sesión (opcional)"
+    "sessionNameOptional": "Nombre de sesión (opcional)",
+    "showCronSessions": "Mostrar sesiones de tareas programadas",
+    "hiddenCronSessions": "{{count}} sesiones de tareas programadas ocultas"
   },
   "providers": {
     "title": "Proveedores",

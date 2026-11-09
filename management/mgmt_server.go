@@ -1711,7 +1711,10 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 			"id":            snap.ID,
 			"name":          normalizeSessionName(snap.Name),
 			"pinned":        snap.Pinned,
-			"session_key":   isolateLegacyWebSessionKey(idToKey[snap.ID], snap.ID),
+			// origin is empty for ordinary chat sessions and "cron" for a
+			// scheduled run's isolated session; the list UI filters on it.
+			"origin":      snap.Origin,
+			"session_key": isolateLegacyWebSessionKey(idToKey[snap.ID], snap.ID),
 				"agent_type":    snap.AgentType,
 				"interruptible": interruptible,
 				"active":        activeIDs[snap.ID],
@@ -1840,6 +1843,7 @@ func (m *ManagementServer) handleProjectSessionDetail(w http.ResponseWriter, r *
 		"id":                 snap.ID,
 		"name":               normalizeSessionName(snap.Name),
 		"pinned":             snap.Pinned,
+		"origin":             snap.Origin,
 		"session_key":        sessionKey,
 		"agent_session_id":   snap.AgentSessionID,
 		"agent_type":         snap.AgentType,
