@@ -2,7 +2,9 @@ package management
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -250,6 +252,12 @@ func (m *ManagementServer) Start() {
 func (m *ManagementServer) buildHandler(mux *http.ServeMux) http.Handler {
 	prefix := "/api/v1"
 
+	// Session cookie endpoints. Deliberately NOT wrapped: /login exchanges the
+	// configured token for a cookie, so it cannot require that cookie already.
+	// /logout only clears it.
+	mux.HandleFunc(prefix+"/login", m.handleLogin)
+	mux.HandleFunc(prefix+"/logout", m.handleLogout)
+
 	// System
 	mux.HandleFunc(prefix+"/status", m.wrap(m.handleStatus))
 	mux.HandleFunc(prefix+"/restart", m.wrap(m.handleRestart))
@@ -362,6 +370,133 @@ func (m *ManagementServer) withStaticFallback(apiMux *http.ServeMux) http.Handle
 
 // ── Auth & Middleware ──────────────────────────────────────────
 
+const (
+	// sessionCookieName is the credential the browser keeps after a successful
+	// login. It exists because localStorage is not durable: Safari evicts
+	// script-writable storage after seven days without interaction, so someone
+	// coming back "a few days later" was logged out even though the token never
+	// changed. A first-party HttpOnly cookie is not subject to that eviction,
+	// and page scripts cannot read it.
+	sessionCookieName = "heron_admin_session"
+	// sessionCookieMaxAge is one year. Nothing expires the credential on a
+	// schedule — it stays valid as long as [management].token is unchanged,
+	// because the cookie value is derived from that token.
+	sessionCookieMaxAge = 365 * 24 * 60 * 60
+)
+
+// sessionCookieValue derives the cookie value from the configured token so the
+// plaintext token never reaches the cookie store. Comparison stays constant
+// time, exactly like the token itself.
+func (m *ManagementServer) sessionCookieValue() string {
+	if m.token == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(m.token))
+	return hex.EncodeToString(sum[:])
+}
+
+// requestIsSecure reports whether the browser reached us over HTTPS. `r.TLS` is
+// nil behind a TLS-terminating proxy, which is the common deployment, so the
+// forwarded scheme is consulted too. A spoofed X-Forwarded-Proto can only cause
+// us to *set* Secure on a plain-http connection — the cookie is then dropped by
+// the browser, which breaks that attacker's own login and grants nothing.
+func requestIsSecure(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); proto != "" {
+		return strings.EqualFold(proto, "https")
+	}
+	return false
+}
+
+// setSessionCookie writes (or, with a negative max age, clears) the cookie.
+func (m *ManagementServer) setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   requestIsSecure(r),
+	})
+}
+
+// sameOriginRequest reports whether the request came from this server's own
+// origin (or an explicitly allowed CORS origin). Browsers always attach Origin
+// to cross-site POSTs, so requiring a match stops a third-party page from
+// logging the user out or planting a session. Non-browser clients (curl) send no
+// Origin and stay allowed.
+func (m *ManagementServer) sameOriginRequest(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	if u, err := url.Parse(origin); err == nil && strings.EqualFold(u.Host, r.Host) {
+		return true
+	}
+	for _, o := range m.corsOrigins {
+		if o != "*" && o == origin {
+			return true
+		}
+	}
+	return false
+}
+
+// handleLogin exchanges a valid management token for the session cookie.
+func (m *ManagementServer) handleLogin(w http.ResponseWriter, r *http.Request) {
+	m.setCORS(w, r)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodPost {
+		mgmtError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	if !m.sameOriginRequest(r) {
+		mgmtError(w, http.StatusForbidden, "cross-origin login is not allowed")
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		mgmtError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if m.token != "" && subtle.ConstantTimeCompare([]byte(body.Token), []byte(m.token)) != 1 {
+		mgmtError(w, http.StatusUnauthorized, "unauthorized: missing or invalid token")
+		return
+	}
+	if m.token != "" {
+		m.setSessionCookie(w, r, m.sessionCookieValue(), sessionCookieMaxAge)
+	}
+	mgmtJSON(w, http.StatusOK, map[string]any{"authenticated": true})
+}
+
+// handleLogout clears the session cookie.
+func (m *ManagementServer) handleLogout(w http.ResponseWriter, r *http.Request) {
+	m.setCORS(w, r)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodPost {
+		mgmtError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	// A cross-site logout would be a denial of service on the user's session;
+	// clearing the cookie is cheap, but keep the same origin rule anyway.
+	if !m.sameOriginRequest(r) {
+		mgmtError(w, http.StatusForbidden, "cross-origin logout is not allowed")
+		return
+	}
+	m.setSessionCookie(w, r, "", -1)
+	mgmtJSON(w, http.StatusOK, map[string]any{"authenticated": false})
+}
+
 func (m *ManagementServer) wrap(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		m.setCORS(w, r)
@@ -389,6 +524,14 @@ func (m *ManagementServer) authenticate(r *http.Request) bool {
 	if t := r.URL.Query().Get("token"); t != "" {
 		return subtle.ConstantTimeCompare([]byte(t), []byte(m.token)) == 1
 	}
+	// Session cookie issued by /login. This is what keeps the Web UI logged in
+	// across browser restarts and localStorage eviction; the value is derived
+	// from the token, so changing [management].token invalidates it too.
+	if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
+		if want := m.sessionCookieValue(); want != "" {
+			return subtle.ConstantTimeCompare([]byte(c.Value), []byte(want)) == 1
+		}
+	}
 	return false
 }
 
@@ -403,6 +546,12 @@ func (m *ManagementServer) setCORS(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			w.Header().Set("Access-Control-Max-Age", "86400")
+			// Credentials (the session cookie) are only allowed for explicitly
+			// listed origins. Sending them for a wildcard entry would let any
+			// site drive the admin API with the user's cookie.
+			if o != "*" {
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
 			break
 		}
 	}

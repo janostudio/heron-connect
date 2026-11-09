@@ -180,7 +180,8 @@
     "token": "API token",
     "serverUrl": "Server URL",
     "connect": "Connect",
-    "invalidToken": "Invalid or expired token",
+    "invalidToken": "Token does not match the token configured on the server",
+    "connectionError": "Cannot reach the server — make sure it is running, then retry",
     "logout": "Log out"
   },
   "common": {

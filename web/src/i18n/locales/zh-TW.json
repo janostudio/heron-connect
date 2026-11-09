@@ -180,7 +180,8 @@
     "token": "API 權杖",
     "serverUrl": "伺服器位址",
     "connect": "連線",
-    "invalidToken": "權杖無效或已過期",
+    "invalidToken": "權杖與伺服器設定的權杖不一致",
+    "connectionError": "無法連線到伺服器，請確認服務已啟動後重試",
     "logout": "登出"
   },
   "common": {

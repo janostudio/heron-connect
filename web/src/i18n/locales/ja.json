@@ -180,7 +180,8 @@
     "token": "API トークン",
     "serverUrl": "サーバー URL",
     "connect": "接続",
-    "invalidToken": "トークンが無効または期限切れです",
+    "invalidToken": "トークンがサーバー設定のトークンと一致しません",
+    "connectionError": "サーバーに接続できません。起動状態を確認して再試行してください",
     "logout": "ログアウト"
   },
   "common": {

@@ -201,6 +201,8 @@ func testManagementServer(t *testing.T, token string) (*ManagementServer, *httpt
 
 	mux := http.NewServeMux()
 	prefix := "/api/v1"
+	mux.HandleFunc(prefix+"/login", mgmt.handleLogin)
+	mux.HandleFunc(prefix+"/logout", mgmt.handleLogout)
 	mux.HandleFunc(prefix+"/status", mgmt.wrap(mgmt.handleStatus))
 	mux.HandleFunc(prefix+"/restart", mgmt.wrap(mgmt.handleRestart))
 	mux.HandleFunc(prefix+"/reload", mgmt.wrap(mgmt.handleReload))
@@ -3188,4 +3190,205 @@ func TestMgmt_SessionList_LastUserAtTracksUserMessage(t *testing.T) {
 		return
 	}
 	t.Fatal("session not found in list")
+}
+
+// ── Session cookie (durable browser login) ───────────────────
+
+// postRaw performs a POST and returns the unparsed response plus its cookies, so
+// cookie attributes (HttpOnly, Max-Age) can be asserted — the JSON helpers above
+// drop the headers.
+func postRaw(t *testing.T, url string, body any) (*http.Response, []*http.Cookie) {
+	t.Helper()
+	var buf bytes.Buffer
+	if body != nil {
+		if err := json.NewEncoder(&buf).Encode(body); err != nil {
+			t.Fatalf("encode body: %v", err)
+		}
+	}
+	req, _ := http.NewRequest("POST", url, &buf)
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp, resp.Cookies()
+}
+
+func getWithCookie(t *testing.T, url string, c *http.Cookie) int {
+	t.Helper()
+	req, _ := http.NewRequest("GET", url, nil)
+	if c != nil {
+		req.AddCookie(c)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+// The cookie is what keeps the Web UI logged in when the browser evicts
+// localStorage; it must be long-lived, HttpOnly, and derived from (not equal to)
+// the token.
+func TestMgmt_LoginIssuesDurableCookie(t *testing.T) {
+	_, ts, _ := testManagementServer(t, "tok")
+
+	resp, cookies := postRaw(t, ts.URL+"/api/v1/login", map[string]string{"token": "tok"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login status = %d, want 200", resp.StatusCode)
+	}
+	if len(cookies) != 1 {
+		t.Fatalf("login set %d cookies, want 1", len(cookies))
+	}
+	c := cookies[0]
+	if c.Name != sessionCookieName {
+		t.Errorf("cookie name = %q, want %q", c.Name, sessionCookieName)
+	}
+	if !c.HttpOnly {
+		t.Error("cookie must be HttpOnly so page scripts cannot read it")
+	}
+	if c.MaxAge != sessionCookieMaxAge {
+		t.Errorf("cookie MaxAge = %d, want %d (one year)", c.MaxAge, sessionCookieMaxAge)
+	}
+	if c.Value == "tok" {
+		t.Error("cookie must not carry the plaintext token")
+	}
+	if want := (&ManagementServer{token: "tok"}).sessionCookieValue(); c.Value != want {
+		t.Errorf("cookie value = %q, want the token-derived value %q", c.Value, want)
+	}
+
+	// The cookie alone authenticates: no Authorization header, no query token.
+	if got := getWithCookie(t, ts.URL+"/api/v1/status", c); got != http.StatusOK {
+		t.Errorf("status with cookie = %d, want 200", got)
+	}
+}
+
+func TestMgmt_LoginRejectsWrongToken(t *testing.T) {
+	_, ts, _ := testManagementServer(t, "tok")
+
+	resp, cookies := postRaw(t, ts.URL+"/api/v1/login", map[string]string{"token": "wrong"})
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("login status = %d, want 401", resp.StatusCode)
+	}
+	if len(cookies) != 0 {
+		t.Fatalf("failed login set %d cookies, want none", len(cookies))
+	}
+	if got := getWithCookie(t, ts.URL+"/api/v1/status", nil); got != http.StatusUnauthorized {
+		t.Errorf("status without credentials = %d, want 401", got)
+	}
+}
+
+func TestMgmt_LogoutClearsCookie(t *testing.T) {
+	_, ts, _ := testManagementServer(t, "tok")
+
+	resp, cookies := postRaw(t, ts.URL+"/api/v1/logout", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("logout status = %d, want 200", resp.StatusCode)
+	}
+	if len(cookies) != 1 || cookies[0].Name != sessionCookieName {
+		t.Fatalf("logout cookies = %+v, want one %s", cookies, sessionCookieName)
+	}
+	if cookies[0].MaxAge >= 0 {
+		t.Errorf("logout cookie MaxAge = %d, want negative (delete)", cookies[0].MaxAge)
+	}
+}
+
+// Changing [management].token must invalidate the cookie too, which is the only
+// way a login is supposed to stop working.
+func TestMgmt_CookieInvalidAfterTokenChange(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+
+	_, cookies := postRaw(t, ts.URL+"/api/v1/login", map[string]string{"token": "tok"})
+	if len(cookies) != 1 {
+		t.Fatalf("login set %d cookies, want 1", len(cookies))
+	}
+	if got := getWithCookie(t, ts.URL+"/api/v1/status", cookies[0]); got != http.StatusOK {
+		t.Fatalf("status with cookie = %d, want 200", got)
+	}
+
+	mgmt.token = "rotated"
+	if got := getWithCookie(t, ts.URL+"/api/v1/status", cookies[0]); got != http.StatusUnauthorized {
+		t.Errorf("status with stale cookie = %d, want 401 after the token changed", got)
+	}
+}
+
+// postWithHeaders POSTs with extra headers and returns status + cookies.
+func postWithHeaders(t *testing.T, url string, body any, headers map[string]string) (int, []*http.Cookie) {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	req, _ := http.NewRequest("POST", url, bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode, resp.Cookies()
+}
+
+// Browsers attach Origin to cross-site POSTs, so a third-party page must not be
+// able to plant or clear the admin session.
+func TestMgmt_SessionEndpointsRejectCrossOrigin(t *testing.T) {
+	_, ts, _ := testManagementServer(t, "tok")
+
+	code, cookies := postWithHeaders(t, ts.URL+"/api/v1/login",
+		map[string]string{"token": "tok"}, map[string]string{"Origin": "https://evil.example"})
+	if code != http.StatusForbidden {
+		t.Errorf("cross-origin login = %d, want 403", code)
+	}
+	if len(cookies) != 0 {
+		t.Errorf("cross-origin login set %d cookies, want none", len(cookies))
+	}
+
+	code, _ = postWithHeaders(t, ts.URL+"/api/v1/logout", nil,
+		map[string]string{"Origin": "https://evil.example"})
+	if code != http.StatusForbidden {
+		t.Errorf("cross-origin logout = %d, want 403", code)
+	}
+
+	// A same-origin Origin header (what the SPA sends) still works.
+	code, cookies = postWithHeaders(t, ts.URL+"/api/v1/login",
+		map[string]string{"token": "tok"}, map[string]string{"Origin": ts.URL})
+	if code != http.StatusOK {
+		t.Errorf("same-origin login = %d, want 200", code)
+	}
+	if len(cookies) != 1 {
+		t.Errorf("same-origin login set %d cookies, want 1", len(cookies))
+	}
+}
+
+// Behind a TLS-terminating proxy r.TLS is nil, so Secure must follow the
+// forwarded scheme; on plain http it must stay off or the browser drops the
+// cookie and the login silently fails to persist.
+func TestMgmt_SessionCookieSecureFollowsForwardedProto(t *testing.T) {
+	_, ts, _ := testManagementServer(t, "tok")
+
+	_, plain := postWithHeaders(t, ts.URL+"/api/v1/login", map[string]string{"token": "tok"}, nil)
+	if len(plain) != 1 {
+		t.Fatalf("plain login set %d cookies, want 1", len(plain))
+	}
+	if plain[0].Secure {
+		t.Error("cookie over plain http must not be Secure, the browser would drop it")
+	}
+
+	_, proxied := postWithHeaders(t, ts.URL+"/api/v1/login",
+		map[string]string{"token": "tok"}, map[string]string{"X-Forwarded-Proto": "https"})
+	if len(proxied) != 1 {
+		t.Fatalf("proxied login set %d cookies, want 1", len(proxied))
+	}
+	if !proxied[0].Secure {
+		t.Error("cookie behind an https proxy must be Secure")
+	}
 }

@@ -180,7 +180,8 @@
     "token": "API 令牌",
     "serverUrl": "服务器地址",
     "connect": "连接",
-    "invalidToken": "令牌无效或已过期",
+    "invalidToken": "令牌与服务端配置的令牌不一致",
+    "connectionError": "无法连接到服务端，请确认服务已启动后重试",
     "logout": "退出登录"
   },
   "common": {
