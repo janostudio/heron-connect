@@ -7,7 +7,7 @@ import {
 import { StatCard, Badge, EmptyState } from '@/components/ui';
 import { getStatus, type SystemStatus } from '@/api/status';
 import { listProjects, type ProjectSummary } from '@/api/projects';
-import { listSessions, type Session } from '@/api/sessions';
+import { listSessions, splitByOrigin, type Session } from '@/api/sessions';
 import { getDashboardSummary, formatTokens, type DashboardReport } from '@/api/dashboard';
 import { formatUptime, formatTime } from '@/lib/utils';
 
@@ -47,7 +47,12 @@ export default function Dashboard() {
         }
       }
       allSessions.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
-      setRecentSessions(allSessions.slice(0, MAX_ITEMS));
+      // Human conversations first: scheduled runs leave one session per run and
+      // are stamped with their run time, so they would fill every slot of this
+      // strip. They stay as filler after the human ones rather than being
+      // dropped — the block is a "recents" list, not a filter.
+      const { human, cron } = splitByOrigin(allSessions);
+      setRecentSessions([...human, ...cron].slice(0, MAX_ITEMS));
     } catch (e: any) {
       setError(e.message);
     } finally {

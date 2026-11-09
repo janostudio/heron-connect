@@ -60,6 +60,112 @@ func TestSessionManager_NewSideSession(t *testing.T) {
 	}
 }
 
+// The list UI hides scheduled runs by Session.Origin, so the value has to
+// survive a restart — otherwise every upgrade would resurface the whole
+// back-catalogue of cron sessions.
+func TestSessionManager_OriginPersists(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/sessions.json"
+
+	sm := NewSessionManager(path)
+	main := sm.GetOrCreateActive("user1")
+	cron := sm.NewSideSession("user1", "cron-daily")
+	cron.SetOrigin(OriginCron)
+	sm.Save()
+
+	if got := main.GetOrigin(); got != "" {
+		t.Errorf("ordinary session origin = %q, want empty", got)
+	}
+
+	reloaded := NewSessionManager(path)
+	byID := map[string]*Session{}
+	for _, s := range reloaded.ListSessions("user1") {
+		byID[s.ID] = s
+	}
+	if got := byID[cron.ID]; got == nil || got.GetOrigin() != OriginCron {
+		t.Fatalf("cron origin after reload = %+v, want %q", got, OriginCron)
+	}
+	if got := byID[main.ID]; got == nil || got.GetOrigin() != "" {
+		t.Fatalf("ordinary session origin after reload = %+v, want empty", got)
+	}
+}
+
+// Snapshots written before Origin existed carry no marker. A synthetic
+// "cron-noop:" user key is conclusive; a "cron-<jobID>" name only counts when it
+// repeats (the runner leaves one session per execution), so a person's
+// one-off chat named "cron-..." is not hidden by mistake.
+func TestSessionManager_BackfillsLegacyCronOrigin(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/sessions.json"
+
+	legacy := `{
+	  "sessions": {
+	    "s1": {"id": "s1", "name": "default", "history": []},
+	    "s2": {"id": "s2", "name": "cron-daily-report", "history": []},
+	    "s5": {"id": "s5", "name": "cron-daily-report", "history": []},
+	    "s3": {"id": "s3", "name": "cron-weekly", "history": []},
+	    "s4": {"id": "s4", "name": "cron-my-own-chat", "history": []}
+	  },
+	  "active_session": {"wecom:u1:c1": "s1"},
+	  "user_sessions": {
+	    "wecom:u1:c1": ["s1", "s2", "s5", "s4"],
+	    "cron-noop:proj:weekly": ["s3"]
+	  },
+	  "counter": 5,
+	  "past_id_tracking": true,
+	  "version": 1
+	}`
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatalf("write legacy snapshot: %v", err)
+	}
+
+	sm := NewSessionManager(path)
+	origins := map[string]string{}
+	for _, s := range sm.AllSessions() {
+		origins[s.ID] = s.GetOrigin()
+	}
+
+	if origins["s1"] != "" {
+		t.Errorf("plain chat session must stay unmarked, got %q", origins["s1"])
+	}
+	if origins["s2"] != OriginCron || origins["s5"] != OriginCron {
+		t.Errorf("repeated cron-<jobID> sessions = %q/%q, want %q", origins["s2"], origins["s5"], OriginCron)
+	}
+	if origins["s3"] != OriginCron {
+		t.Errorf("cron-noop key session origin = %q, want %q", origins["s3"], OriginCron)
+	}
+	if origins["s4"] != "" {
+		t.Errorf("a singly-occurring cron-* name is more likely a user name, got %q", origins["s4"])
+	}
+}
+
+// The scheduled-run session must carry its origin from the moment it exists:
+// the run may fail before the turn's own Save.
+func TestSessionManager_NewCronSideSession(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/sessions.json"
+
+	sm := NewSessionManager(path)
+	main := sm.GetOrCreateActive("user1")
+	cron := sm.NewCronSideSession("user1", "cron-daily")
+
+	if cron.GetOrigin() != OriginCron {
+		t.Fatalf("origin = %q, want %q", cron.GetOrigin(), OriginCron)
+	}
+	if sm.ActiveSessionID("user1") != main.ID {
+		t.Errorf("active session must stay %q, got %q", main.ID, sm.ActiveSessionID("user1"))
+	}
+
+	// Persisted by the same call, no extra Save needed.
+	reloaded := NewSessionManager(path)
+	for _, s := range reloaded.ListSessions("user1") {
+		if s.ID == cron.ID && s.GetOrigin() != OriginCron {
+			t.Fatalf("origin after reload = %q, want %q", s.GetOrigin(), OriginCron)
+		}
+	}
+}
+
+
 func TestSessionManager_SwitchSession(t *testing.T) {
 	sm := NewSessionManager("")
 	s1 := sm.NewSession("user1", "first")

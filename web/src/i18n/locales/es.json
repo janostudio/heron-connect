@@ -90,7 +90,9 @@
     "searchPlaceholder": "Buscar por nombre de sesión, usuario o contenido del mensaje...",
     "createNew": "Nueva sesión",
     "selectProject": "Seleccionar proyecto",
-    "sessionNameOptional": "Nombre de sesión (opcional)"
+    "sessionNameOptional": "Nombre de sesión (opcional)",
+    "showCronSessions": "Mostrar sesiones de tareas programadas",
+    "hiddenCronSessions": "{{count}} sesiones de tareas programadas ocultas"
   },
   "providers": {
     "title": "Proveedores",
@@ -178,7 +180,8 @@
     "token": "Token de API",
     "serverUrl": "URL del servidor",
     "connect": "Conectar",
-    "invalidToken": "Token no válido o caducado",
+    "invalidToken": "El token no coincide con el configurado en el servidor",
+    "connectionError": "No se puede conectar con el servidor; comprueba que esté en marcha y reinténtalo",
     "logout": "Cerrar sesión"
   },
   "common": {

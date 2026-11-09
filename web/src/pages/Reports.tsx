@@ -147,11 +147,16 @@ export function ReportPreview() {
     );
   }, [project, filePath, format]);
 
+  // Same-origin previews authenticate with the session cookie when the browser
+  // holds no token in memory (cookie-only login), so the query parameter is
+  // optional rather than mandatory.
+  const fileSrc = token ? `${fileUrl}?token=${encodeURIComponent(token)}` : fileUrl;
+
   if (fullscreen) {
     return (
       <div className="fixed inset-0 z-50 bg-white dark:bg-gray-950">
         <iframe
-          src={`${fileUrl}?token=${token}`}
+          src={fileSrc}
           title={path}
           className="w-full h-full border-0"
           sandbox="allow-scripts allow-same-origin allow-popups"
@@ -175,7 +180,7 @@ export function ReportPreview() {
           <Badge className="text-[10px]">{project}</Badge>
         </div>
         <div className="flex gap-2">
-          <a href={`${fileUrl}?token=${token}`} target="_blank" rel="noreferrer">
+          <a href={fileSrc} target="_blank" rel="noreferrer">
             <Button variant="secondary" size="sm"><ExternalLink size={14} className="mr-1" />{t('reports.openNew')}</Button>
           </a>
           {format === 'html' && (
@@ -189,7 +194,7 @@ export function ReportPreview() {
       <Card className="p-0 overflow-hidden">
         {format === 'html' ? (
           <iframe
-            src={`${fileUrl}?token=${token}`}
+            src={fileSrc}
             title={path}
             className="w-full border-0"
             style={{ height: '75vh' }}

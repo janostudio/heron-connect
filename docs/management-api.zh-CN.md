@@ -84,6 +84,8 @@ http://<host>:<port>/api/v1
 
 每个请求必须携带有效令牌。支持两种方式：
 
+令牌是 `config.toml` 中 `[management].token` 的静态共享密钥，**没有有效期**：只要请求携带的值与配置一致就放行，不一致才拒绝。只有改掉这个配置值（或清除浏览器已保存的凭据）才会让已有登录失效。
+
 ### 3.1 Bearer 令牌（推荐）
 
 ```
@@ -104,7 +106,19 @@ GET /api/v1/status?token=mgmt-secret
 
 > **注意：** 查询参数认证适用于难以设置请求头的环境。出于安全考虑，建议使用 Bearer 令牌（URL 中的令牌可能被记录到日志）。
 
-### 3.3 未授权响应
+### 3.3 会话 Cookie（浏览器持久登录）
+
+`POST /api/v1/login` 用令牌换取一个长期有效的 `HttpOnly` Cookie，Web 端登录后长期持有。浏览器会在几天不访问后清理 `localStorage`（Safari 对脚本可写存储有 7 天清理规则），这会让回访的用户看起来"掉登录"，即使令牌从未变化。该 Cookie 是第一方 `HttpOnly` Cookie，不受这条清理规则影响。
+
+```bash
+curl -c cookies.txt -X POST http://localhost:9820/api/v1/login \
+  -H 'Content-Type: application/json' \
+  -d '{"token":"mgmt-secret"}'
+```
+
+Cookie 的值由令牌派生（SHA-256，因此 Cookie 中不出现明文令牌），有效期一年，并且在 `[management].token` 变化时立即失效。`POST /api/v1/logout` 清除该 Cookie。两个接口本身都不需要鉴权——登录不能要求它即将签发的凭据。
+
+### 3.4 未授权响应
 
 若令牌缺失或无效：
 
@@ -462,6 +476,7 @@ GET /api/v1/status?token=mgmt-secret
         "id": "sess_abc123",
         "session_key": "telegram:123:456",
         "name": "work",
+        "origin": "",
         "platform": "telegram",
         "active": true,
         "created_at": "2026-03-10T09:00:00Z",
@@ -472,6 +487,8 @@ GET /api/v1/status?token=mgmt-secret
   }
 }
 ```
+
+`origin` 为空表示普通聊天会话；定时任务以 `session_mode=new_per_run` 执行时产生的隔离会话为 `cron`，Web 会话列表默认隐藏这类会话。
 
 ---
 

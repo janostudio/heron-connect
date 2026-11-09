@@ -212,8 +212,12 @@ export default function ProjectOverview() {
   }, [expanded, name, settings]);
 
   const iframeSrc = useMemo(() => {
-    if (!htmlPresent || !token) return '';
-    const params = new URLSearchParams({ token });
+    // A cookie-authenticated session has no token in memory; the same-origin
+    // iframe then authenticates with the session cookie, so only add the query
+    // parameter when a token is actually present.
+    if (!htmlPresent) return '';
+    const params = new URLSearchParams();
+    if (token) params.set('token', token);
     params.set('period', period);
     if (period === 'custom' && start && end) {
       params.set('start', start);
@@ -223,6 +227,13 @@ export default function ProjectOverview() {
     }
     return `/api/v1/files/${name}/${settings?.html_path}?${params.toString()}`;
   }, [htmlPresent, token, period, date, start, end, name, settings]);
+
+  // File links authenticate with the session cookie when no token is held in
+  // memory (cookie-only login), so the query parameter is optional.
+  const fileHref = (path: string) => {
+    const base = `/api/v1/files/${name}/${path}`;
+    return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+  };
 
   const statsActive = !!settings?.collect && !!report;
   const insightsActive = !!insights && ((insights.sessions?.length || 0) > 0 || (insights.cards?.length || 0) > 0);
@@ -421,7 +432,7 @@ export default function ProjectOverview() {
                         )}
                         {row.detail && (
                           <a
-                            href={`/api/v1/files/${name}/${row.detail}?token=${token}`}
+                            href={fileHref(row.detail)}
                             target="_blank"
                             rel="noreferrer"
                             onClick={(e) => e.stopPropagation()}

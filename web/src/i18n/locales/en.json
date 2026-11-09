@@ -90,7 +90,9 @@
     "searchPlaceholder": "Search by session name, user, or message content...",
     "createNew": "New Session",
     "selectProject": "Select project",
-    "sessionNameOptional": "Session name (optional)"
+    "sessionNameOptional": "Session name (optional)",
+    "showCronSessions": "Show scheduled-run sessions",
+    "hiddenCronSessions": "{{count}} scheduled-run sessions hidden"
   },
   "providers": {
     "title": "Providers",
@@ -178,7 +180,8 @@
     "token": "API token",
     "serverUrl": "Server URL",
     "connect": "Connect",
-    "invalidToken": "Invalid or expired token",
+    "invalidToken": "Token does not match the token configured on the server",
+    "connectionError": "Cannot reach the server — make sure it is running, then retry",
     "logout": "Log out"
   },
   "common": {

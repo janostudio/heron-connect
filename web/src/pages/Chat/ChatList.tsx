@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { MessageSquare, Bot, User, Circle, ArrowRight, Loader2, Clock } from 'lucide-react';
 import { Card, EmptyState, Badge } from '@/components/ui';
 import { listProjects, type ProjectSummary } from '@/api/projects';
-import { listSessions, type Session } from '@/api/sessions';
+import { listSessions, splitByOrigin, type Session } from '@/api/sessions';
 
 interface ChatEntry {
   project: ProjectSummary;
@@ -42,7 +42,11 @@ export default function ChatList() {
             const sorted = (sessions || []).sort(
               (a, b) => (b.updated_at || b.created_at || '').localeCompare(a.updated_at || a.created_at || ''),
             );
-            return { project: p, latestSession: sorted[0] || null };
+            // The entry card stands for "this project's latest conversation",
+            // so prefer a human one: a scheduled job leaves an isolated session
+            // per run and would otherwise take the card over.
+            const latestSession = splitByOrigin(sorted).human[0] || sorted[0] || null;
+            return { project: p, latestSession };
           } catch {
             return { project: p, latestSession: null };
           }

@@ -84,6 +84,11 @@ Example: `http://localhost:9820/api/v1/status`
 
 Every request must include a valid token. Two methods are supported:
 
+The token is a static shared secret read from `[management].token` in `config.toml`.
+It has **no expiry**: a request is authorized whenever the presented value equals
+the configured one, and rejected otherwise. Only changing that config value (or
+clearing the browser's stored credential) invalidates an existing login.
+
 ### 3.1 Bearer Token (Recommended)
 
 ```
@@ -104,7 +109,26 @@ GET /api/v1/status?token=mgmt-secret
 
 > **Note:** Query parameter auth is provided for environments where setting headers is difficult. Prefer Bearer token for security (tokens in URLs may be logged).
 
-### 3.3 Unauthorized Response
+### 3.3 Session Cookie (durable browser login)
+
+`POST /api/v1/login` exchanges the token for a long-lived `HttpOnly` cookie that
+the Web UI keeps after login. Browsers evict `localStorage` after a few days of
+inactivity (Safari's 7-day rule for script-writable storage), which made a
+returning user look "logged out" even though the token never changed. This
+cookie is a first-party `HttpOnly` cookie and is not subject to that eviction.
+
+```bash
+curl -c cookies.txt -X POST http://localhost:9820/api/v1/login \
+  -H 'Content-Type: application/json' \
+  -d '{"token":"mgmt-secret"}'
+```
+
+The cookie value is derived from the token (SHA-256, so the plaintext token is
+never stored in it), lasts one year, and is invalidated exactly when
+`[management].token` changes. `POST /api/v1/logout` clears it. Neither endpoint
+requires authentication — logging in cannot require the credential it issues.
+
+### 3.4 Unauthorized Response
 
 If the token is missing or invalid:
 
@@ -462,6 +486,7 @@ Lists sessions for a project with summary info including the last message previe
         "id": "sess_abc123",
         "session_key": "telegram:123:456",
         "name": "work",
+        "origin": "",
         "platform": "telegram",
         "agent_type": "claudecode",
         "active": true,
@@ -488,6 +513,7 @@ Lists sessions for a project with summary info including the last message previe
 | Field          | Type    | Description                                                       |
 |----------------|---------|-------------------------------------------------------------------|
 | `active`       | boolean | Whether this is the selected session for its user key             |
+| `origin`       | string  | Empty for a normal chat session; `cron` for a scheduled job run's isolated session (`session_mode=new_per_run`). The Web session list hides `cron` sessions by default. |
 | `live`         | boolean | Whether there is a running agent process for this session         |
 | `last_message` | object  | Preview of the last message (role, content truncated to 200 chars, timestamp). `null` if no history. |
 | `user_name`    | string  | Display name of the user (from platform metadata)                 |

@@ -8,7 +8,7 @@ import {
   Pin, PinOff, Pencil, RefreshCw, Share2, Check, Link2, Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui';
-import { listSessions, getSession, createSession, sessionTitle, updateSession, sortSessions, type Session, type SessionDetail } from '@/api/sessions';
+import { listSessions, getSession, createSession, sessionTitle, updateSession, sortSessions, splitByOrigin, type Session, type SessionDetail } from '@/api/sessions';
 import api from '@/api/client';
 import { newConvKey } from '@/lib/webSessionKey';
 import {
@@ -1049,9 +1049,14 @@ export default function ChatView() {
       const sorted = sortSessions(allSessions || []);
       setSessions(sorted);
 
+      // Auto-select the newest HUMAN conversation: scheduled jobs leave one
+      // isolated session per run and sort to the top by their run time, so
+      // plain sorted[0] would open today's background job instead.
+      const autoTarget = splitByOrigin(sorted).human[0] || sorted[0] || null;
+
       const target = routeSessionId
         ? sorted.find(s => s.id === routeSessionId) || null
-        : sorted[0];
+        : autoTarget;
 
       if (target) {
         setUserPickedSession(!!routeSessionId);

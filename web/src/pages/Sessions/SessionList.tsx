@@ -4,13 +4,26 @@ import { Link, useNavigate } from 'react-router-dom';
 import { MessageSquare, Circle, Filter, Search, Plus, User, Loader2, Clock, Pin, PinOff, Pencil } from 'lucide-react';
 import { Badge, Button, EmptyState, Input, Modal } from '@/components/ui';
 import { listProjects, type ProjectSummary } from '@/api/projects';
-import { listSessions, createSession, updateSession, sortSessions, sessionTitle, sessionSource, type Session } from '@/api/sessions';
+import { listSessions, createSession, updateSession, sortSessions, sessionTitle, sessionSource, splitByOrigin, type Session } from '@/api/sessions';
 import { newConvKey } from '@/lib/webSessionKey';
 import { cn } from '@/lib/utils';
 import RenameSessionModal from '@/pages/Chat/RenameSessionModal';
 
 interface FlatSession extends Session {
   _project: string;
+}
+
+// STORAGE_SHOW_CRON remembers the toggle across visits: scheduled runs are
+// noise for most people, so the default is hidden, but whoever wants them back
+// should not have to re-enable the toggle on every page load.
+const STORAGE_SHOW_CRON = 'cc.sessions.showCron';
+
+function readShowCron(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_SHOW_CRON) === '1';
+  } catch {
+    return false;
+  }
 }
 
 function timeAgo(iso: string, t: (k: string) => string): string {
@@ -55,6 +68,7 @@ export default function SessionList() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [search, setSearch] = useState('');
+  const [showCron, setShowCron] = useState<boolean>(readShowCron);
   const [loading, setLoading] = useState(true);
 
   // Latest debounced query, read by the poll / refresh paths (which must not
@@ -125,13 +139,33 @@ export default function SessionList() {
     return () => clearInterval(timer);
   }, [fetchData]);
 
-  const filtered = useMemo<FlatSession[]>(() => {
+  // Scheduled runs are split out of the human list: a job with
+  // session_mode=new_per_run leaves one isolated session behind per run, so a
+  // daily job alone would fill the top of the list (they sort by run time).
+  const { human, cron } = useMemo(() => {
     const src = selectedProject
       ? allData.filter((d) => d.project === selectedProject)
       : allData;
     const flat = src.flatMap((d) => d.sessions.map((s) => ({ ...s, _project: d.project })));
-    return sortSessions(flat);
+    return splitByOrigin(flat);
   }, [allData, selectedProject]);
+
+  const filtered = useMemo<FlatSession[]>(
+    () => sortSessions(showCron ? [...human, ...cron] : human),
+    [human, cron, showCron],
+  );
+
+  // Reported next to the counter so the filter never hides sessions silently.
+  const hiddenCronCount = showCron ? 0 : cron.length;
+
+  const toggleShowCron = (next: boolean) => {
+    setShowCron(next);
+    try {
+      localStorage.setItem(STORAGE_SHOW_CRON, next ? '1' : '0');
+    } catch {
+      /* private mode / storage disabled: keep the in-memory choice only */
+    }
+  };
 
   const openCreateModal = () => {
     setNewProject(selectedProject || projects[0]?.name || '');
@@ -186,8 +220,21 @@ export default function SessionList() {
           />
         </div>
 
+        <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={showCron}
+            onChange={(e) => toggleShowCron(e.target.checked)}
+            className="w-3.5 h-3.5 accent-current cursor-pointer"
+          />
+          {t('sessions.showCronSessions')}
+        </label>
+
         <span className="text-xs text-gray-400">
           {filtered.length} {t('nav.sessions').toLowerCase()}
+          {hiddenCronCount > 0 && (
+            <span className="text-gray-400"> · {t('sessions.hiddenCronSessions', { count: hiddenCronCount })}</span>
+          )}
         </span>
 
         <Button size="sm" onClick={openCreateModal} className="ml-auto">

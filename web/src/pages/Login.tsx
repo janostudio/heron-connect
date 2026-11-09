@@ -2,9 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Zap, AlertCircle, Languages, Sun, Moon, Monitor } from 'lucide-react';
-import { useAuthStore } from '@/store/auth';
+import { useAuthStore, storedToken } from '@/store/auth';
 import { useThemeStore } from '@/store/theme';
-import { api } from '@/api/client';
+import { api, ApiError } from '@/api/client';
 import { getStatus } from '@/api/status';
 
 const languages = [
@@ -15,13 +15,24 @@ const languages = [
   { code: 'es', label: 'ES' },
 ];
 
+// isUnauthorized tells "this token does not match the server's configured token"
+// apart from a transport failure (server restarting, network down, proxy error).
+// Only the former is about the credential; the latter must not be reported as an
+// invalid token, because nothing about the token has changed.
+function isUnauthorized(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 401;
+}
+
 export default function Login() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const loginStore = useAuthStore((s) => s.login);
   const { theme, setTheme } = useThemeStore();
-  const [token, setToken] = useState('');
+  // Prefill with the stored credential: tokens never expire, so the only reason
+  // to be on this page is that the value no longer matches the server's. Showing
+  // it lets the user compare instead of retyping from memory.
+  const [token, setToken] = useState(() => storedToken());
   const [serverUrl, setServerUrl] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -38,11 +49,11 @@ export default function Login() {
       try {
         api.setToken(qToken);
         await getStatus();
-        loginStore(qToken);
+        await loginStore(qToken);
         navigate('/', { replace: true });
-      } catch {
+      } catch (e) {
         setToken(qToken);
-        setError(t('login.invalidToken'));
+        setError(isUnauthorized(e) ? t('login.invalidToken') : t('login.connectionError'));
         api.setToken('');
       } finally {
         setLoading(false);
@@ -58,10 +69,10 @@ export default function Login() {
     try {
       api.setToken(token.trim());
       await getStatus();
-      loginStore(token.trim(), serverUrl.trim());
+      await loginStore(token.trim(), serverUrl.trim());
       navigate('/');
-    } catch {
-      setError(t('login.invalidToken'));
+    } catch (e) {
+      setError(isUnauthorized(e) ? t('login.invalidToken') : t('login.connectionError'));
       api.setToken('');
     } finally {
       setLoading(false);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sortSessions } from './sessions';
+import { sortSessions, splitByOrigin, isCronSession, CRON_SESSION_ORIGIN } from './sessions';
 
 // Minimal shape sortSessions cares about.
 type Row = {
@@ -74,5 +74,49 @@ describe('sortSessions', () => {
     const before = rows.map((r) => r.id);
     sortSessions(rows);
     expect(rows.map((r) => r.id)).toEqual(before);
+  });
+});
+
+describe('splitByOrigin', () => {
+  it('separates scheduled-run sessions from human conversations', () => {
+    const { human, cron } = splitByOrigin([
+      { id: 'chat', origin: '' },
+      { id: 'job', origin: CRON_SESSION_ORIGIN },
+      { id: 'legacy-chat' },
+    ]);
+    expect(human.map((s) => s.id)).toEqual(['chat', 'legacy-chat']);
+    expect(cron.map((s) => s.id)).toEqual(['job']);
+  });
+
+  it('treats an unknown origin as human so the toggle never hides it', () => {
+    const { human, cron } = splitByOrigin([{ id: 'x', origin: 'some-future-origin' }]);
+    expect(human.map((s) => s.id)).toEqual(['x']);
+    expect(cron).toEqual([]);
+  });
+
+  it('preserves input order inside each bucket', () => {
+    const { human, cron } = splitByOrigin([
+      { id: 'c1', origin: CRON_SESSION_ORIGIN },
+      { id: 'h1' },
+      { id: 'c2', origin: CRON_SESSION_ORIGIN },
+      { id: 'h2' },
+    ]);
+    expect(human.map((s) => s.id)).toEqual(['h1', 'h2']);
+    expect(cron.map((s) => s.id)).toEqual(['c1', 'c2']);
+  });
+
+  it('does not mutate the input array', () => {
+    const rows = [{ id: 'a' }, { id: 'b', origin: CRON_SESSION_ORIGIN }];
+    const before = rows.map((r) => r.id);
+    splitByOrigin(rows);
+    expect(rows.map((r) => r.id)).toEqual(before);
+  });
+});
+
+describe('isCronSession', () => {
+  it('is true only for the cron origin', () => {
+    expect(isCronSession({ origin: CRON_SESSION_ORIGIN })).toBe(true);
+    expect(isCronSession({})).toBe(false);
+    expect(isCronSession({ origin: '' })).toBe(false);
   });
 });
