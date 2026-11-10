@@ -98,6 +98,8 @@ build-local: web
 		node npm/local-version.js write-package ./npm/package.json "$(LOCAL_HERON_CONNECT_DIR)/package.json" "$$LOCAL_VERSION"; \
 		install -m 755 npm/run.js "$(LOCAL_HERON_CONNECT_DIR)/run.js"; \
 		install -m 755 npm/install.js "$(LOCAL_HERON_CONNECT_DIR)/install.js"; \
+		mkdir -p "$(LOCAL_HERON_CONNECT_DIR)/lib"; \
+		install -m 644 npm/lib/resolve-binary.js "$(LOCAL_HERON_CONNECT_DIR)/lib/resolve-binary.js"; \
 		install -m 644 npm/README.md "$(LOCAL_HERON_CONNECT_DIR)/README.md"; \
 		mkdir -p "$(dir $(LOCAL_HERON_CONNECT_BIN))"; \
 		install -m 755 $(APP) "$(LOCAL_HERON_CONNECT_BIN)"; \
@@ -250,7 +252,7 @@ publish-dry-run: pre-test
 	cd npm && node release-assets.js build
 	@echo "==> [3/3] Verifying npm auth (dry-run publish)..."
 	@test -n "$(NPM_TOKEN)" || { echo "ERROR: NPM_TOKEN not set in env (~/.zshenv)"; exit 1; }
-	cd npm && npm publish --dry-run --access public
+	node npm/publish.js --skip-build --dry-run
 	@echo ""
 	@echo "Dry-run complete. To publish for real, run: make publish"
 
@@ -288,7 +290,8 @@ publish: pre-test
 	@echo "==> [2/4] Building + uploading release assets (this also creates GitHub Release)..."
 	cd npm && node release-assets.js ensure
 	@echo "==> [3/4] Publishing to npm..."
-	cd npm && npm publish --access public
+	# 平台二进制包先发，主包的 optionalDependencies 指向它们。
+	node npm/publish.js --skip-build
 	@echo "==> [4/4] Done."
 	@echo ""
 	@echo "Published: @qinghuangniao/heron-connect@$$(node -p "require('./npm/package.json').version")"

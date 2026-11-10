@@ -10,6 +10,7 @@ const http = require("http");
 const zlib = require("zlib");
 
 const PACKAGE = require("./package.json");
+const { resolveBinary } = require("./lib/resolve-binary");
 const VERSION = `v${PACKAGE.version}`;
 const NAME = "heron-connect";
 
@@ -179,6 +180,14 @@ async function main() {
       console.log(`[heron-connect] Replacing existing binary with ${VERSION}...`);
       fs.unlinkSync(binaryPath);
     }
+  }
+
+  // 平台包已经带二进制时不再下载：安装阶段 npm 按 os/cpu 只拉当前平台的一份，
+  // 走 registry（国内可用镜像），比从 GitHub Releases 下载稳定得多。
+  const resolved = resolveBinary();
+  if (resolved.binaryPath) {
+    console.log(`[heron-connect] Binary provided by npm platform package: ${resolved.binaryPath}`);
+    return;
   }
 
   const urls = getDownloadURLs(filename);

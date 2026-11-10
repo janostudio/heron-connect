@@ -27,16 +27,28 @@ Repository: https://github.com/janostudio/heron-connect
 
 Full documentation: see the repository README and `docs/` directory.
 
+## Distribution
+
+The binary ships in per-platform npm packages. The main package only contains the
+wrapper scripts; `optionalDependencies` point at `@qinghuangniao/heron-connect-<platform>`
+(same package name, pre-release version like `1.4.0-linux-x64`), and npm installs only
+the package matching the current `os`/`cpu`. Installing therefore goes through the npm
+registry (mirrors work) instead of downloading from GitHub Releases.
+
 ## Publish Flow
 
-Running `npm publish` in this directory triggers `prepublishOnly`, which:
+Run from the repository root:
 
-1. builds missing release archives into `../dist`
-2. uses `gh` to create or update the GitHub release `v<package-version>`
-3. uploads required archives and `checksums.txt` before publishing to npm
+```bash
+node npm/publish.js            # build missing artifacts, publish platform packages, then the main package
+node npm/publish.js --dry-run  # pack and verify without publishing
+```
+
+`release-assets.js ensure` still uploads archives to the GitHub release for manual
+downloads, but that release is no longer required for `npm install` to work.
 
 Prerequisites:
 
-- `gh auth login`
+- `npm whoami` succeeds (token in `npm/.npmrc` or the user config)
+- `gh auth login` (only when syncing GitHub release archives)
 - Go build environment available locally
-- release repository push permission on `janostudio/heron-connect`
