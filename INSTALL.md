@@ -26,6 +26,9 @@ npm install -g @qinghuangniao/heron-connect
 
 After installation, the `heron-connect` binary will be available globally.
 
+The binary comes from a per-platform npm package (`@qinghuangniao/heron-connect-<platform>`),
+so installation only talks to the npm registry — no GitHub download is involved.
+
 
 ### Option B: Homebrew (macOS / Linux)
 

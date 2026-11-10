@@ -29,7 +29,6 @@
   "scripts": {
     "prepare-release": "node release-assets.js build",
     "sync-release": "node release-assets.js ensure",
-    "prepublishOnly": "node release-assets.js ensure",
     "postinstall": "node install.js"
   },
   "publishConfig": {
@@ -39,6 +38,7 @@
     "install.js",
     "run.js",
     "release-assets.js",
+    "lib/resolve-binary.js",
     "README.md"
   ]
 }

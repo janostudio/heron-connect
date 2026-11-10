@@ -4,3 +4,6 @@ dist/
 node_modules/
 .heron-connect/
 crons/.state.json
+
+# npm 分发包产物（平台二进制包 + 主包）
+npm-dist/

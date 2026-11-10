@@ -4,14 +4,11 @@
 
 const { execFileSync, execSync } = require("child_process");
 const path = require("path");
-const fs = require("fs");
 
 const PACKAGE = require("./package.json");
+const { resolveBinary, platformPackageName } = require("./lib/resolve-binary");
+
 const EXPECTED_VER = PACKAGE.version; // e.g. "1.1.0-beta.4"
-const NAME = "heron-connect";
-const binDir = path.join(__dirname, "bin");
-const ext = process.platform === "win32" ? ".exe" : "";
-const binaryPath = path.join(binDir, NAME + ext);
 
 // parseVersion splits "1.2.3-beta.1" into { nums: [1,2,3], preTag: "beta", preNum: 1 }
 function parseVersion(v) {
@@ -43,8 +40,7 @@ function isNewerOrEqual(installed, expected) {
   return a.preNum >= b.preNum;
 }
 
-function needsReinstall() {
-  if (!fs.existsSync(binaryPath)) return true;
+function needsReinstall(binaryPath) {
   try {
     const out = execFileSync(binaryPath, ["--version"], { encoding: "utf8", timeout: 5000 });
     if (out.includes(EXPECTED_VER)) return false;
@@ -57,7 +53,15 @@ function needsReinstall() {
   }
 }
 
-if (needsReinstall()) {
+let resolved = resolveBinary();
+
+if (!resolved.supported) {
+  console.error(`[heron-connect] Unsupported platform: ${resolved.platformKey}`);
+  console.error("[heron-connect] Supported: linux/darwin/windows x64/arm64");
+  process.exit(1);
+}
+
+if (!resolved.binaryPath || needsReinstall(resolved.binaryPath)) {
   console.log(`[heron-connect] Binary missing or outdated, installing v${EXPECTED_VER}...`);
   try {
     execSync("node " + JSON.stringify(path.join(__dirname, "install.js")), {
@@ -68,10 +72,19 @@ if (needsReinstall()) {
     console.error("[heron-connect] Auto-install failed. Run manually: npm uninstall -g @qinghuangniao/heron-connect && npm install -g @qinghuangniao/heron-connect");
     process.exit(1);
   }
+  resolved = resolveBinary();
+}
+
+if (!resolved.binaryPath) {
+  console.error(`[heron-connect] Missing binary for ${resolved.platformKey}.`);
+  console.error(`[heron-connect] Expected npm platform package: ${platformPackageName(resolved.platformKey)}`);
+  console.error("[heron-connect] Reinstall with: npm install -g @qinghuangniao/heron-connect@latest");
+  console.error("[heron-connect] If you installed with --no-optional, drop that flag so the platform package is installed.");
+  process.exit(1);
 }
 
 try {
-  execFileSync(binaryPath, process.argv.slice(2), { stdio: "inherit" });
+  execFileSync(resolved.binaryPath, process.argv.slice(2), { stdio: "inherit" });
 } catch (err) {
   process.exit(err.status || 1);
 }
