@@ -4,6 +4,7 @@ import Sidebar from './Sidebar';
 import Header from './Header';
 import Footer from './Footer';
 import { cn } from '@/lib/utils';
+import { rememberReturnPath } from '@/lib/returnTo';
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -13,6 +14,13 @@ export default function Layout() {
   useEffect(() => {
     setSidebarOpen(false);
   }, [location.pathname]);
+
+  // Remember where the user actually is, so a later login can resume here even
+  // when the login URL carries no `next` (see lib/returnTo.ts). Every protected
+  // route renders through this layout, so this is the one place that sees them.
+  useEffect(() => {
+    rememberReturnPath(location.pathname + location.search);
+  }, [location.pathname, location.search]);
 
   // iOS Safari soft-keyboard handling. `dvh` and the `interactive-widget`
   // viewport meta cover most cases, but iOS still won't reflow on keyboard
