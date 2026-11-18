@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Zap, AlertCircle, Languages, Sun, Moon, Monitor } from 'lucide-react';
 import { useAuthStore, storedToken } from '@/store/auth';
 import { useThemeStore } from '@/store/theme';
 import { api, ApiError } from '@/api/client';
 import { getStatus } from '@/api/status';
+import { returnPath } from '@/lib/returnTo';
 
 const languages = [
   { code: 'en', label: 'EN' },
@@ -26,6 +27,7 @@ function isUnauthorized(e: unknown): boolean {
 export default function Login() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const loginStore = useAuthStore((s) => s.login);
   const { theme, setTheme } = useThemeStore();
@@ -50,7 +52,9 @@ export default function Login() {
         api.setToken(qToken);
         await getStatus();
         await loginStore(qToken);
-        navigate('/', { replace: true });
+        // Resume the route the guard bounced us from (see lib/returnTo.ts)
+        // instead of dropping the user on the dashboard.
+        navigate(returnPath(location.search, location.state), { replace: true });
       } catch (e) {
         setToken(qToken);
         setError(isUnauthorized(e) ? t('login.invalidToken') : t('login.connectionError'));
@@ -59,7 +63,7 @@ export default function Login() {
         setLoading(false);
       }
     })();
-  }, [searchParams, loginStore, navigate, t]);
+  }, [searchParams, loginStore, navigate, location, t]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,7 +74,8 @@ export default function Login() {
       api.setToken(token.trim());
       await getStatus();
       await loginStore(token.trim(), serverUrl.trim());
-      navigate('/');
+      // Same resume rule as the token-URL path above.
+      navigate(returnPath(location.search, location.state), { replace: true });
     } catch (e) {
       setError(isUnauthorized(e) ? t('login.invalidToken') : t('login.connectionError'));
       api.setToken('');
