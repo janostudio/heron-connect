@@ -17,12 +17,19 @@ export default function RenameSessionModal({ open, project, session, onClose, on
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Seed the field when the dialog opens, and re-seed only when it is pointed
+  // at a DIFFERENT session.
+  //
+  // Keying this on the `session` object itself (the original code) fired on
+  // every parent render: both call sites pass an inline `{ id, name }` literal,
+  // and the chat page re-renders on every bridge frame while the agent streams
+  // (the session list polls every 5s too). Each firing wrote the stored name
+  // back over the input, so whatever the user had typed vanished mid-edit.
   useEffect(() => {
-    if (open && session) {
-      setName(session.name || '');
-      setError('');
-    }
-  }, [open, session]);
+    if (!open || !session) return;
+    setName(session.name || '');
+    setError('');
+  }, [open, session?.id]);
 
   const handleSave = async () => {
     if (!session || !name.trim()) return;
