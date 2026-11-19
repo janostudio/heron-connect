@@ -91,6 +91,7 @@
     "createNew": "新增工作階段",
     "selectProject": "選擇專案",
     "sessionNameOptional": "工作階段名稱（可選）",
+    "openInNewTab": "新分頁開啟",
     "showCronSessions": "顯示定時任務工作階段",
     "hiddenCronSessions": "已隱藏 {{count}} 個定時任務工作階段"
   },

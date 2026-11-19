@@ -11,6 +11,7 @@ import { Button } from '@/components/ui';
 import { listSessions, getSession, createSession, sessionTitle, updateSession, sortSessions, splitByOrigin, type Session, type SessionDetail } from '@/api/sessions';
 import api from '@/api/client';
 import { newConvKey } from '@/lib/webSessionKey';
+import { reserveTab, openReservedTab } from '@/lib/newTab';
 import {
   useBridgeSocket, fetchBridgeConfig,
   type BridgeConfig, type BridgeIncoming, type BridgeStatus,
@@ -1633,17 +1634,28 @@ export default function ChatView() {
   // running turn and detaching its agent session — and rendered the "/new"
   // text inside the ongoing chat. Creating a session is purely additive:
   // the current conversation keeps running and stays resumable.
-  const handleNewSession = useCallback(async () => {
+  //
+  // openInNewTab opens the new conversation in its own tab, leaving this one
+  // on the running conversation. The tab is reserved before the request:
+  // after the `await` there is no user gesture left and browsers block it.
+  const createNewSession = useCallback(async (openInNewTab: boolean) => {
     if (!projectName) return;
     setDrawerOpen(false);
+    const newTab = openInNewTab ? reserveTab() : null;
     try {
       const res = await createSession(projectName, { session_key: newConvKey(projectName) });
-      navigate(`/chat/${projectName}/${res.id}`);
+      const path = `/chat/${projectName}/${res.id}`;
+      // If the popup was blocked, navigate here so the new session is reachable.
+      if (!openReservedTab(newTab, path)) navigate(path);
     } catch (e) {
       // Creation failed — stay on the current conversation, untouched.
+      newTab?.close();
       console.error('create session failed:', e);
     }
   }, [projectName, navigate]);
+
+  const handleNewSession = useCallback(() => { void createNewSession(false); }, [createNewSession]);
+  const handleNewSessionInNewTab = useCallback(() => { void createNewSession(true); }, [createNewSession]);
 
   const canSend = bridgeStatus === 'connected';
 
@@ -1837,6 +1849,7 @@ export default function ChatView() {
         currentSessionId={currentSession?.id || ''}
         onSelect={switchToSession}
         onNewSession={handleNewSession}
+        onNewSessionInNewTab={handleNewSessionInNewTab}
         onRename={openRenameModal}
         onTogglePin={togglePinSession}
       />
