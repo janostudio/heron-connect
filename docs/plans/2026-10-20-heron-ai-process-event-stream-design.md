@@ -244,7 +244,7 @@ handleTurn
 
 **双份 tool_use（必须用测试守住）**：`assistant` 的 `content` 里本来就带 `{"type":"tool_use","id":...}` 块，紧接着会有一条独立的 `tool_use` 事件，两者是同一个调用。`EventToolUse` **只从独立的 `tool_use` 事件发**，否则进度卡会出现两张一模一样的工具卡。`assistant` 里的 tool_use 块只用于理解"这一轮模型要调什么"，不上屏。
 
-**`tool_use_id` 的形态**：`<call_turn_id>/<attempt>/<model_tool_call_id>`。实测 `call_turn_id` 形如 `tt_6c07a2ff4ade6a27:answer`（团队轮次 id + 冒号 + call 名），`attempt` 从 1 开始。**不要解析它的内部结构**，只做相等性比较 —— 组成方式随时可能变。
+**`tool_use_id` 的形态**：`<call_turn_id>/<attempt>/<model_tool_call_id>`。实测 `call_turn_id` 形如 `tt_test_turn:answer`（团队轮次 id + 冒号 + call 名），`attempt` 从 1 开始。**不要解析它的内部结构**，只做相等性比较 —— 组成方式随时可能变。
 
 **`seq` 语义**：会话内跨 layer 单调递增（flow/team/agent 三份 jsonl 共用一个计数器），但**不连续** —— 中间有被过滤掉的内部事件吃掉序号（例如 §8.6 里 3→5→7→8）。所以 `seq` 只能判"重复/乱序"，不能用来判"有没有丢"。
 
@@ -282,9 +282,10 @@ call 层的可见性由 `assistant`（每轮模型文本）和 `tool_use/tool_re
 
 ### 8.6 实测帧样本（实现与测试的基准）
 
-以下是一次真实 turn 的完整输出，来自 `examples/simple-qa` 下
-`heron --json-rpc` 的一轮"读一下 project/README.md 的头部"。
-值被保留原样（只省略了长文本中间部分），**字段名与嵌套形状一字不改**。
+以下是 `examples/simple-qa` 下 `heron --json-rpc` 跑一轮"读一下
+project/README.md 的头部"所得输出的**合成样本**：字段名、嵌套形状与真实帧一字
+不改；会话 / 轮次 / 工具调用 ID、模型名、token 数与耗时都已换成示例值
+（长文本中间部分省略）。
 
 #### 8.6.1 一条 turn 的完整序列
 
@@ -311,57 +312,57 @@ seq  --  turn 响应（JSON-RPC result）
 **flow_turn_started**
 ```json
 {"jsonrpc":"2.0","method":"progress","params":{
-  "session_id":"fs_d785f7561c08032b","flow_turn_id":"ft_63e1d5552f54e14b",
-  "seq":3,"event_id":"fs_d785f7561c08032b-3","type":"flow_turn_started","attempt":1}}
+  "session_id":"fs_test_session","flow_turn_id":"ft_test_turn",
+  "seq":3,"event_id":"fs_test_session-3","type":"flow_turn_started","attempt":1}}
 ```
 
 **team_turn_started**
 ```json
 {"jsonrpc":"2.0","method":"progress","params":{
-  "session_id":"fs_d785f7561c08032b","flow_turn_id":"ft_63e1d5552f54e14b",
-  "seq":5,"event_id":"fs_d785f7561c08032b-5","type":"team_turn_started","attempt":1,
-  "team_id":"default","team_session_id":"fs_d785f7561c08032b:default"}}
+  "session_id":"fs_test_session","flow_turn_id":"ft_test_turn",
+  "seq":5,"event_id":"fs_test_session-5","type":"team_turn_started","attempt":1,
+  "team_id":"default","team_session_id":"fs_test_session:default"}}
 ```
 
 **call_started**
 ```json
 {"jsonrpc":"2.0","method":"progress","params":{
-  "session_id":"fs_d785f7561c08032b","flow_turn_id":"ft_63e1d5552f54e14b",
-  "seq":7,"event_id":"fs_d785f7561c08032b-7","type":"call_started","attempt":1,
-  "team_id":"default","team_session_id":"fs_d785f7561c08032b:default",
-  "call_id":"answer","call_turn_id":"tt_6c07a2ff4ade6a27:answer","call_type":"agent"}}
+  "session_id":"fs_test_session","flow_turn_id":"ft_test_turn",
+  "seq":7,"event_id":"fs_test_session-7","type":"call_started","attempt":1,
+  "team_id":"default","team_session_id":"fs_test_session:default",
+  "call_id":"answer","call_turn_id":"tt_test_turn:answer","call_type":"agent"}}
 ```
 > `call_type`，取值 `agent` / `command` / `webhook`。`agent_id` 只在 agent 类型出现。
 
 **assistant（只有 tool_use，模型尚未产出文本）**
 ```json
 {"jsonrpc":"2.0","method":"progress","params":{
-  "session_id":"fs_d785f7561c08032b","flow_turn_id":"ft_63e1d5552f54e14b",
-  "seq":8,"event_id":"fs_d785f7561c08032b-8","type":"assistant","attempt":1,
-  "team_id":"default","call_id":"answer","call_turn_id":"tt_6c07a2ff4ade6a27:answer",
-  "round":0,"model":"hy3-ioa","finish_reason":"tool_calls",
-  "content":[{"type":"tool_use","id":"chatcmpl-tool-b73df397cb281091",
+  "session_id":"fs_test_session","flow_turn_id":"ft_test_turn",
+  "seq":8,"event_id":"fs_test_session-8","type":"assistant","attempt":1,
+  "team_id":"default","call_id":"answer","call_turn_id":"tt_test_turn:answer",
+  "round":0,"model":"example-model","finish_reason":"tool_calls",
+  "content":[{"type":"tool_use","id":"tc_001",
               "name":"Read","input":{"file":"project/README.md","line_end":20}}],
-  "usage":{"prompt_tokens":2203,"completion_tokens":59,"total_tokens":2262}}}
+  "usage":{"prompt_tokens":1200,"completion_tokens":48,"total_tokens":1248}}}
 ```
 
 **tool_use**
 ```json
 {"jsonrpc":"2.0","method":"progress","params":{
-  "session_id":"fs_d785f7561c08032b","flow_turn_id":"ft_63e1d5552f54e14b",
-  "seq":9,"event_id":"fs_d785f7561c08032b-9","type":"tool_use","attempt":1,
-  "team_id":"default","call_id":"answer","call_turn_id":"tt_6c07a2ff4ade6a27:answer",
-  "tool_use_id":"tt_6c07a2ff4ade6a27:answer/1/chatcmpl-tool-b73df397cb281091",
+  "session_id":"fs_test_session","flow_turn_id":"ft_test_turn",
+  "seq":9,"event_id":"fs_test_session-9","type":"tool_use","attempt":1,
+  "team_id":"default","call_id":"answer","call_turn_id":"tt_test_turn:answer",
+  "tool_use_id":"tt_test_turn:answer/1/tc_001",
   "name":"Read","round":0,"input":{"file":"project/README.md","line_end":20}}}
 ```
 
 **tool_result**
 ```json
 {"jsonrpc":"2.0","method":"progress","params":{
-  "session_id":"fs_d785f7561c08032b","flow_turn_id":"ft_63e1d5552f54e14b",
-  "seq":10,"event_id":"fs_d785f7561c08032b-10","type":"tool_result","attempt":1,
-  "team_id":"default","call_id":"answer","call_turn_id":"tt_6c07a2ff4ade6a27:answer",
-  "tool_use_id":"tt_6c07a2ff4ade6a27:answer/1/chatcmpl-tool-b73df397cb281091",
+  "session_id":"fs_test_session","flow_turn_id":"ft_test_turn",
+  "seq":10,"event_id":"fs_test_session-10","type":"tool_result","attempt":1,
+  "team_id":"default","call_id":"answer","call_turn_id":"tt_test_turn:answer",
+  "tool_use_id":"tt_test_turn:answer/1/tc_001",
   "name":"Read","content":"# Simple QA Project Fixture\n\n...",
   "is_error":false,"status":"completed"}}
 ```
@@ -371,32 +372,32 @@ seq  --  turn 响应（JSON-RPC result）
 **assistant（只有文本）**
 ```json
 {"jsonrpc":"2.0","method":"progress","params":{
-  "session_id":"fs_d785f7561c08032b","flow_turn_id":"ft_63e1d5552f54e14b",
-  "seq":11,"event_id":"fs_d785f7561c08032b-11","type":"assistant","attempt":1,
-  "team_id":"default","call_id":"answer","call_turn_id":"tt_6c07a2ff4ade6a27:answer",
-  "round":1,"model":"hy3-ioa","finish_reason":"stop",
+  "session_id":"fs_test_session","flow_turn_id":"ft_test_turn",
+  "seq":11,"event_id":"fs_test_session-11","type":"assistant","attempt":1,
+  "team_id":"default","call_id":"answer","call_turn_id":"tt_test_turn:answer",
+  "round":1,"model":"example-model","finish_reason":"stop",
   "content":[{"type":"text","text":"`project/README.md` 头部内容（前 20 行）：\n\n..."}],
-  "usage":{"prompt_tokens":2427,"completion_tokens":238,"total_tokens":2665}}}
+  "usage":{"prompt_tokens":1350,"completion_tokens":96,"total_tokens":1446}}}
 ```
 
 **call_completed**
 ```json
 {"jsonrpc":"2.0","method":"progress","params":{
-  "session_id":"fs_d785f7561c08032b","flow_turn_id":"ft_63e1d5552f54e14b",
-  "seq":12,"event_id":"fs_d785f7561c08032b-12","type":"call_completed","attempt":1,
-  "team_id":"default","team_session_id":"fs_d785f7561c08032b:default",
-  "call_id":"answer","call_turn_id":"tt_6c07a2ff4ade6a27:answer","call_type":"agent",
+  "session_id":"fs_test_session","flow_turn_id":"ft_test_turn",
+  "seq":12,"event_id":"fs_test_session-12","type":"call_completed","attempt":1,
+  "team_id":"default","team_session_id":"fs_test_session:default",
+  "call_id":"answer","call_turn_id":"tt_test_turn:answer","call_type":"agent",
   "status":"completed","tool_calls":1,
-  "usage":{"prompt_tokens":4630,"completion_tokens":297,"total_tokens":4927}}}
+  "usage":{"prompt_tokens":2550,"completion_tokens":144,"total_tokens":2694}}}
 ```
 > `usage` 是本 call 累计（含所有 round），不是最后一轮。失败时带 `error`。
 
 **record_published**
 ```json
 {"jsonrpc":"2.0","method":"progress","params":{
-  "session_id":"fs_d785f7561c08032b","flow_turn_id":"ft_63e1d5552f54e14b",
-  "seq":14,"event_id":"fs_d785f7561c08032b-14","type":"record_published",
-  "team_id":"default","team_session_id":"fs_d785f7561c08032b:default",
+  "session_id":"fs_test_session","flow_turn_id":"ft_test_turn",
+  "seq":14,"event_id":"fs_test_session-14","type":"record_published",
+  "team_id":"default","team_session_id":"fs_test_session:default",
   "record_name":"Answer","kind":"agent_result","status":"active","revision":1,
   "summary":"`project/README.md` 头部内容（前 20 行）：\n\n..."}}
 ```
@@ -405,18 +406,18 @@ seq  --  turn 响应（JSON-RPC result）
 **team_turn_completed**
 ```json
 {"jsonrpc":"2.0","method":"progress","params":{
-  "session_id":"fs_d785f7561c08032b","flow_turn_id":"ft_63e1d5552f54e14b",
-  "seq":15,"event_id":"fs_d785f7561c08032b-15","type":"team_turn_completed","attempt":1,
-  "team_id":"default","team_session_id":"fs_d785f7561c08032b:default",
+  "session_id":"fs_test_session","flow_turn_id":"ft_test_turn",
+  "seq":15,"event_id":"fs_test_session-15","type":"team_turn_completed","attempt":1,
+  "team_id":"default","team_session_id":"fs_test_session:default",
   "status":"completed",
-  "usage":{"prompt_tokens":4630,"completion_tokens":297,"total_tokens":4927}}}
+  "usage":{"prompt_tokens":2550,"completion_tokens":144,"total_tokens":2694}}}
 ```
 
 **status**
 ```json
 {"jsonrpc":"2.0","method":"progress","params":{
-  "session_id":"fs_d785f7561c08032b","flow_turn_id":"ft_63e1d5552f54e14b",
-  "seq":17,"event_id":"fs_d785f7561c08032b-17","type":"status","status":"waiting_input"}}
+  "session_id":"fs_test_session","flow_turn_id":"ft_test_turn",
+  "seq":17,"event_id":"fs_test_session-17","type":"status","status":"waiting_input"}}
 ```
 > `waiting_input` 是正常收尾，**和紧随其后的 turn 响应重复**，adapter 应忽略。
 > 只有 `waiting_approval` / `waiting_tool` 值得处理（后者带 `pending_approvals`）。
@@ -424,9 +425,9 @@ seq  --  turn 响应（JSON-RPC result）
 **turn 响应（最后一行）**
 ```json
 {"jsonrpc":"2.0","id":1,"result":{
-  "session_id":"fs_d785f7561c08032b","flow_turn_id":"ft_63e1d5552f54e14b",
+  "session_id":"fs_test_session","flow_turn_id":"ft_test_turn",
   "status":"waiting_input","reply":"`project/README.md` 头部内容（前 20 行）：\n\n...",
-  "records":[...],"usage":{"prompt_tokens":4630,"completion_tokens":297,"total_tokens":4927}}}
+  "records":[...],"usage":{"prompt_tokens":2550,"completion_tokens":144,"total_tokens":2694}}}
 ```
 
 #### 8.6.3 首轮（新会话）的差别

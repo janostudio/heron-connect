@@ -580,24 +580,24 @@ wecom_rate_hour_buffer = 50     # 预留 50 条（1000-50=950 条阈值）
 **测试数据结构**（内联 fixture）:
 
 ```go
-// 完整 usage_update JSON（含 _meta.usage）
+// 完整 usage_update JSON（含 _meta.usage，数值为示例值）
 const usageUpdateWithMeta = `{
   "sessionUpdate": "usage_update",
-  "used": 48152,
+  "used": 1200,
   "size": 1000000,
-  "cost": {"amount": 29.15, "currency": ""},
+  "cost": {"amount": 0.05, "currency": ""},
   "_meta": {
     "codebuddy.ai/requestId": "req-123",
     "usage": {
-      "prompt_tokens": 48152,
-      "completion_tokens": 163,
-      "total_tokens": 48315,
+      "prompt_tokens": 1200,
+      "completion_tokens": 48,
+      "total_tokens": 1248,
       "completion_tokens_details": {
         "accepted_prediction_tokens": 0,
         "reasoning_tokens": 0
       },
       "prompt_tokens_details": {
-        "cached_tokens": 20826
+        "cached_tokens": 320
       }
     }
   }

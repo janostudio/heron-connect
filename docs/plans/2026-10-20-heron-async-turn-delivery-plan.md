@@ -1,9 +1,9 @@
 # heron 异步回合结果回推：实施流程
 
 > 记录时间：2026-10-20
-> 上游问题单：`troubleshooting-2026-10-20-async-turn-visibility.md`
+> 上游问题单：一次异步回合结果不可见的排查记录（内部留档，不随仓库分发）
 > 关联设计：`docs/plans/2026-10-20-heron-ai-process-event-stream-design.md`
-> 样本会话：`fs_65b26ec7349acdca`（heron-ai/s9，v0.0.18 × heron-connect v1.3.29）
+> 样本会话：`fs_test_session`（heron-ai v0.0.18 × heron-connect v1.3.29）
 
 **目标**：让 heron-ai 后台异步回合（`activate` 派发出去的 owner / repo-info 等工作）产出的结果，自动回推到发起它的那个会话，用户无需追问。
 
@@ -183,7 +183,7 @@ heron-ai 引擎                 heron-connect 适配器              heron-conne
 
 **必须引入 `origin` 的理由**：放开 `acceptProgress` 之后，后台 turn 的 `assistant` 事件会与前台 turn 的混在同一个流里。没有 `origin` 作为"哪些 assistant 能当正文"的唯一依据，后台 agent 的中间输出会被当作正文推给用户——比原始 JSON 刷屏更糟。因此 **Task 6（`origin`）是 Task 1（放宽 turn 锁）的前置依赖**。
 
-**用户主动追问进度**：当前只能靠用户再发一句话、由 agent 用 3 次 Bash 读自己的 `flow.jsonl` 来回答（样本会话 20:20:51 那次耗时 30 秒）。补充方案：
+**用户主动追问进度**：当前只能靠用户再发一句话、由 agent 用 3 次 Bash 读自己的 `flow.jsonl` 来回答（一次排查中，这类追问耗时约 30 秒）。补充方案：
 
 - 轻量路径（推荐）：`runUnsolicitedReader` 在收到 `team_turn_completed` 时，把一句 `↳ <team> 完成` 作为 `EventThinking` 推给 Web（IM 端按配置过滤）。
 - 查询路径：扩展 `heron-connect sessions show`（`cmd/heron-connect/sessions.go`），读取 heron 会话的三个 jsonl，渲染成各 team 状态一览。作为"查看详情"入口，不做自动推送。
@@ -194,7 +194,7 @@ heron-ai 引擎                 heron-connect 适配器              heron-conne
 
 ## 3.6 时序推演：`default → owner → other` 三段式
 
-以真实样本 `fs_65b26ec7349acdca` 的形态为例（default 派发 owner，owner 再派发 other）：
+以示例样本 `fs_test_session` 的形态为例（default 派发 owner，owner 再派发 other）：
 
 ```
 t0   用户发问
