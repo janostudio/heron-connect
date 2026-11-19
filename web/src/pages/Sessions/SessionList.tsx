@@ -1,11 +1,12 @@
 import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
-import { MessageSquare, Circle, Filter, Search, Plus, User, Loader2, Clock, Pin, PinOff, Pencil } from 'lucide-react';
+import { MessageSquare, Circle, Filter, Search, Plus, User, Loader2, Clock, Pin, PinOff, Pencil, ExternalLink } from 'lucide-react';
 import { Badge, Button, EmptyState, Input, Modal } from '@/components/ui';
 import { listProjects, type ProjectSummary } from '@/api/projects';
 import { listSessions, createSession, updateSession, sortSessions, sessionTitle, sessionSource, splitByOrigin, type Session } from '@/api/sessions';
 import { newConvKey } from '@/lib/webSessionKey';
+import { reserveTab, openReservedTab } from '@/lib/newTab';
 import { cn } from '@/lib/utils';
 import RenameSessionModal from '@/pages/Chat/RenameSessionModal';
 
@@ -174,20 +175,33 @@ export default function SessionList() {
     setShowCreate(true);
   };
 
-  const handleCreate = async () => {
+  // openInNewTab creates the conversation in its own tab and leaves this list
+  // where it is, so the new conversation can run while the user keeps browsing.
+  // The blank tab is opened synchronously inside the click: once the request
+  // below is awaited there is no user gesture left, and browsers block it.
+  const handleCreate = async (openInNewTab = false) => {
     if (!newProject) return;
+    const newTab = openInNewTab ? reserveTab() : null;
     setCreating(true);
     setCreateError('');
+    let sessionId = '';
     try {
       const sessionKey = newConvKey(newProject);
       const res = await createSession(newProject, { session_key: sessionKey, name: newName.trim() || undefined });
-      setShowCreate(false);
-      navigate(`/chat/${newProject}/${res.id}`);
+      sessionId = res.id;
     } catch (e: any) {
+      // Nothing was created, so the tab opened above has nothing to show.
+      newTab?.close();
       setCreateError(e.message || String(e));
+      return;
     } finally {
       setCreating(false);
     }
+    setShowCreate(false);
+    const path = `/chat/${newProject}/${sessionId}`;
+    // The current tab was asked for, or the popup was blocked — navigating
+    // here is what keeps the just-created session reachable.
+    if (!openReservedTab(newTab, path)) navigate(path);
   };
 
   if (loading && allData.length === 0) {
@@ -363,9 +377,17 @@ export default function SessionList() {
             autoFocus
           />
           {createError && <p className="text-xs text-red-500">{createError}</p>}
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex flex-wrap justify-end gap-2 pt-2">
             <Button variant="secondary" onClick={() => setShowCreate(false)}>{t('common.cancel')}</Button>
-            <Button disabled={!newProject || creating} loading={creating} onClick={handleCreate}>
+            <Button
+              variant="secondary"
+              disabled={!newProject || creating}
+              onClick={() => handleCreate(true)}
+              title={t('sessions.openInNewTab')}
+            >
+              <ExternalLink size={14} /> {t('sessions.openInNewTab')}
+            </Button>
+            <Button disabled={!newProject || creating} loading={creating} onClick={() => handleCreate()}>
               {t('sessions.createNew')}
             </Button>
           </div>

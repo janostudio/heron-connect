@@ -91,6 +91,7 @@
     "createNew": "New Session",
     "selectProject": "Select project",
     "sessionNameOptional": "Session name (optional)",
+    "openInNewTab": "Open in new tab",
     "showCronSessions": "Show scheduled-run sessions",
     "hiddenCronSessions": "{{count}} scheduled-run sessions hidden"
   },

@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  X, MessageSquare, Circle, User, Bot, Plus, Loader2, Clock, Pin, PinOff, Pencil,
+  X, MessageSquare, Circle, User, Bot, Plus, Loader2, Clock, Pin, PinOff, Pencil, ExternalLink,
 } from 'lucide-react';
 import { Badge } from '@/components/ui';
 import { sessionTitle, sessionSource, type Session } from '@/api/sessions';
@@ -25,6 +25,7 @@ interface Props {
   currentSessionId: string;
   onSelect: (session: Session) => void;
   onNewSession?: () => void;
+  onNewSessionInNewTab?: () => void;
   onRename?: (session: Session) => void;
   onTogglePin?: (session: Session) => void;
 }
@@ -32,7 +33,7 @@ interface Props {
 // Memoized: the drawer is always mounted (closed state is CSS-gated via
 // translate-x-full), so without memo it re-rendered on every parent render —
 // including the 5s session poll and every streaming delta.
-function SessionDrawer({ open, onClose, sessions, currentSessionId, onSelect, onNewSession, onRename, onTogglePin }: Props) {
+function SessionDrawer({ open, onClose, sessions, currentSessionId, onSelect, onNewSession, onNewSessionInNewTab, onRename, onTogglePin }: Props) {
   const { t } = useTranslation();
 
   return (
@@ -63,6 +64,16 @@ function SessionDrawer({ open, onClose, sessions, currentSessionId, onSelect, on
                 title={t('cmd.new')}
               >
                 <Plus size={16} />
+              </button>
+            )}
+            {onNewSessionInNewTab && (
+              <button
+                type="button"
+                onClick={onNewSessionInNewTab}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-accent hover:bg-accent/10 transition-colors"
+                title={t('sessions.openInNewTab')}
+              >
+                <ExternalLink size={16} />
               </button>
             )}
             <button

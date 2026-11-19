@@ -91,6 +91,7 @@
     "createNew": "新規セッション",
     "selectProject": "プロジェクトを選択",
     "sessionNameOptional": "セッション名（任意）",
+    "openInNewTab": "新しいタブで開く",
     "showCronSessions": "定期実行セッションを表示",
     "hiddenCronSessions": "定期実行セッション {{count}} 件を非表示中"
   },
