@@ -1270,10 +1270,10 @@ func TestRespondPermission_NonResidentFails(t *testing.T) {
 	}
 }
 
-// TestNewCodeBuddySession_ForcesResidentMode pins the invariant the whole
-// control_request fix rests on: CodeBuddy sessions are always resident, so a
-// permission reply always has a stdin channel to travel over.
-func TestAgent_AlwaysInterruptible(t *testing.T) {
+// TestAgent_ProcessModelDefaultsToPerTurn pins the default process model: with
+// no "interruptible" option the adapter spawns one CLI process per turn, which
+// exits with its turn, so idle sessions do not hold a resident process.
+func TestAgent_ProcessModelDefaultsToPerTurn(t *testing.T) {
 	a, err := New(map[string]any{"work_dir": t.TempDir()})
 	if err != nil {
 		t.Skipf("codebuddy CLI not installed: %v", err)
@@ -1282,15 +1282,33 @@ func TestAgent_AlwaysInterruptible(t *testing.T) {
 	if !ok {
 		t.Fatalf("New returned %T, want *Agent", a)
 	}
-	if !agent.interruptible {
-		t.Error("codebuddy must always run resident (interruptible) to answer control_request frames")
+	if agent.interruptible {
+		t.Error("interruptible must default to false (per-turn spawn), got resident mode")
 	}
 	// The management API reads the capability through the Agent-level reporter
-	// (core.AgentInterruptibleReporter), not the raw field. codebuddy never
-	// reads an "interruptible" config option, so an option-snapshot probe would
-	// wrongly report false — this pins the reporter to the field.
+	// (core.AgentInterruptibleReporter), not the raw field.
+	if agent.Interruptible() {
+		t.Error("Interruptible() = true, want false for the default per-turn model")
+	}
+}
+
+// TestAgent_InterruptibleOptionEnablesResidentMode pins the opt-in: an explicit
+// interruptible = true keeps the resident process, which is what makes
+// mid-turn interruption and control_request replies possible.
+func TestAgent_InterruptibleOptionEnablesResidentMode(t *testing.T) {
+	a, err := New(map[string]any{"work_dir": t.TempDir(), "interruptible": true})
+	if err != nil {
+		t.Skipf("codebuddy CLI not installed: %v", err)
+	}
+	agent, ok := a.(*Agent)
+	if !ok {
+		t.Fatalf("New returned %T, want *Agent", a)
+	}
+	if !agent.interruptible {
+		t.Error("interruptible = true must select the resident process model")
+	}
 	if !agent.Interruptible() {
-		t.Error("Interruptible() = false, want true (must expose the hard-coded capability)")
+		t.Error("Interruptible() = false, want true when the option is set")
 	}
 }
 

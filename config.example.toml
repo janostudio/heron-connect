@@ -1677,9 +1677,16 @@ app_secret = "your-feishu-app-secret"
 # #
 # # Optional: interrupt the running turn when a new message arrives, injecting it
 # # immediately instead of queueing it until the turn ends.
-# # Default false — behaviour is identical to leaving this unset.
+# # Default false — one CLI process per turn, which exits with its turn.
+# # true keeps one resident process per session that survives across turns; that
+# # resident stdin is also the only channel able to answer control_request frames
+# # (permission approval). Keep false unless mid-turn interruption is required or
+# # the permission mode prompts for approval at runtime.
 # # 可选：会话忙时，新消息打断当前轮并立即注入，而不是排队等本轮结束。
-# # 默认 false，与不配置此项的行为完全一致。
+# # 默认 false：每轮启动一个 CLI 进程，本轮结束进程即退出。
+# # 设为 true 后每个会话保留一个常驻进程跨轮复用；常驻 stdin 也是适配器回复
+# # control_request（权限审批）的唯一通道。除需要忙时打断，或运行会弹权限的
+# # 模式外，保持 false 即可。
 # # interruptible = true
 
 # [[projects.platforms]]
