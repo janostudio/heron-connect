@@ -1,9 +1,8 @@
 # heron 异步回合结果回推：实施流程
 
 > 记录时间：2026-10-20
-> 上游问题单：`troubleshooting-2026-10-20-async-turn-visibility.md`
 > 关联设计：`docs/plans/2026-10-20-heron-ai-process-event-stream-design.md`
-> 样本会话：`fs_65b26ec7349acdca`（heron-ai/s9，v0.0.18 × heron-connect v1.3.29）
+> 样本会话：`fs_test_session`（heron-ai/s9，v0.0.18 × heron-connect v1.3.29）
 
 **目标**：让 heron-ai 后台异步回合（`activate` 派发出去的 owner / repo-info 等工作）产出的结果，自动回推到发起它的那个会话，用户无需追问。
 
@@ -194,7 +193,7 @@ heron-ai 引擎                 heron-connect 适配器              heron-conne
 
 ## 3.6 时序推演：`default → owner → other` 三段式
 
-以真实样本 `fs_65b26ec7349acdca` 的形态为例（default 派发 owner，owner 再派发 other）：
+以真实样本 `fs_test_session` 的形态为例（default 派发 owner，owner 再派发 other）：
 
 ```
 t0   用户发问
