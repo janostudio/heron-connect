@@ -282,6 +282,14 @@
     "slashHint": "/ を押して利用可能なコマンドを表示",
     "inputPlaceholder": "メッセージを入力、または / でコマンド...",
     "commands": "コマンド",
+    "preview": {
+      "tooLarge": "ファイルサイズ {{size}} はプレビュー上限を超えています",
+      "unsupported": "このファイル形式はプレビューできません",
+      "download": "ダウンロード",
+      "previewAnyway": "プレビューする",
+      "loadMore": "さらに読み込む",
+      "failed": "ファイルの読み込みに失敗しました"
+    },
     "stop": "停止",
     "stopInterruptible": "現在の応答を停止（新しいメッセージは割り込みます）",
     "stopQueued": "現在の応答を停止（新しいメッセージはキューに入ります）",

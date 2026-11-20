@@ -1,12 +1,16 @@
 package management
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/janostudio/heron-connect/core"
@@ -245,5 +249,271 @@ func TestMgmt_FileDirListingEmptyDir(t *testing.T) {
 	}
 	if len(wrapped.Data.Entries) != 0 {
 		t.Fatalf("expected 0 entries, got %d", len(wrapped.Data.Entries))
+	}
+}
+
+// ── preview slicing ─────────────────────────────────────────
+
+func TestMgmt_FilePreviewSlices(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Repeat("abcdefghij", 250) // 2500 bytes
+	if err := os.WriteFile(filepath.Join(dir, "log.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ts := newFileMgmtServer(t, "tok", map[string]string{"proj": dir})
+
+	resp, body := doGet(t, ts.URL+"/api/v1/files/proj/log.txt?preview=1&offset=0&limit=1000&token=tok", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+	if len(body) != 1000 || string(body) != content[:1000] {
+		t.Fatalf("first slice length=%d, want 1000 and matching bytes", len(body))
+	}
+	if got := resp.Header.Get("X-Preview-Total-Size"); got != "2500" {
+		t.Fatalf("total size header = %q, want 2500", got)
+	}
+	if got := resp.Header.Get("X-Preview-Offset"); got != "0" {
+		t.Fatalf("offset header = %q", got)
+	}
+	if got := resp.Header.Get("X-Preview-Truncated"); got != "1" {
+		t.Fatalf("truncated header = %q, want 1", got)
+	}
+
+	// The final slice reports no truncation.
+	resp, body = doGet(t, ts.URL+"/api/v1/files/proj/log.txt?preview=1&offset=2000&limit=1000&token=tok", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for tail slice, got %d: %s", resp.StatusCode, body)
+	}
+	if len(body) != 500 || string(body) != content[2000:] {
+		t.Fatalf("tail slice length=%d, want 500", len(body))
+	}
+	if got := resp.Header.Get("X-Preview-Truncated"); got != "0" {
+		t.Fatalf("truncated header on tail = %q, want 0", got)
+	}
+}
+
+func TestMgmt_FilePreviewClampsLimitAndOffset(t *testing.T) {
+	dir := t.TempDir()
+	big := bytes.Repeat([]byte("x"), 2<<20) // 2 MiB
+	if err := os.WriteFile(filepath.Join(dir, "big.txt"), big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ts := newFileMgmtServer(t, "tok", map[string]string{"proj": dir})
+
+	// A caller asking for the whole file gets one bounded slice instead.
+	resp, body := doGet(t, ts.URL+"/api/v1/files/proj/big.txt?preview=1&limit=99999999&token=tok", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if len(body) != previewMaxChunk {
+		t.Fatalf("clamped slice length = %d, want %d", len(body), previewMaxChunk)
+	}
+	if got := resp.Header.Get("X-Preview-Returned"); got != strconv.Itoa(previewMaxChunk) {
+		t.Fatalf("returned header = %q", got)
+	}
+
+	// An offset past EOF yields an empty, non-truncated response instead of a
+	// seek error.
+	resp, body = doGet(t, ts.URL+"/api/v1/files/proj/big.txt?preview=1&offset=99999999&token=tok", "")
+	if resp.StatusCode != http.StatusOK || len(body) != 0 {
+		t.Fatalf("past-EOF preview: status=%d len=%d", resp.StatusCode, len(body))
+	}
+	if got := resp.Header.Get("X-Preview-Truncated"); got != "0" {
+		t.Fatalf("truncated header past EOF = %q, want 0", got)
+	}
+}
+
+func TestMgmt_FilePreviewRejectsBinary(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "blob.bin"), []byte{0x00, 0x01, 0x02}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ts := newFileMgmtServer(t, "tok", map[string]string{"proj": dir})
+
+	resp, body := doGet(t, ts.URL+"/api/v1/files/proj/blob.bin?preview=1&token=tok", "")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for binary preview, got %d: %s", resp.StatusCode, body)
+	}
+}
+
+func TestMgmt_FilePreviewSplitsMultiByteChars(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Repeat("中文内容", 100) // 3 bytes per rune
+	if err := os.WriteFile(filepath.Join(dir, "zh.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ts := newFileMgmtServer(t, "tok", map[string]string{"proj": dir})
+
+	// 4 bytes per slice lands mid-character on purpose: the server slices
+	// bytes, and the client is expected to stitch. What matters here is that a
+	// misaligned boundary neither errors nor drops bytes when concatenated.
+	var got []byte
+	for offset := 0; ; {
+		resp, body := doGet(t, ts.URL+"/api/v1/files/proj/zh.txt?preview=1&offset="+
+			strconv.Itoa(offset)+"&limit=4&token=tok", "")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("slice at %d: status %d", offset, resp.StatusCode)
+		}
+		got = append(got, body...)
+		offset += len(body)
+		if resp.Header.Get("X-Preview-Truncated") == "0" {
+			break
+		}
+	}
+	if string(got) != content {
+		t.Fatalf("stitched content mismatch: got %d bytes, want %d", len(got), len(content))
+	}
+}
+
+func TestMgmt_FilePreviewRequiresTextContentType(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("# hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ts := newFileMgmtServer(t, "tok", map[string]string{"proj": dir})
+
+	resp, _ := doGet(t, ts.URL+"/api/v1/files/proj/notes.md?preview=1&token=tok", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for markdown preview, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Fatalf("preview content-type = %q, want text/plain", ct)
+	}
+}
+
+func TestMgmt_FileDirListingPagination(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ts := newFileMgmtServer(t, "tok", map[string]string{"proj": dir})
+
+	type page struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Entries []struct {
+				Name string `json:"name"`
+			} `json:"entries"`
+			Total      int `json:"total"`
+			Offset     int `json:"offset"`
+			NextOffset int `json:"next_offset"`
+		} `json:"data"`
+	}
+
+	resp, body := doGet(t, ts.URL+"/api/v1/files/proj/?limit=2&token=tok", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var first page
+	if err := json.Unmarshal(body, &first); err != nil {
+		t.Fatalf("decode: %v (%s)", err, body)
+	}
+	if len(first.Data.Entries) != 2 || first.Data.Total != 3 || first.Data.NextOffset != 2 {
+		t.Fatalf("first page = %+v", first.Data)
+	}
+
+	resp, body = doGet(t, ts.URL+"/api/v1/files/proj/?offset=2&limit=2&token=tok", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for second page, got %d", resp.StatusCode)
+	}
+	var second page
+	if err := json.Unmarshal(body, &second); err != nil {
+		t.Fatalf("decode: %v (%s)", err, body)
+	}
+	if len(second.Data.Entries) != 1 || second.Data.Total != 3 || second.Data.NextOffset != 0 {
+		t.Fatalf("second page = %+v", second.Data)
+	}
+	if second.Data.Entries[0].Name != "c.txt" {
+		t.Fatalf("second page entry = %q, want c.txt", second.Data.Entries[0].Name)
+	}
+}
+
+func TestMgmt_FileDirListingReturnsEverythingWithoutPagingParams(t *testing.T) {
+	dir := t.TempDir()
+	const count = 520
+	for i := 0; i < count; i++ {
+		name := fmt.Sprintf("file-%03d.txt", i)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ts := newFileMgmtServer(t, "tok", map[string]string{"proj": dir})
+
+	type page struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Entries    []struct{ Name string } `json:"entries"`
+			Total      int                     `json:"total"`
+			NextOffset int                     `json:"next_offset"`
+		} `json:"data"`
+	}
+
+	// A caller that sends no paging parameters is the pre-pagination client and
+	// must still receive the whole listing: silently truncating it would look
+	// like files disappearing from the directory.
+	_, body := doGet(t, ts.URL+"/api/v1/files/proj/?token=tok", "")
+	var full page
+	if err := json.Unmarshal(body, &full); err != nil {
+		t.Fatalf("decode: %v (%s)", err, body)
+	}
+	if len(full.Data.Entries) != count || full.Data.Total != count || full.Data.NextOffset != 0 {
+		t.Fatalf("unpaged listing = %d entries, total %d, next %d; want %d/0",
+			len(full.Data.Entries), full.Data.Total, full.Data.NextOffset, count)
+	}
+
+	// Asking for a page is what opts into truncation.
+	_, body = doGet(t, ts.URL+"/api/v1/files/proj/?limit=500&token=tok", "")
+	var paged page
+	if err := json.Unmarshal(body, &paged); err != nil {
+		t.Fatalf("decode: %v (%s)", err, body)
+	}
+	if len(paged.Data.Entries) != 500 || paged.Data.Total != count || paged.Data.NextOffset != 500 {
+		t.Fatalf("paged listing = %d entries, total %d, next %d; want 500/%d/500",
+			len(paged.Data.Entries), paged.Data.Total, paged.Data.NextOffset, count)
+	}
+}
+
+func TestMgmt_SharePreviewServesBytesNotTheViewerPage(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Repeat("a line of text\n", 100)
+	if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ts, store := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
+	sh, err := store.Create("proj", "notes.md", "notes.md")
+	if err != nil {
+		t.Fatalf("create share: %v", err)
+	}
+
+	// ?raw=1 is what the viewer's own fetch sends; the combination with
+	// preview=1 must yield sliced bytes, never the HTML page.
+	resp, body := doGet(t, ts.URL+"/api/v1/share/"+sh.Token+"?raw=1&preview=1&offset=0&limit=10", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("share preview status = %d: %s", resp.StatusCode, body)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Fatalf("share preview content-type = %q, want text/plain", ct)
+	}
+	if len(body) != 10 || strings.Contains(string(body), "<html") {
+		t.Fatalf("share preview body = %q (len %d)", string(body), len(body))
+	}
+
+	// Without raw=1 a browser navigation still gets the viewer page: preview=1
+	// alone must not hijack the anonymous entry point.
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/share/"+sh.Token+"?preview=1", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Accept", "text/html")
+	pageResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET share page: %v", err)
+	}
+	defer pageResp.Body.Close()
+	pageBody, _ := io.ReadAll(pageResp.Body)
+	if !strings.Contains(string(pageBody), "share-root") {
+		t.Fatalf("expected the viewer page, got %q", string(pageBody))
 	}
 }

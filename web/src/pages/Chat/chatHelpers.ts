@@ -20,81 +20,13 @@ export function sessionsSignature(list: Session[]): string {
     .join('\n');
 }
 
-// Extensions the web UI treats as text: previewable inline (see
-// fileIsPreviewable) and offered in the composer's file picker (see
-// attachmentAccept). One list, two consumers — a format that can be previewed
-// but not attached (or vice versa) is always a bug, so they cannot drift.
-export const TEXT_EXTS: readonly string[] = [
-  'md', 'markdown', 'txt', 'log', 'json', 'yaml', 'yml', 'xml', 'svg', 'csv',
-  'html', 'htm',
-  'ts', 'tsx', 'js', 'jsx', 'go', 'py', 'rs', 'c', 'h', 'cpp', 'hpp', 'java',
-  'rb', 'php', 'sh', 'sql', 'toml', 'ini', 'conf', 'cfg', 'env', 'gitignore',
-];
-
-/**
- * Whether a file can be shown inline in the web UI rather than only offered
- * for download. Checks the runtime Content-Type first, then falls back to a
- * curated extension list (servers often send application/octet-stream for
- * source files).
- */
-export function fileIsPreviewable(fileName: string, contentType: string): boolean {
-  const ext = (fileName.split('.').pop() || '').toLowerCase();
-  const ct = contentType.toLowerCase();
-  if (ct.startsWith('image/') || ct.startsWith('audio/') || ct.startsWith('video/') || ct === 'application/pdf') {
-    return true;
-  }
-  if (ct.startsWith('text/') || ct.includes('json') || ct.includes('xml') || ct.includes('svg') || ct.includes('yaml') || ct.includes('javascript') || ct.includes('typescript')) {
-    return true;
-  }
-  return TEXT_EXTS.includes(ext);
-}
-
-// Document types the composer's picker offers that are NOT text — they round
-// out ACCEPT below. Kept separate from TEXT_EXTS because they are neither
-// previewable inline nor language-specific source.
-const DOC_EXTS: readonly string[] = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'];
-
-// Archive formats. `.tar.gz` needs the explicit two-part entry: the browser
-// matches on the final extension, and the picker's own accept filter parses
-// this value too — which is why it is built from `['tar.gz', ...]` rather than
-// appended inline.
-const ARCHIVE_EXTS: readonly string[] = ['zip', 'tar', 'gz'];
-
-/**
- * The `accept` attribute for the composer's file picker. Derived from
- * TEXT_EXTS so every previewable text format is attachable — the two lists
- * used to be maintained by hand and had drifted (`.html` could be previewed
- * but not picked, which is what prompted this).
- */
-export function attachmentAccept(): string {
-  return [
-    'image/*',
-    ...DOC_EXTS.map(e => `.${e}`),
-    ...TEXT_EXTS.map(e => `.${e}`),
-    ...ARCHIVE_EXTS.map(e => `.${e}`),
-    '.tar.gz',
-  ].join(',');
-}
-
-/**
- * Whether the file should be rendered as markdown in the preview rather than as
- * raw text. Matches on both the file extension and the runtime Content-Type, so
- * a .md served with a non-standard MIME still works.
- */
-export function isMarkdown(fileName: string, contentType: string): boolean {
-  const ext = (fileName.split('.').pop() || '').toLowerCase();
-  return ext === 'md' || ext === 'markdown' || contentType.toLowerCase() === 'text/markdown';
-}
-
-/**
- * Whether the file should offer the two HTML view modes: the rendered effect
- * (sandboxed iframe) and the raw source. Matches on both the file extension and
- * the runtime Content-Type like isMarkdown does.
- */
-export function isHtmlFile(fileName: string, contentType: string): boolean {
-  const ext = (fileName.split('.').pop() || '').toLowerCase();
-  return ext === 'html' || ext === 'htm' || contentType.toLowerCase() === 'text/html';
-}
+// File-type classification lives in @/lib/filePreview so the standalone share
+// viewer can use the same rules without importing the chat page. Re-exported
+// here to keep the existing import sites unchanged.
+export {
+  TEXT_EXTS, fileIsPreviewable, isTextualContentType, isTextualFile,
+  isMarkdown, isHtmlFile, attachmentAccept,
+} from '@/lib/filePreview';
 
 /**
  * Parse a card list_item label of the form "**command** description" (or a

@@ -28,8 +28,14 @@ import { shouldRefetchOnReconnect } from './chatSessionsCore';
 import { nowStamp } from './messageTime';
 import type { ChatMsg, PickItem } from './chatMessage';
 import { SequenceGuard } from '@/lib/sequenceGuard';
+import TextPreview from '@/components/TextPreview';
+import { headFile, readPreviewChunk } from '@/api/files';
 import {
-  sessionsSignature, fileIsPreviewable, isMarkdown, isHtmlFile,
+  decidePreview, forcePreview, formatBytes, PREVIEW_LIMITS,
+  type PreviewPlan,
+} from '@/lib/filePreview';
+import {
+  sessionsSignature, isMarkdown,
   CHAT_COMMANDS, classifyInput, relFromFilesHref, splitFileRel, fileBrowserKey,
 } from './chatHelpers';
 import { cn, loadLS, saveLS, copyText } from '@/lib/utils';
@@ -133,7 +139,8 @@ const Transcript = memo(function Transcript({
 });
 
 // ── File preview (local agent-generated files, served over HTTP) ──
-// fileIsPreviewable / isMarkdown / isHtmlFile live in chatHelpers.ts.
+// Type classification and the size budget live in @/lib/filePreview, shared
+// with the standalone share viewer.
 
 function FilePreview({ filePath, fileName, onClose, previewWidth, isDesktop, onResizeStart }: {
   filePath: string;
@@ -226,11 +233,16 @@ async function downloadFile(filePath: string, fileName: string) {
 // toggle between the rendered effect (sandboxed iframe, default) and the raw
 // source text.
 function FileContentView({ filePath, fileName }: { filePath: string; fileName: string }) {
-  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [contentType, setContentType] = useState('');
-  const [text, setText] = useState('');
-  const [dataUrl, setDataUrl] = useState('');
+  const { t } = useTranslation();
+  const [phase, setPhase] = useState<'head' | 'ready' | 'error'>('head');
   const [error, setError] = useState('');
+  const [plan, setPlan] = useState<PreviewPlan | null>(null);
+  const [fileSize, setFileSize] = useState(0);
+  const [contentType, setContentType] = useState('');
+  /** User overrode the size refusal ("preview anyway"). */
+  const [forced, setForced] = useState(false);
+  const [text, setText] = useState('');
+  const [objectUrl, setObjectUrl] = useState('');
   // Bump refreshTick to re-fetch the file from the server.
   const [refreshTick, setRefreshTick] = useState(0);
   // HTML files: 'rendered' shows the page effect, 'source' shows the text.
@@ -242,69 +254,101 @@ function FileContentView({ filePath, fileName }: { filePath: string; fileName: s
     setHtmlView('rendered');
   }, [filePath, fileName]);
 
+  // Probe before fetching. The size decides everything else: without this the
+  // page would pull a 200 MB file only to discover it cannot lay it out, which
+  // is exactly what used to freeze the tab.
   useEffect(() => {
     let alive = true;
-    // Reset all preview state before loading the new file so the previous
-    // file's text/dataUrl don't bleed into the UI when switching between file
-    // types (e.g. md → image would otherwise show both the old md text and
-    // the new image at the same time).
-    setState('loading');
+    setPhase('head');
     setError('');
+    setPlan(null);
     setText('');
-    setDataUrl('');
-    setContentType('');
-    // api.file always fetches with cache: 'no-store', so a manual refresh
-    // reliably pulls the latest bytes from the server.
-    api.file(filePath).then(async (res) => {
-      if (!alive) return;
-      if (!res.ok) {
-        setState('error');
-        setError(`Failed to load file (${res.status})`);
-        return;
-      }
-      setContentType(res.contentType);
-      if (!fileIsPreviewable(fileName, res.contentType)) {
-        setState('ready');
-        return;
-      }
-      if (res.contentType.startsWith('text/') || /(json|xml|yaml|svg|javascript|typescript)/.test(res.contentType)) {
-        const t = await res.blob.text();
+    setObjectUrl('');
+    setForced(false);
+
+    headFile(filePath)
+      .then((head) => {
         if (!alive) return;
-        setText(t);
-        setState('ready');
-      } else {
-        const reader = new FileReader();
-        reader.onload = () => {
-          if (!alive) return;
-          setDataUrl(typeof reader.result === 'string' ? reader.result : '');
-          setState('ready');
-        };
-        reader.onerror = () => { if (alive) { setState('error'); setError('Failed to read file'); } };
-        reader.readAsDataURL(res.blob);
-      }
-    }).catch((e) => {
-      if (!alive) return;
-      setState('error');
-      setError(e?.message || 'Failed to load file');
-    });
+        setFileSize(head.size);
+        setContentType(head.contentType);
+        setPlan(decidePreview(fileName, head.contentType, head.size));
+        setPhase('ready');
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setPhase('error');
+        setError(e instanceof Error ? e.message : String(e));
+      });
+
     return () => { alive = false; };
   }, [filePath, fileName, refreshTick]);
 
-  const previewable = fileIsPreviewable(fileName, contentType);
-  const isHtml = isHtmlFile(fileName, contentType);
+  const effective = useMemo(
+    () => (plan && forced ? forcePreview(plan) : plan),
+    [plan, forced],
+  );
+
+  // Whole-document and binary paths download once; the windowed path pulls its
+  // own slices, so it is deliberately excluded here.
+  useEffect(() => {
+    if (!effective) return;
+    if (effective.mode !== 'full' && effective.mode !== 'object-url') return;
+
+    let alive = true;
+    let createdUrl = '';
+    // api.file always fetches with cache: 'no-store', so a manual refresh
+    // reliably pulls the latest bytes from the server.
+    api.file(filePath)
+      .then(async (res) => {
+        if (!alive) return;
+        if (!res.ok) {
+          setPhase('error');
+          setError(`Failed to load file (${res.status})`);
+          return;
+        }
+        if (effective.mode === 'full') {
+          const body = await res.blob.text();
+          if (!alive) return;
+          setText(body);
+        } else {
+          // A blob URL instead of a data: URL — base64 adds a second copy of
+          // the bytes as a string and is what made large media unopenable.
+          createdUrl = URL.createObjectURL(res.blob);
+          setObjectUrl(createdUrl);
+        }
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setPhase('error');
+        setError(e instanceof Error ? e.message : String(e));
+      });
+
+    return () => {
+      alive = false;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [effective, filePath]);
+
+  const previewable = !!effective && effective.mode !== 'download-only' && effective.kind !== 'none';
+  const isHtml = !!effective && effective.kind === 'html';
+  const canForce = !!plan && forcePreview(plan).mode !== 'download-only';
   const showHtmlRendered = isHtml && htmlView === 'rendered';
 
   return (
     <div className="flex flex-col gap-3">
-      {state === 'loading' && (
+      {phase === 'head' && (
         <div className="flex items-center justify-center gap-2 py-10 text-gray-500 dark:text-gray-400">
-          <Loader2 size={18} className="animate-spin" /> Loading…
+          <Loader2 size={18} className="animate-spin" /> {t('common.loading')}
         </div>
       )}
-      {state === 'error' && (
-        <div className="py-6 text-center text-sm text-red-500">{error || 'Failed to load file'}</div>
+
+      {phase === 'error' && (
+        <div className="py-6 text-center text-sm text-red-500">
+          {error || t('chat.preview.failed', 'Failed to load file')}
+        </div>
       )}
-      {state === 'ready' && (
+
+      {phase === 'ready' && effective && (
         <>
           {/* Toolbar: current file name + HTML view toggle + manual refresh
               (files change on disk without any push — refresh re-fetches the
@@ -318,7 +362,7 @@ function FileContentView({ filePath, fileName }: { filePath: string; fileName: s
                 {fileName}
               </span>
               <div className="flex items-center gap-2 shrink-0">
-                {isHtml && (
+                {isHtml && effective.mode === 'full' && (
                   <div className="flex items-center rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden text-xs">
                     <button type="button" onClick={() => setHtmlView('rendered')}
                       className={cn(
@@ -352,7 +396,47 @@ function FileContentView({ filePath, fileName }: { filePath: string; fileName: s
               </div>
             </div>
           )}
-          {previewable && text !== '' && showHtmlRendered && (
+
+          {effective.mode === 'download-only' && (
+            <div className="space-y-3 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+              <p>
+                {effective.reason === 'unsupported'
+                  ? t('chat.preview.unsupported', 'This file type can’t be previewed.')
+                  : t('chat.preview.tooLarge',
+                      'This file is {{size}} — too large to open in the preview.',
+                      { size: formatBytes(fileSize) })}
+              </p>
+              <div className="flex items-center justify-center gap-2">
+                <Button onClick={() => void downloadFile(filePath, fileName)} className="flex items-center gap-2">
+                  <Download size={15} /> {t('chat.preview.download', 'Download')}
+                </Button>
+                {canForce && (
+                  <Button variant="secondary" onClick={() => setForced(true)}>
+                    {t('chat.preview.previewAnyway', 'Preview anyway')}
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {previewable && effective.mode === 'windowed' && (
+            <div className="h-[70vh]">
+              <TextPreview
+                key={`${filePath}:${refreshTick}`}
+                totalSize={fileSize}
+                readChunk={(offset, limit, signal) => readPreviewChunk(filePath, offset, limit, signal)}
+                labels={{
+                  loading: t('common.loading'),
+                  loadMore: t('chat.preview.loadMore', 'Load more'),
+                  download: t('chat.preview.download', 'Download'),
+                  failed: t('chat.preview.failed', 'Failed to load file'),
+                }}
+                onDownload={() => void downloadFile(filePath, fileName)}
+              />
+            </div>
+          )}
+
+          {previewable && effective.mode === 'full' && text !== '' && showHtmlRendered && (
             // Rendered mode: sandboxed iframe. allow-scripts lets the page's
             // inline JS (charts etc.) run, but WITHOUT allow-same-origin the
             // frame lives in an opaque origin — it cannot reach our cookies
@@ -368,25 +452,26 @@ function FileContentView({ filePath, fileName }: { filePath: string; fileName: s
               className="w-full h-[70vh] rounded-lg border border-gray-200 dark:border-gray-700 bg-white"
             />
           )}
-          {previewable && text !== '' && !showHtmlRendered && (
+
+          {previewable && effective.mode === 'full' && text !== '' && !showHtmlRendered && (
             isMarkdown(fileName, contentType)
               ? <div className="max-h-[70vh] overflow-auto"><RenderMarkdown content={text} /></div>
               : <pre className="max-h-[70vh] overflow-auto rounded-lg bg-[#fafafa] dark:bg-[#0d1117] border border-gray-200 dark:border-gray-700/60 p-4 text-[13px] leading-[1.6] font-mono whitespace-pre-wrap break-words text-gray-800 dark:text-gray-100">
                   {text}
                 </pre>
           )}
-          {previewable && dataUrl !== '' && (() => {
-            if (contentType.startsWith('image/')) return <img src={dataUrl} alt={fileName} className="max-h-[70vh] max-w-full mx-auto rounded-lg" />;
-            if (contentType === 'application/pdf') return <iframe src={dataUrl} title={fileName} className="w-full h-[70vh] rounded-lg border border-gray-200 dark:border-gray-700" />;
-            if (contentType.startsWith('audio/')) return <audio controls src={dataUrl} className="w-full" />;
-            if (contentType.startsWith('video/')) return <video controls src={dataUrl} className="max-h-[70vh] max-w-full mx-auto rounded-lg" />;
+
+          {effective.mode === 'object-url' && objectUrl && (() => {
+            // Same sandbox stance for HTML served from a blob URL as for srcDoc.
+            if (effective.kind === 'html') {
+              return <iframe src={objectUrl} title={fileName} sandbox="allow-scripts allow-popups allow-forms" className="w-full h-[70vh] rounded-lg border border-gray-200 dark:border-gray-700 bg-white" />;
+            }
+            if (effective.kind === 'image') return <img src={objectUrl} alt={fileName} className="max-h-[70vh] max-w-full mx-auto rounded-lg" />;
+            if (effective.kind === 'pdf') return <iframe src={objectUrl} title={fileName} className="w-full h-[70vh] rounded-lg border border-gray-200 dark:border-gray-700" />;
+            if (effective.kind === 'audio') return <audio controls src={objectUrl} className="w-full" />;
+            if (effective.kind === 'video') return <video controls src={objectUrl} className="max-h-[70vh] max-w-full mx-auto rounded-lg" />;
             return null;
           })()}
-          {!previewable && (
-            <div className="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
-              This file type can’t be previewed. Use the download button below.
-            </div>
-          )}
         </>
       )}
     </div>
@@ -440,6 +525,11 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
     targetFile ? splitFileRel(targetFile.rel).name : remembered?.fileName || ''
   ));
   const [entries, setEntries] = useState<FileEntry[]>([]);
+  // Directory listings are paginated server-side: a directory with thousands of
+  // entries used to arrive in one response and render in one pass.
+  const [dirTotal, setDirTotal] = useState(0);
+  const [dirNext, setDirNext] = useState(0);
+  const [dirLoadingMore, setDirLoadingMore] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(-1);
   // Closed by default: the directory dropdown is opt-in — open the browser
   // and you get the header breadcrumb + current file body, not a long list
@@ -533,9 +623,17 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
     let alive = true;
     setLoading(true);
     setError('');
-    api.get<any>(`/files/${projectName}/${encodeRelPath(currentPath)}`).then((data) => {
+    setDirNext(0);
+    // Pagination is opt-in on the server: asking explicitly for the first page
+    // is what keeps a 10k-entry directory from arriving (and rendering) in one
+    // pass, while old callers that omit the params still get a full listing.
+    api.get<any>(
+      `/files/${projectName}/${encodeRelPath(currentPath)}?offset=0&limit=${PREVIEW_LIMITS.dirPage}`,
+    ).then((data) => {
       if (!alive) return;
       setEntries(data?.entries || []);
+      setDirTotal(typeof data?.total === 'number' ? data.total : (data?.entries || []).length);
+      setDirNext(typeof data?.next_offset === 'number' ? data.next_offset : 0);
       const files: FileEntry[] = (data?.entries || []).filter((e: FileEntry) => e.type === 'file');
       // Restore the remembered file selection by name; fall back to the
       // first file when the remembered file no longer exists in this dir.
@@ -550,11 +648,32 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
       if (!alive) return;
       setError(e?.message || 'Failed to load directory');
       setEntries([]);
+      setDirTotal(0);
+      setDirNext(0);
       setCurrentIndex(-1);
       setLoading(false);
     });
     return () => { alive = false; };
   }, [open, currentPath, projectName, preferredFileName]);
+
+  // Append the next page of the current directory. Appending cannot disturb
+  // currentIndex: existing entries keep their positions.
+  const loadMoreDir = useCallback(async () => {
+    if (dirLoadingMore || !dirNext) return;
+    setDirLoadingMore(true);
+    try {
+      const data = await api.get<any>(
+        `/files/${projectName}/${encodeRelPath(currentPath)}?offset=${dirNext}&limit=${PREVIEW_LIMITS.dirPage}`,
+      );
+      setEntries(prev => prev.concat(data?.entries || []));
+      setDirTotal(typeof data?.total === 'number' ? data.total : dirTotal);
+      setDirNext(typeof data?.next_offset === 'number' ? data.next_offset : 0);
+    } catch {
+      // Keep what is already listed; the button stays available to retry.
+    } finally {
+      setDirLoadingMore(false);
+    }
+  }, [dirLoadingMore, dirNext, projectName, currentPath, dirTotal]);
 
   // Persist the current dir + selected file so the browser restores position.
   useEffect(() => {
@@ -699,6 +818,18 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
                   <FileText size={14} className="text-gray-500 dark:text-gray-400 shrink-0" /> <span className="truncate">{f.name}</span>
                 </button>
               ))}
+              {dirNext > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void loadMoreDir()}
+                  disabled={dirLoadingMore}
+                  className="w-full px-4 py-2 text-left text-xs text-accent hover:bg-accent/5 disabled:opacity-50"
+                >
+                  {dirLoadingMore
+                    ? t('common.loading')
+                    : `${t('chat.preview.loadMore', 'Load more')} (${entries.length}/${dirTotal})`}
+                </button>
+              )}
               {entries.length === 0 && <div className="px-4 py-4 text-sm text-gray-500 dark:text-gray-400">空目录</div>}
             </div>
           )}

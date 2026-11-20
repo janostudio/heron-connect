@@ -282,6 +282,14 @@
     "slashHint": "Press / to see available commands",
     "inputPlaceholder": "Type a message or press / for commands...",
     "commands": "Commands",
+    "preview": {
+      "tooLarge": "This file is {{size}} — too large to open in the preview",
+      "unsupported": "This file type can't be previewed",
+      "download": "Download",
+      "previewAnyway": "Preview anyway",
+      "loadMore": "Load more",
+      "failed": "Failed to load file"
+    },
     "stop": "Stop",
     "stopInterruptible": "Stop the current turn (a new message would interrupt it)",
     "stopQueued": "Stop the current turn (a new message would be queued)",
