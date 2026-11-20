@@ -900,7 +900,7 @@ describe('coalescing repeated replies', () => {
     } as any));
     const second = applyFrame(first, frame({
       type: 'reply', session_key: KEY_A, session_id: 'sa', reply_ctx: 'u2',
-      content: 'genie-agent 的主分支是 main。', format: 'markdown',
+      content: 'repo-a 的主分支是 main。', format: 'markdown',
     } as any));
 
     expect(second.messages).toHaveLength(2);
