@@ -2,7 +2,12 @@ import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { Download, FileText, Loader2, AlertCircle } from 'lucide-react';
 import { RenderMarkdown } from '@/pages/Chat/markdownBlocks';
-import { fileIsPreviewable, isMarkdown, isHtmlFile } from '@/pages/Chat/chatHelpers';
+import TextPreview from '@/components/TextPreview';
+import { readSharedPreviewChunk } from '@/api/files';
+import {
+  decidePreview, forcePreview, formatBytes, isMarkdown,
+  type PreviewPlan,
+} from '@/lib/filePreview';
 import '../index.css';
 
 // ── Public shared-file viewer ────────────────────────────────
@@ -16,6 +21,10 @@ import '../index.css';
 // (see management.serveSharePage) rather than inline JSON, so the page can run
 // under a strict CSP — important, because the content it renders is agent
 // output and must be treated as untrusted.
+//
+// Previewing mirrors the admin UI: probe the size, decide what the browser can
+// lay out, and only then fetch. A share link to a huge file used to hang the
+// recipient's tab — a bad way to spend someone else's CPU.
 
 interface ShareMeta {
   token: string;
@@ -35,11 +44,19 @@ function readMeta(): ShareMeta | null {
   };
 }
 
-// rawURL points at the byte-serving branch of the share endpoint. ?raw=1 is
+// rawPath points at the byte-serving branch of the share endpoint. ?raw=1 is
 // required: without it the server would see this fetch's Accept header and
 // could hand back the HTML page instead of the file.
-const rawURL = (token: string) => `/api/v1/share/${encodeURIComponent(token)}?raw=1`;
+const rawPath = (token: string) => `/share/${encodeURIComponent(token)}?raw=1`;
+const rawURL = (token: string) => `/api/v1${rawPath(token)}`;
 const downloadURL = (token: string) => `/api/v1/share/${encodeURIComponent(token)}?download=1`;
+
+const LABELS = {
+  loading: 'Loading…',
+  loadMore: 'Load more',
+  download: 'Download',
+  failed: 'Failed to load file',
+};
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
@@ -50,26 +67,59 @@ function Centered({ children }: { children: React.ReactNode }) {
 }
 
 function ShareViewer({ meta }: { meta: ShareMeta }) {
+  const [phase, setPhase] = useState<'head' | 'ready' | 'error'>('head');
+  const [plan, setPlan] = useState<PreviewPlan | null>(null);
+  const [size, setSize] = useState(0);
+  const [contentType, setContentType] = useState(meta.contentType);
+  const [forced, setForced] = useState(false);
   const [text, setText] = useState<string | null>(null);
   const [objectUrl, setObjectUrl] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
 
-  const { name, contentType, token } = meta;
-  const markdown = isMarkdown(name, contentType);
-  const htmlFile = isHtmlFile(name, contentType);
-  const previewable = fileIsPreviewable(name, contentType);
-  // Markdown and other text are fetched as text so they can be rendered;
-  // binary previews (images, pdf, media) go through a blob URL — which, unlike
-  // a direct <img src>, also keeps the strict CSP (no remote img origins) intact.
-  const asText =
-    markdown ||
-    (previewable &&
-      !htmlFile &&
-      !/^(image|audio|video)\//.test(contentType) &&
-      contentType !== 'application/pdf');
+  const { name, token } = meta;
 
+  // Probe first: the size decides whether this page may render anything at all.
   useEffect(() => {
+    let alive = true;
+    setPhase('head');
+    setError('');
+    setPlan(null);
+    setText(null);
+    setObjectUrl('');
+    setForced(false);
+
+    fetch(rawURL(token), { method: 'HEAD', cache: 'no-store' })
+      .then((res) => {
+        if (!alive) return;
+        if (!res.ok) {
+          setError(res.status === 404 ? 'This link is no longer available.' : `Failed to load file (${res.status}).`);
+          setPhase('error');
+          return;
+        }
+        const len = Number(res.headers.get('Content-Length') || '0');
+        const bytes = Number.isFinite(len) ? len : 0;
+        const ct = res.headers.get('Content-Type') || meta.contentType;
+        setSize(bytes);
+        setContentType(ct);
+        setPlan(decidePreview(name, ct, bytes));
+        setPhase('ready');
+      })
+      .catch(() => {
+        if (!alive) return;
+        setError('Failed to load file.');
+        setPhase('error');
+      });
+
+    return () => { alive = false; };
+  }, [token, name, meta.contentType]);
+
+  const effective = plan && forced ? forcePreview(plan) : plan;
+
+  // Whole-document and binary paths fetch once; slices are pulled by the viewer.
+  useEffect(() => {
+    if (!effective) return;
+    if (effective.mode !== 'full' && effective.mode !== 'object-url') return;
+
     let alive = true;
     let url = '';
     fetch(rawURL(token), { cache: 'no-store' })
@@ -77,32 +127,35 @@ function ShareViewer({ meta }: { meta: ShareMeta }) {
         if (!alive) return;
         if (!res.ok) {
           setError(res.status === 404 ? 'This link is no longer available.' : `Failed to load file (${res.status}).`);
-          setLoading(false);
+          setPhase('error');
           return;
         }
-        if (asText) {
+        if (effective.mode === 'full') {
           const body = await res.text();
           if (!alive) return;
           setText(body);
         } else {
-          const blob = await res.blob();
-          if (!alive) return;
-          url = URL.createObjectURL(blob);
+          // A blob URL, unlike a data: URL, does not duplicate the bytes as a
+          // base64 string. It also keeps the strict CSP (no remote img origins).
+          url = URL.createObjectURL(await res.blob());
+          if (!alive) {
+            URL.revokeObjectURL(url);
+            return;
+          }
           setObjectUrl(url);
         }
-        setLoading(false);
       })
       .catch(() => {
         if (!alive) return;
         setError('Failed to load file.');
-        setLoading(false);
+        setPhase('error');
       });
 
     return () => {
       alive = false;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [token, asText]);
+  }, [effective, token]);
 
   const header = (
     <header className="sticky top-0 z-10 flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-gray-900/90 backdrop-blur">
@@ -120,9 +173,9 @@ function ShareViewer({ meta }: { meta: ShareMeta }) {
   );
 
   let body: React.ReactNode;
-  if (loading) {
+  if (phase === 'head') {
     body = <Centered><Loader2 size={18} className="animate-spin" /></Centered>;
-  } else if (error) {
+  } else if (phase === 'error') {
     body = (
       <Centered>
         <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
@@ -130,45 +183,87 @@ function ShareViewer({ meta }: { meta: ShareMeta }) {
         </div>
       </Centered>
     );
-  } else if (markdown && text !== null) {
+  } else if (effective && effective.mode === 'download-only') {
     body = (
+      <Centered>
+        <div className="text-center space-y-3">
+          <p>
+            {effective.reason === 'unsupported'
+              ? 'This file type can’t be previewed.'
+              : `This file is ${formatBytes(size)} — too large to open in the preview.`}
+          </p>
+          <div className="flex items-center justify-center gap-2">
+            <a
+              href={downloadURL(token)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-accent text-black hover:bg-accent-dim transition-colors"
+            >
+              <Download size={14} /> Download
+            </a>
+            {plan && forcePreview(plan).mode !== 'download-only' && (
+              <button
+                type="button"
+                onClick={() => setForced(true)}
+                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-white/[0.06]"
+              >
+                Preview anyway
+              </button>
+            )}
+          </div>
+        </div>
+      </Centered>
+    );
+  } else if (effective && effective.mode === 'windowed') {
+    body = (
+      <div className="h-[calc(100dvh-3.25rem)] px-4 py-4">
+        <TextPreview
+          totalSize={size}
+          readChunk={(offset, limit, signal) => readSharedPreviewChunk(rawPath(token), offset, limit, signal)}
+          labels={LABELS}
+          onDownload={() => { window.location.href = downloadURL(token); }}
+          className="h-full"
+        />
+      </div>
+    );
+  } else if (effective?.mode === 'full' && text !== null) {
+    body = isMarkdown(name, contentType) ? (
       <article className="max-w-3xl mx-auto px-4 py-6">
         <RenderMarkdown content={text} />
       </article>
-    );
-  } else if (htmlFile && objectUrl) {
-    // Same sandbox stance as the in-app preview: scripts may run so charts and
-    // inline JS work, but WITHOUT allow-same-origin the frame sits in an
-    // opaque origin and cannot reach this origin's storage or APIs.
-    body = (
+    ) : effective.kind === 'html' ? (
+      // Small HTML renders from srcDoc; the source toggle lives in the admin UI,
+      // not here. Larger documents are handed over as a blob URL below.
       <iframe
-        src={objectUrl}
+        srcDoc={text}
         title={name}
         sandbox="allow-scripts allow-popups allow-forms"
         className="w-full h-[calc(100dvh-3.25rem)] bg-white"
       />
-    );
-  } else if (previewable && text !== null) {
-    body = (
+    ) : (
       <pre className="max-w-5xl mx-auto my-6 px-4 text-[13px] leading-[1.6] font-mono whitespace-pre-wrap break-words text-gray-800 dark:text-gray-100">
         {text}
       </pre>
     );
-  } else if (objectUrl) {
+  } else if (effective?.mode === 'object-url' && objectUrl) {
     body = (
       <div className="max-w-4xl mx-auto p-6">
-        {contentType.startsWith('image/') && (
+        {effective.kind === 'html' && (
+          <iframe src={objectUrl} title={name} sandbox="allow-scripts allow-popups allow-forms" className="w-full h-[calc(100dvh-6rem)] rounded-lg border border-gray-200 dark:border-gray-700 bg-white" />
+        )}
+        {effective.kind === 'image' && (
           <img src={objectUrl} alt={name} className="max-w-full mx-auto rounded-lg border border-gray-200 dark:border-gray-700" />
         )}
-        {contentType === 'application/pdf' && (
+        {effective.kind === 'pdf' && (
           <iframe src={objectUrl} title={name} className="w-full h-[80vh] rounded-lg border border-gray-200 dark:border-gray-700" />
         )}
-        {contentType.startsWith('audio/') && <audio controls src={objectUrl} className="w-full" />}
-        {contentType.startsWith('video/') && (
+        {effective.kind === 'audio' && <audio controls src={objectUrl} className="w-full" />}
+        {effective.kind === 'video' && (
           <video controls src={objectUrl} className="max-w-full mx-auto rounded-lg" />
         )}
       </div>
     );
+  } else if (effective?.mode === 'full') {
+    // The body is still in flight.
+    body = <Centered><Loader2 size={18} className="animate-spin" /></Centered>;
   } else {
     body = (
       <Centered>

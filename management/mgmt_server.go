@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
@@ -545,6 +546,10 @@ func (m *ManagementServer) setCORS(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			// The preview reports its slicing through response headers; a
+			// cross-origin caller cannot read them without this.
+			w.Header().Set("Access-Control-Expose-Headers",
+				"X-Preview-Total-Size, X-Preview-Offset, X-Preview-Returned, X-Preview-Truncated")
 			w.Header().Set("Access-Control-Max-Age", "86400")
 			// Credentials (the session cookie) are only allowed for explicitly
 			// listed origins. Sending them for a wildcard entry would let any
@@ -752,12 +757,19 @@ func (m *ManagementServer) handleFile(w http.ResponseWriter, r *http.Request) {
 		if r, err := m.projectRoot(project); err == nil {
 			rootAbs = r
 		}
-		m.handleDirListing(w, rootAbs, full)
+		m.handleDirListing(w, r, rootAbs, full)
 		return
 	}
 
 	name := filepath.Base(full)
 	contentType := fileContentType(name)
+	// ?preview=1 asks for one slice of a text file instead of the whole thing.
+	// It bypasses ServeContent on purpose: the preview never wants Range or
+	// conditional semantics, it wants a bounded chunk.
+	if r.URL.Query().Get("preview") == "1" {
+		serveFilePreview(w, r, f, st.Size(), contentType)
+		return
+	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.URL.Query().Get("download") == "1" {
@@ -926,6 +938,14 @@ func (m *ManagementServer) serveShare(w http.ResponseWriter, r *http.Request, to
 	// If the viewer page is unavailable we fall through to the raw bytes rather
 	// than answering a valid link with nothing.
 	if wantsSharePage(r) && m.serveSharePage(w, r, sh, name, contentType) {
+		return
+	}
+
+	// The anonymous viewer slices files the same way the admin UI does: a link
+	// to a multi-megabyte file must not hand someone else's browser a document
+	// it cannot lay out.
+	if r.URL.Query().Get("preview") == "1" {
+		serveFilePreview(w, r, f, st.Size(), contentType)
 		return
 	}
 
@@ -1206,7 +1226,7 @@ func (m *ManagementServer) revokeShare(w http.ResponseWriter, token string) {
 // directory (non-recursive). Entries are sorted dirs-first, then files, each
 // alphabetically. path is the slash-normalized project-relative path of the
 // directory ("" = root, rendered as "/").
-func (m *ManagementServer) handleDirListing(w http.ResponseWriter, rootAbs, dirAbs string) {
+func (m *ManagementServer) handleDirListing(w http.ResponseWriter, r *http.Request, rootAbs, dirAbs string) {
 	entries, err := os.ReadDir(dirAbs)
 	if err != nil {
 		mgmtError(w, http.StatusInternalServerError, "read directory failed")
@@ -1248,9 +1268,45 @@ func (m *ManagementServer) handleDirListing(w http.ResponseWriter, rootAbs, dirA
 	if relPath == "." {
 		relPath = ""
 	}
+
+	// A directory with thousands of entries used to come back in one response
+	// and get rendered in one pass. Pagination is opt-in: a caller that sends
+	// neither offset nor limit still gets the whole listing, because silently
+	// truncating it would look like files disappearing to any existing client.
+	total := len(items)
+	offset, limit := 0, total
+	q := r.URL.Query()
+	if q.Has("offset") || q.Has("limit") {
+		if parsed, err := strconv.Atoi(q.Get("offset")); err == nil && parsed > 0 {
+			offset = parsed
+		}
+		if offset > total {
+			offset = total
+		}
+		if parsed, err := strconv.Atoi(q.Get("limit")); err == nil && parsed > 0 {
+			limit = parsed
+		} else {
+			limit = dirPageDefault
+		}
+		if limit > dirPageMax {
+			limit = dirPageMax
+		}
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	nextOffset := end
+	if end >= total {
+		nextOffset = 0 // 0 = no further page
+	}
+
 	mgmtJSON(w, http.StatusOK, map[string]any{
-		"path":    relPath,
-		"entries": items,
+		"path":        relPath,
+		"entries":     items[offset:end],
+		"total":       total,
+		"offset":      offset,
+		"next_offset": nextOffset,
 	})
 }
 
@@ -1284,6 +1340,97 @@ func fileContentType(name string) string {
 	default:
 		return "application/octet-stream"
 	}
+}
+
+// Preview slicing limits.
+//
+// The Web preview never reads a whole file. A browser given a multi-megabyte
+// text node either takes seconds to lay it out or dies on it, so the UI asks
+// for one slice at a time and renders incrementally; these bounds are what keep
+// every response predictable.
+const (
+	// previewDefaultChunk is the first slice the UI requests.
+	previewDefaultChunk = 512 << 10 // 512 KiB
+	// previewMaxChunk caps a single response so the preview endpoint cannot be
+	// used to pull a whole file.
+	previewMaxChunk = 1 << 20 // 1 MiB
+
+	// Directory listing pagination.
+	dirPageDefault = 500
+	dirPageMax     = 2000
+)
+
+// serveFilePreview streams one slice of a text file.
+//
+// Slices are byte ranges, so they may split a multi-byte character or a line;
+// the client is responsible for stitching them back together. The response
+// carries the total size and the returned range as headers because the caller
+// needs them to render progress and to know whether more is left.
+func serveFilePreview(w http.ResponseWriter, r *http.Request, f *os.File, size int64, contentType string) {
+	if !isTextualContentType(contentType) {
+		mgmtError(w, http.StatusBadRequest, "preview is only available for text files")
+		return
+	}
+
+	q := r.URL.Query()
+	offset, err := strconv.ParseInt(q.Get("offset"), 10, 64)
+	if err != nil || offset < 0 {
+		offset = 0
+	}
+	limit, err := strconv.ParseInt(q.Get("limit"), 10, 64)
+	if err != nil || limit <= 0 {
+		limit = previewDefaultChunk
+	}
+	if limit > previewMaxChunk {
+		limit = previewMaxChunk
+	}
+	if offset > size {
+		offset = size
+	}
+	if remaining := size - offset; limit > remaining {
+		limit = remaining
+	}
+
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		mgmtError(w, http.StatusInternalServerError, "seek failed")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Preview-Total-Size", strconv.FormatInt(size, 10))
+	w.Header().Set("X-Preview-Offset", strconv.FormatInt(offset, 10))
+	w.Header().Set("X-Preview-Returned", strconv.FormatInt(limit, 10))
+	if offset+limit < size {
+		w.Header().Set("X-Preview-Truncated", "1")
+	} else {
+		w.Header().Set("X-Preview-Truncated", "0")
+	}
+	w.Header().Set("Content-Length", strconv.FormatInt(limit, 10))
+	w.WriteHeader(http.StatusOK)
+	if limit > 0 {
+		if _, err := io.CopyN(w, f, limit); err != nil {
+			// The client hung up mid-slice; nothing left to say to it.
+			slog.Debug("file preview: copy stopped early", "error", err)
+		}
+	}
+}
+
+// isTextualContentType reports whether the preview can treat the bytes as text.
+// It mirrors the Web UI's fileIsPreviewable: anything served as text/*, plus the
+// structured formats that some platforms label as application/*.
+func isTextualContentType(contentType string) bool {
+	ct := strings.ToLower(contentType)
+	if strings.HasPrefix(ct, "text/") {
+		return true
+	}
+	for _, marker := range []string{"json", "xml", "yaml", "javascript", "typescript", "svg"} {
+		if strings.Contains(ct, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *ManagementServer) handleStatus(w http.ResponseWriter, r *http.Request) {

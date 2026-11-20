@@ -282,6 +282,14 @@
     "slashHint": "按 / 查看可用命令",
     "inputPlaceholder": "输入消息或按 / 使用命令...",
     "commands": "命令",
+    "preview": {
+      "tooLarge": "文件大小 {{size}}，超出预览上限",
+      "unsupported": "该文件类型无法预览",
+      "download": "下载",
+      "previewAnyway": "仍要预览",
+      "loadMore": "加载更多",
+      "failed": "文件加载失败"
+    },
     "stop": "停止",
     "stopInterruptible": "停止当前回复（新消息会打断本轮）",
     "stopQueued": "停止当前回复（新消息将排队等待）",
