@@ -435,10 +435,10 @@ type TurnInterrupter interface {
 // Why this exists alongside TurnInterrupter: TurnInterrupter lives on a live
 // SESSION and is only meaningful while that session is running. The management
 // API needs the CONFIGURED capability before any turn starts — right after a
-// page reload, while no agent session exists yet. Agents whose interruptibility
-// is hard-coded rather than config-derived (codebuddy always runs resident and
-// must stay interruptible) implement this so that capability is reported
-// directly instead of being inferred from config options they never read.
+// page reload, while no agent session exists yet. Agents that resolve their
+// capability outside the plain option snapshot (codebuddy reports the process
+// model it actually selected) implement this so the capability is reported
+// directly instead of being inferred from raw config options.
 //
 // Agents whose interruptibility is purely config-driven (claudecode) need not
 // implement it; the engine falls back to the option snapshot.

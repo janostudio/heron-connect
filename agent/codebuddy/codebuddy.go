@@ -41,10 +41,10 @@ type Agent struct {
 	args       []string
 	configEnv  []string
 	sessionEnv []string
-	// interruptible is always true: the session runs as a resident process
-	// driven over stream-json stdin. CodeBuddy requires this because the CLI
-	// blocks on control_request frames that can only be answered over the
-	// resident stdin — see New.
+	// interruptible selects the process model: true runs a resident process
+	// driven over stream-json stdin (needed to answer control_request frames
+	// and to interrupt a busy turn), false spawns one CLI process per turn that
+	// exits with its turn. Default false — see New.
 	interruptible bool
 
 	// discoveredModel caches the account's real active model as reported by
@@ -86,12 +86,18 @@ func New(opts map[string]any) (core.Agent, error) {
 	mode = normalizeMode(mode)
 	args := parseStringSlice(opts["args"])
 	configEnv := parseEnv(opts["env"])
-	// CodeBuddy always runs resident: the CLI emits control_request frames
-	// (can_use_tool) and then blocks on stdin until a control_response comes
-	// back, and only a resident process has the stdin channel to answer on. In
-	// the per-turn spawn model there is no way to reply, so any permission
-	// prompt — ExitPlanMode, or every tool call under --permission-mode plan —
-	// deadlocks the turn forever. See the interruptible field below.
+	// interruptible 决定进程模型：false（默认）= 每轮 spawn 一个 CLI 进程、
+	// 本轮结束即退出；true = 常驻进程，单进程跨轮复用。
+	//
+	// 常驻是上游为修复 control_request 死锁引入的：CLI 需要授权时会发
+	// can_use_tool 帧并阻塞在 stdin 等 control_response，只有常驻进程有这条
+	// stdin 通道，per-turn 模式下无路可回，整轮死锁。代价是进程跨轮不退出，
+	// 常驻进程数 = 活跃会话数，空闲会话会一直占内存。
+	//
+	// 该前提只在会弹权限的 mode 下成立：mode = "bypassPermissions" 时 CLI 走
+	// --dangerously-skip-permissions，工具调用不再触发 can_use_tool，per-turn
+	// 没有死锁风险，因此默认走 per-turn；需要忙时打断时再显式开 interruptible。
+	interruptible, _ := opts["interruptible"].(bool)
 	if _, err := exec.LookPath("codebuddy"); err != nil {
 		return nil, fmt.Errorf("codebuddy: 'codebuddy' not found in PATH, install with: npm install -g @tencent-ai/codebuddy-code")
 	}
@@ -102,7 +108,7 @@ func New(opts map[string]any) (core.Agent, error) {
 		mode:          mode,
 		args:          args,
 		configEnv:     configEnv,
-		interruptible: true,
+		interruptible: interruptible,
 	}, nil
 }
 
@@ -167,10 +173,12 @@ func (a *Agent) Name() string           { return "codebuddy" }
 func (a *Agent) CLIBinaryName() string  { return "codebuddy" }
 func (a *Agent) CLIDisplayName() string { return "CodeBuddy" }
 
-// Interruptible reports the hard-coded resident-mode capability (see the
-// interruptible field). Exposed so the management API can advertise it to the
-// Web UI without inferring from agent options — codebuddy never reads an
-// "interruptible" option, so an option-based probe would wrongly report false.
+// Interruptible reports the configured process model: true means the session
+// runs as a resident process and a busy turn can be interrupted mid-flight,
+// false means one CLI process per turn and new messages queue behind the
+// running turn. The value comes from the agent's "interruptible" option
+// (default false), so the management API can advertise the capability to the
+// Web UI before any session exists.
 func (a *Agent) Interruptible() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
