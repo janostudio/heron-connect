@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import { timeAgo } from '@/lib/timeAgo';
 import { Link } from 'react-router-dom';
 import { MessageSquare, Bot, User, Circle, ArrowRight, Loader2, Clock } from 'lucide-react';
 import { Card, EmptyState, Badge } from '@/components/ui';
@@ -9,17 +10,6 @@ import { listSessions, splitByOrigin, type Session } from '@/api/sessions';
 interface ChatEntry {
   project: ProjectSummary;
   latestSession: Session | null;
-}
-
-function timeAgo(iso: string, t: (k: string) => string): string {
-  if (!iso) return '';
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return t('sessions.justNow');
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
 }
 
 export default function ChatList() {

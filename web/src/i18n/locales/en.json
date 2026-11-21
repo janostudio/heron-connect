@@ -98,7 +98,13 @@
     "sortReading": "Reading",
     "sortReadingHint": "Being read → recently closed → message time",
     "sortActivity": "Recent",
-    "sortActivityHint": "Pinned → message time"
+    "sortActivityHint": "Pinned → message time",
+    "rename": "Rename",
+    "pin": "Pin",
+    "unpin": "Unpin",
+    "loadMore": "Load more ({{count}} left)",
+    "messageCount_one": "{{count}} msg",
+    "messageCount_other": "{{count}} msgs"
   },
   "providers": {
     "title": "Providers",
@@ -330,7 +336,17 @@
       "linkCopied": "Link copied",
       "revoke": "Stop sharing",
       "warning": "Anyone with this link can read the file — no login required."
-    }
+    },
+    "browseFiles": "Project files",
+    "parentDir": "Up one level",
+    "emptyDir": "Empty directory",
+    "insertPath": "Insert file path into the message",
+    "refreshFile": "Refresh",
+    "resizePreview": "Resize preview",
+    "closePreview": "Close preview",
+    "toggleDirList": "Toggle directory list",
+    "previousFile": "Previous file",
+    "nextFile": "Next file"
   },
   "cmd": {
     "search": "Search commands...",

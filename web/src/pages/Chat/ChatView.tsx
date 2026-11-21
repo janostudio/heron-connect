@@ -5,7 +5,7 @@ import {
   ArrowLeft, Bot, Circle, WifiOff,
   FileText, Loader2, Download, FileDown,
   ChevronDown, Clock, X, Folder, FolderOpen, ChevronLeft, ChevronRight, ArrowUp, ArrowDown,
-  Pin, PinOff, Pencil, RefreshCw, Share2, Check, Link2, Trash2,
+  Pin, PinOff, Pencil, RefreshCw, Share2, Check, Link2, Trash2, MoreHorizontal,
 } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { listSessions, getSession, createSession, sessionTitle, updateSession, sortSessions, pickLatestActivity, splitByOrigin, type Session, type SessionDetail, type SessionSortMode } from '@/api/sessions';
@@ -157,6 +157,7 @@ function FilePreview({ filePath, fileName, onClose, previewWidth, isDesktop, onR
   isDesktop: boolean;
   onResizeStart: (e: React.MouseEvent) => void;
 }) {
+  const { t } = useTranslation();
   const triggerDownload = useCallback(() => { downloadFile(filePath, fileName); }, [filePath, fileName]);
 
   return (
@@ -182,7 +183,7 @@ function FilePreview({ filePath, fileName, onClose, previewWidth, isDesktop, onR
           className="hidden md:block absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-[60] hover:bg-accent/40 active:bg-accent/60 transition-colors"
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize preview"
+          aria-label={t('chat.resizePreview')}
         />
         {/* Header */}
         <div className="flex items-center justify-between gap-2 px-4 h-14 border-b border-gray-200/80 dark:border-white/[0.12] shrink-0">
@@ -194,7 +195,7 @@ function FilePreview({ filePath, fileName, onClose, previewWidth, isDesktop, onR
             type="button"
             onClick={onClose}
             className="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors shrink-0"
-            aria-label="Close preview"
+            aria-label={t('chat.closePreview')}
           >
             <X size={16} />
           </button>
@@ -394,8 +395,8 @@ function FileContentView({ filePath, fileName }: { filePath: string; fileName: s
                 <button
                   type="button"
                   onClick={() => setRefreshTick((t) => t + 1)}
-                  title="刷新（重新获取文件内容）"
-                  aria-label="Refresh file"
+                  title={t('chat.refreshFile')}
+                  aria-label={t('chat.refreshFile')}
                   className="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors"
                 >
                   <RefreshCw size={14} />
@@ -731,7 +732,7 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
           className="hidden md:block absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-[60] hover:bg-accent/40 active:bg-accent/60 transition-colors"
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize preview"
+          aria-label={t('chat.resizePreview')}
         />
         {/* Header: breadcrumb + nav */}
         <div className="relative flex items-center justify-between gap-2 px-4 h-14 border-b border-gray-200/80 dark:border-white/[0.12] shrink-0">
@@ -773,7 +774,7 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
             <button
               type="button"
               onClick={() => setDropdownOpen((v) => !v)}
-              aria-label="Toggle directory list"
+              aria-label={t('chat.toggleDirList')}
               className="shrink-0 p-0.5 rounded text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors"
             >
               <ChevronDown size={14} className={cn('transition-transform', dropdownOpen && 'rotate-180')} />
@@ -782,18 +783,18 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
 
           {/* Left/right file navigation (files only) */}
           <div className="flex items-center gap-1 shrink-0">
-            <button type="button" onClick={goPrev} disabled={currentIndex <= 0} aria-label="Previous file"
+            <button type="button" onClick={goPrev} disabled={currentIndex <= 0} aria-label={t('chat.previousFile')}
               className="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/[0.08] disabled:opacity-30 disabled:pointer-events-none transition-colors">
               <ChevronLeft size={18} />
             </button>
-            <button type="button" onClick={goNext} disabled={currentIndex >= fileList.length - 1 || fileList.length === 0} aria-label="Next file"
+            <button type="button" onClick={goNext} disabled={currentIndex >= fileList.length - 1 || fileList.length === 0} aria-label={t('chat.nextFile')}
               className="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/[0.08] disabled:opacity-30 disabled:pointer-events-none transition-colors">
               <ChevronRight size={18} />
             </button>
             <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
               {fileList.length > 0 ? `${currentIndex + 1}/${fileList.length}` : '0/0'}
             </span>
-            <button type="button" onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors">
+            <button type="button" onClick={onClose} aria-label={t('common.close')} className="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors">
               <X size={16} />
             </button>
           </div>
@@ -804,7 +805,7 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
               {parentPath !== null && (
                 <button type="button" onClick={goParent}
                   className="w-full flex items-center gap-2 px-4 py-2 text-left text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.08]">
-                  <ArrowUp size={14} className="text-gray-500 dark:text-gray-400" /> <span>上一级</span>
+                  <ArrowUp size={14} className="text-gray-500 dark:text-gray-400" /> <span>{t('chat.parentDir')}</span>
                 </button>
               )}
               {subDirs.map((d) => (
@@ -837,7 +838,7 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
                     : `${t('chat.preview.loadMore', 'Load more')} (${entries.length}/${dirTotal})`}
                 </button>
               )}
-              {entries.length === 0 && <div className="px-4 py-4 text-sm text-gray-500 dark:text-gray-400">空目录</div>}
+              {entries.length === 0 && <div className="px-4 py-4 text-sm text-gray-500 dark:text-gray-400">{t('chat.emptyDir')}</div>}
             </div>
           )}
         </div>
@@ -864,7 +865,7 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
             onClick={() => currentFileRel && onInsertFile?.(currentFileRel)}
             disabled={!currentFile}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.08] disabled:opacity-40 disabled:pointer-events-none transition-colors"
-            title="插入文件地址到输入框"
+            title={t('chat.insertPath')}
           >
             <FileDown size={15} /> 插入地址
           </button>
@@ -994,6 +995,8 @@ export default function ChatView() {
 
   // UI state
   const [cmdOpen, setCmdOpen] = useState(false);
+  // Chat header overflow menu (rename / pin).
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   // Session list order. The preference is shared with the session management
   // page (lib/sessionSortMode.ts), so flipping it in one place flips both.
@@ -1997,33 +2000,57 @@ export default function ChatView() {
             </button>
           </div>
         </div>
-        {/* Mobile: reserve right padding so the pin/files buttons clear the
+        {/* Mobile: reserve right padding so the menu/files buttons clear the
             floating hamburger (~40px incl. offset) that the collapsed top bar
             pins at the top-right corner. Desktop has no floating button. */}
         <div className="flex items-center gap-1 shrink-0 pr-12 md:pr-0">
+          {/* Rename and pin live in a menu: as separate icons they competed with
+              the title on narrow screens (rename was already hidden below md)
+              and pushed the header past 320px. */}
           {currentSession && (
-            <>
+            <div className="relative">
               <button
                 type="button"
-                onClick={() => currentSession && setRenameTarget(currentSession)}
-                className="hidden md:block p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                aria-label="Rename session"
-                title="重命名会话"
-              >
-                <Pencil size={16} className="text-gray-400" />
-              </button>
-              <button
-                type="button"
-                onClick={() => currentSession && togglePinSession(currentSession)}
+                onClick={() => setSessionMenuOpen((v) => !v)}
                 className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                aria-label={currentSession.pinned ? 'Unpin session' : 'Pin session'}
-                title={currentSession.pinned ? '取消置顶' : '置顶'}
+                aria-label={t('common.more')}
+                aria-haspopup="menu"
+                aria-expanded={sessionMenuOpen}
+                title={t('common.more')}
               >
-                {currentSession.pinned
-                  ? <PinOff size={16} className="text-accent" />
-                  : <Pin size={16} className="text-gray-400" />}
+                <MoreHorizontal size={18} className="text-gray-400" />
               </button>
-            </>
+              {sessionMenuOpen && (
+                <>
+                  {/* Click-away layer: covers the viewport below the menu so a
+                      tap anywhere else closes it, including on touch devices
+                      where there is no hover-out to rely on. */}
+                  <div className="fixed inset-0 z-40" onClick={() => setSessionMenuOpen(false)} />
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-full mt-1 z-50 min-w-[9rem] rounded-lg border border-gray-200/80 dark:border-white/[0.12] bg-white dark:bg-[#22252b] shadow-xl shadow-black/10 dark:shadow-black/40 py-1"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { setSessionMenuOpen(false); setRenameTarget(currentSession); }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors"
+                    >
+                      <Pencil size={13} /> {t('sessions.rename')}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { setSessionMenuOpen(false); togglePinSession(currentSession); }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors"
+                    >
+                      {currentSession.pinned ? <PinOff size={13} /> : <Pin size={13} />}
+                      {currentSession.pinned ? t('sessions.unpin') : t('sessions.pin')}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           )}
           <button
             type="button"
@@ -2031,8 +2058,8 @@ export default function ChatView() {
             // position, it does not reopen the last clicked file.
             onClick={() => { setBrowserTarget(null); setFileBrowserOpen(true); }}
             className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-            aria-label="Browse project files"
-            title="项目文件"
+            aria-label={t('chat.browseFiles')}
+            title={t('chat.browseFiles')}
           >
             <FolderOpen size={18} className="text-gray-400" />
           </button>

@@ -98,7 +98,13 @@
     "sortReading": "Lectura",
     "sortReadingHint": "En lectura → cerradas hace poco → hora del mensaje",
     "sortActivity": "Recientes",
-    "sortActivityHint": "Fijadas → hora del mensaje"
+    "sortActivityHint": "Fijadas → hora del mensaje",
+    "rename": "Renombrar",
+    "pin": "Fijar",
+    "unpin": "Quitar fijado",
+    "loadMore": "Cargar más (quedan {{count}})",
+    "messageCount_one": "{{count}} msg",
+    "messageCount_other": "{{count}} msgs"
   },
   "providers": {
     "title": "Proveedores",
@@ -330,7 +336,17 @@
       "linkCopied": "Enlace copiado",
       "revoke": "Dejar de compartir",
       "warning": "Cualquiera con este enlace puede leer el archivo, sin iniciar sesión."
-    }
+    },
+    "browseFiles": "Archivos del proyecto",
+    "parentDir": "Subir un nivel",
+    "emptyDir": "Directorio vacío",
+    "insertPath": "Insertar ruta del archivo",
+    "refreshFile": "Actualizar",
+    "resizePreview": "Ajustar vista previa",
+    "closePreview": "Cerrar vista previa",
+    "toggleDirList": "Mostrar u ocultar directorios",
+    "previousFile": "Archivo anterior",
+    "nextFile": "Archivo siguiente"
   },
   "cmd": {
     "search": "Buscar comandos...",

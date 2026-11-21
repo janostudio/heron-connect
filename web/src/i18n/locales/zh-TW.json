@@ -98,7 +98,12 @@
     "sortReading": "閱讀順序",
     "sortReadingHint": "正在讀 → 最近關閉 → 訊息時間",
     "sortActivity": "最近對話",
-    "sortActivityHint": "置頂 → 訊息時間"
+    "sortActivityHint": "置頂 → 訊息時間",
+    "rename": "重新命名",
+    "pin": "置頂",
+    "unpin": "取消置頂",
+    "loadMore": "載入更多（還剩 {{count}}）",
+    "messageCount_other": "{{count}} 則訊息"
   },
   "providers": {
     "title": "模型供應商",
@@ -330,7 +335,17 @@
       "linkCopied": "連結已複製",
       "revoke": "取消分享",
       "warning": "任何人取得此連結都可直接讀取該檔案，無需登入。"
-    }
+    },
+    "browseFiles": "專案檔案",
+    "parentDir": "上一層",
+    "emptyDir": "空目錄",
+    "insertPath": "插入檔案位址到輸入框",
+    "refreshFile": "重新整理（重新取得檔案內容）",
+    "resizePreview": "調整預覽大小",
+    "closePreview": "關閉預覽",
+    "toggleDirList": "展開或收合目錄",
+    "previousFile": "上一個檔案",
+    "nextFile": "下一個檔案"
   },
   "cmd": {
     "search": "搜尋命令...",

@@ -10,6 +10,7 @@ import { reserveTab, openReservedTab } from '@/lib/newTab';
 import { readSortMode, writeSortMode } from '@/lib/sessionSortMode';
 import SessionSortToggle from '@/components/SessionSortToggle';
 import { cn } from '@/lib/utils';
+import { timeAgo } from '@/lib/timeAgo';
 import RenameSessionModal from '@/pages/Chat/RenameSessionModal';
 
 interface FlatSession extends Session {
@@ -19,6 +20,11 @@ interface FlatSession extends Session {
 // STORAGE_SHOW_CRON remembers the toggle across visits: scheduled runs are
 // noise for most people, so the default is hidden, but whoever wants them back
 // should not have to re-enable the toggle on every page load.
+// Cards rendered per page. Large enough that paging is unnoticeable in a
+// normal project, small enough that hundreds of sessions do not all get laid
+// out at once.
+const PAGE_SIZE = 120;
+
 const STORAGE_SHOW_CRON = 'cc.sessions.showCron';
 
 function readShowCron(): boolean {
@@ -27,18 +33,6 @@ function readShowCron(): boolean {
   } catch {
     return false;
   }
-}
-
-function timeAgo(iso: string, t: (k: string) => string): string {
-  if (!iso) return '';
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return t('sessions.justNow');
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
 }
 
 // highlight wraps every case-insensitive occurrence of `query` in `text` with
@@ -156,6 +150,13 @@ export default function SessionList() {
     return splitByOrigin(flat);
   }, [allData, selectedProject]);
 
+  // Projects with a single platform do not need a per-card platform badge: the
+  // value would be identical on every card of that project.
+  const multiPlatformProjects = useMemo(
+    () => new Set(projects.filter((p) => (p.platforms?.length ?? 0) > 1).map((p) => p.name)),
+    [projects],
+  );
+
   const filtered = useMemo<FlatSession[]>(
     () => sortSessions(showCron ? [...human, ...cron] : human, sortMode),
     [human, cron, showCron, sortMode],
@@ -166,7 +167,13 @@ export default function SessionList() {
     setSortMode(mode);
   };
 
-  // Reported next to the counter so the filter never hides sessions silently.
+  // Paged rendering: `filtered` stays the full result (the counter and the
+  // empty state use it), `visible` is what actually reaches the DOM.
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [search, selectedProject, showCron]);
+  const visible = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
   const toggleShowCron = (next: boolean) => {
     setShowCron(next);
     try {
@@ -213,12 +220,15 @@ export default function SessionList() {
   };
 
   if (loading && allData.length === 0) {
-    return <div className="flex items-center justify-center h-64 text-gray-400 animate-pulse">Loading...</div>;
+    return <div className="flex items-center justify-center h-64 text-gray-400 animate-pulse">{t('common.loading')}</div>;
   }
 
   return (
     <div className="space-y-4 animate-fade-in ">
-      {/* Filter + search bar */}
+      {/* Two semantic rows. One row used to carry six controls, so on narrow
+          screens it folded unpredictably and the create button moved around.
+          Row 1 answers "what am I looking at", row 2 "what is filtered out". */}
+      <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-3">
         <Filter size={16} className="text-gray-400 shrink-0" />
         <select
@@ -244,6 +254,12 @@ export default function SessionList() {
 
         <SessionSortToggle value={sortMode} onChange={changeSortMode} />
 
+        <Button size="sm" onClick={openCreateModal} className="ml-auto">
+          <Plus size={14} /> {t('sessions.createNew')}
+        </Button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
           <input
             type="checkbox"
@@ -264,27 +280,37 @@ export default function SessionList() {
         <span className="text-xs text-gray-400">
           {filtered.length} {t('nav.sessions').toLowerCase()}
         </span>
-
-        <Button size="sm" onClick={openCreateModal} className="ml-auto">
-          <Plus size={14} /> {t('sessions.createNew')}
-        </Button>
+      </div>
       </div>
 
       {filtered.length === 0 ? (
         <EmptyState message={t('sessions.noSessions')} icon={MessageSquare} />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
-          {filtered.map((s) => {
+          {visible.map((s) => {
             const title = sessionTitle(s);
             const source = sessionSource(s);
             return (
-            <Link key={`${s._project}-${s.id}`} to={`/chat/${s._project}/${s.id}`}>
-              <div className={cn(
-                'group relative rounded-xl border p-4 transition-all duration-200 cursor-pointer h-full',
-                'bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm',
-                'border-gray-200/80 dark:border-white/[0.06]',
-                'hover:border-accent/40 hover:shadow-md hover:shadow-accent/5 hover:-translate-y-0.5',
-              )}>
+            <div key={`${s._project}-${s.id}`} className={cn(
+              'group relative rounded-xl border p-4 transition-all duration-200 h-full',
+              // No backdrop-blur: with hundreds of cards the blur is a real
+              // paint cost and the difference is invisible at this opacity.
+              'bg-white/60 dark:bg-white/[0.03]',
+              'border-gray-200/80 dark:border-white/[0.06]',
+              'hover:border-accent/40 hover:shadow-md hover:shadow-accent/5 hover:-translate-y-0.5',
+              // Let the browser skip layout+paint for cards scrolled out of
+              // view; the intrinsic size keeps the scrollbar honest.
+              '[content-visibility:auto] [contain-intrinsic-size:auto_11rem]',
+            )}>
+              {/* One link covers the whole card instead of wrapping the action
+                  buttons: interactive elements must not nest, so the card is a
+                  single tab stop and the buttons come after it. */}
+              <Link
+                to={`/chat/${s._project}/${s.id}`}
+                aria-label={title}
+                className="absolute inset-0 z-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              />
+              <div className="relative z-10 pointer-events-none">
                 {/* Top: name + time */}
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <div className="flex items-center gap-1.5 min-w-0">
@@ -304,14 +330,15 @@ export default function SessionList() {
                     ) : null}
                   </div>
                   <div
-                    className="flex items-center gap-1 shrink-0"
+                    className="flex items-center gap-1 shrink-0 pointer-events-auto"
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
                   >
                     <button
                       type="button"
                       onClick={() => setRenameTarget(s)}
-                      className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.08] opacity-0 group-hover:opacity-100 transition-opacity"
-                      title="重命名"
+                      className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.08] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                      title={t('sessions.rename')}
+                      aria-label={t('sessions.rename')}
                     >
                       <Pencil size={12} />
                     </button>
@@ -320,14 +347,15 @@ export default function SessionList() {
                       onClick={() => togglePin(s)}
                       className={cn(
                         'p-1 rounded transition-colors',
-                        s.pinned ? 'text-accent' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100',
+                        s.pinned ? 'text-accent' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-100 md:opacity-0 md:group-hover:opacity-100',
                       )}
-                      title={s.pinned ? '取消置顶' : '置顶'}
+                      title={s.pinned ? t('sessions.unpin') : t('sessions.pin')}
+                      aria-label={s.pinned ? t('sessions.unpin') : t('sessions.pin')}
                     >
                       {s.pinned ? <Pin size={12} /> : <PinOff size={12} />}
                     </button>
                     <span className="text-[10px] text-gray-400 mt-0.5">
-                      {timeAgo(s.updated_at || s.created_at, t)}
+                      {timeAgo(s.last_user_at || s.updated_at || s.created_at, t)}
                     </span>
                   </div>
                 </div>
@@ -354,15 +382,33 @@ export default function SessionList() {
 
                 {/* Bottom: badges + count */}
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <Badge>{s._project}</Badge>
-                  {s.platform && <Badge variant="info">{s.platform}</Badge>}
-                  {source && source !== title && <Badge variant="info">{source}</Badge>}
-                  <span className="text-[10px] text-gray-400 ml-auto">{s.history_count} msgs</span>
+                  {/* Project name only carries information in the all-projects
+                      view; in a single-project view it repeats the filter.
+                      Platform is only worth a badge when the project actually
+                      has more than one attached. */}
+                  {selectedProject === '' && <Badge>{s._project}</Badge>}
+                  {s.platform && multiPlatformProjects.has(s._project) && (
+                    <Badge variant="info">{s.platform}</Badge>
+                  )}
+                  {source && source !== title && source !== s.platform && (
+                    <Badge variant="info">{source}</Badge>
+                  )}
+                  <span className="text-[10px] text-gray-400 ml-auto">{t('sessions.messageCount', { count: s.history_count })}</span>
                 </div>
               </div>
-            </Link>
+            </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Paging control. Only appears when the result actually overflows the
+          first page, so small projects never see it. */}
+      {filtered.length > visible.length && (
+        <div className="flex justify-center">
+          <Button variant="secondary" size="sm" onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>
+            {t('sessions.loadMore', { count: filtered.length - visible.length })}
+          </Button>
         </div>
       )}
 

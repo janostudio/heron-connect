@@ -98,7 +98,12 @@
     "sortReading": "阅读顺序",
     "sortReadingHint": "正在读 → 最近关闭 → 消息时间",
     "sortActivity": "最近对话",
-    "sortActivityHint": "置顶 → 消息时间"
+    "sortActivityHint": "置顶 → 消息时间",
+    "rename": "重命名",
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "loadMore": "加载更多（还剩 {{count}}）",
+    "messageCount_other": "{{count}} 条消息"
   },
   "providers": {
     "title": "模型提供方",
@@ -330,7 +335,17 @@
       "linkCopied": "链接已复制",
       "revoke": "取消分享",
       "warning": "任何人拿到此链接都可直接读取该文件，无需登录。"
-    }
+    },
+    "browseFiles": "项目文件",
+    "parentDir": "上一级",
+    "emptyDir": "空目录",
+    "insertPath": "插入文件地址到输入框",
+    "refreshFile": "刷新（重新获取文件内容）",
+    "resizePreview": "调整预览大小",
+    "closePreview": "关闭预览",
+    "toggleDirList": "展开或收起目录",
+    "previousFile": "上一个文件",
+    "nextFile": "下一个文件"
   },
   "cmd": {
     "search": "搜索命令...",
