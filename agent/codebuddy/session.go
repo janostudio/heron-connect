@@ -457,12 +457,23 @@ func (cs *codebuddySession) emit(ev core.Event) {
 // user's complaint. Naming the limitation lets the model say something useful
 // ("this transport can't carry images; please resend as a file path") instead
 // of guessing. Agent.New always selects resident mode, so this is defensive.
-func annotateUnsupportedImages(prompt string, images []core.ImageAttachment) string {
+//
+// The images are written to disk before the disclosure is built and their
+// absolute paths are part of it: without the paths the model only learns that
+// something was attached and still cannot look at it, which is what made the
+// user ask why an image they can see in their client is unreadable here.
+func annotateUnsupportedImages(prompt, workDir string, images []core.ImageAttachment) string {
 	if len(images) == 0 {
 		return prompt
 	}
-	slog.Warn("codebuddySession: per-turn mode cannot attach images as content blocks; referencing as text only", "images", len(images))
-	return fmt.Sprintf("%s\n\n(%d image(s) were attached by the user, but this transport cannot deliver image content. Ask the user to resend if visual inspection is required.)", prompt, len(images))
+	slog.Warn("codebuddySession: per-turn mode cannot attach images as content blocks; saving them to disk instead", "images", len(images))
+	paths := core.SaveImagesToDisk(workDir, images)
+	if len(paths) == 0 {
+		return fmt.Sprintf("%s\n\n(%d image(s) were attached by the user, but this transport cannot deliver image content. Ask the user to resend if visual inspection is required.)", prompt, len(images))
+	}
+	return fmt.Sprintf("%s\n\n(%d image(s) were attached by the user. This transport cannot deliver image content inline, "+
+		"but every image was saved to disk — open the file(s) with the image reading tool before answering: %s)",
+		prompt, len(images), strings.Join(paths, ", "))
 }
 
 // buildUserContent assembles the stream-json `message.content` value for a
@@ -547,7 +558,7 @@ func (cs *codebuddySession) Send(prompt string, images []core.ImageAttachment, f
 	}
 
 	sid := cs.CurrentSessionID()
-	args := launchArgs(annotateUnsupportedImages(prompt, images), sid, cs.mode, cs.model, cs.extraArgs)
+	args := launchArgs(annotateUnsupportedImages(prompt, cs.workDir, images), sid, cs.mode, cs.model, cs.extraArgs)
 
 	slog.Debug("codebuddySession: launching", "resume", sid != "", "args_len", len(args))
 

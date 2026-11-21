@@ -107,6 +107,50 @@ func SaveFilesToDisk(workDir string, files []FileAttachment) []string {
 	return paths
 }
 
+// SaveImagesToDisk saves image attachments to workDir/.heron-connect/attachments/
+// and returns the list of absolute file paths.
+//
+// This exists for transports that cannot carry image content blocks (the
+// per-turn command-line path): a saved file path is then the only way the model
+// can still look at the picture with its own file-reading tool.
+func SaveImagesToDisk(workDir string, images []ImageAttachment) []string {
+	if len(images) == 0 {
+		return nil
+	}
+	attachDir := filepath.Join(workDir, ".heron-connect", "attachments")
+	if err := os.MkdirAll(attachDir, 0o755); err != nil {
+		slog.Warn("SaveImagesToDisk: mkdir failed", "dir", attachDir, "error", err)
+	}
+
+	var paths []string
+	for i, img := range images {
+		// Strip any separators: the file name is display-only, never a path.
+		name := filepath.Base(strings.TrimSpace(img.FileName))
+		if name == "" || name == "." || name == string(filepath.Separator) {
+			name = fmt.Sprintf("image_%d_%d", time.Now().UnixMilli(), i)
+		}
+		if filepath.Ext(name) == "" {
+			name += extFromMime(img.MimeType, "image")
+		}
+		fpath := filepath.Join(attachDir, name)
+		// Never overwrite an earlier attachment of the same name.
+		for n := 2; ; n++ {
+			if _, statErr := os.Stat(fpath); statErr != nil {
+				break
+			}
+			ext := filepath.Ext(name)
+			fpath = filepath.Join(attachDir, fmt.Sprintf("%s(%d)%s", strings.TrimSuffix(name, ext), n, ext))
+		}
+		if err := os.WriteFile(fpath, img.Data, 0o644); err != nil {
+			slog.Error("SaveImagesToDisk: write failed", "error", err)
+			continue
+		}
+		paths = append(paths, fpath)
+		slog.Debug("SaveImagesToDisk: image saved", "path", fpath, "mime", img.MimeType, "size", len(img.Data))
+	}
+	return paths
+}
+
 // AppendFileRefs appends file path references to a prompt string.
 func AppendFileRefs(prompt string, filePaths []string) string {
 	if len(filePaths) == 0 {

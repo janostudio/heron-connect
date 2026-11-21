@@ -1906,19 +1906,22 @@ func TestSend_ResidentWithImages_TurnSeqBumped(t *testing.T) {
 
 // TestAnnotateUnsupportedImages verifies the per-turn spawn path (which has no
 // channel for content blocks) tells the model an image was attached instead of
-// dropping it silently. Silently dropping is what produced the original
-// "where is the image?" confusion.
+// dropping it silently, and hands it the on-disk path so the picture is still
+// reachable. Silently dropping is what produced the original "where is the
+// image?" confusion; dropping the path keeps the model blind even though the
+// bytes are on disk.
 func TestAnnotateUnsupportedImages(t *testing.T) {
 	t.Run("no images leaves prompt untouched", func(t *testing.T) {
-		got := annotateUnsupportedImages("look at this", nil)
+		got := annotateUnsupportedImages("look at this", t.TempDir(), nil)
 		if got != "look at this" {
 			t.Errorf("prompt = %q, want unchanged", got)
 		}
 	})
 
-	t.Run("images disclose the limitation", func(t *testing.T) {
-		got := annotateUnsupportedImages("look at this", []core.ImageAttachment{
-			{MimeType: "image/png", Data: []byte("d")},
+	t.Run("images disclose the limitation and their path", func(t *testing.T) {
+		workDir := t.TempDir()
+		got := annotateUnsupportedImages("look at this", workDir, []core.ImageAttachment{
+			{MimeType: "image/png", FileName: "shot.png", Data: []byte("d")},
 		})
 		if !strings.Contains(got, "look at this") {
 			t.Errorf("prompt lost its original text: %q", got)
@@ -1929,15 +1932,38 @@ func TestAnnotateUnsupportedImages(t *testing.T) {
 		if !strings.Contains(got, "1 image(s)") {
 			t.Errorf("annotation missing the image count: %q", got)
 		}
+		wantPath := filepath.Join(workDir, ".heron-connect", "attachments", "shot.png")
+		if !strings.Contains(got, wantPath) {
+			t.Errorf("annotation missing the saved image path %q: %q", wantPath, got)
+		}
+		if _, err := os.Stat(wantPath); err != nil {
+			t.Errorf("image was not written to disk: %v", err)
+		}
 	})
 
 	t.Run("count reflects multiple images", func(t *testing.T) {
-		got := annotateUnsupportedImages("x", []core.ImageAttachment{
+		got := annotateUnsupportedImages("x", t.TempDir(), []core.ImageAttachment{
 			{MimeType: "image/png", Data: []byte("a")},
 			{MimeType: "image/png", Data: []byte("b")},
 		})
 		if !strings.Contains(got, "2 image(s)") {
 			t.Errorf("annotation missing the image count: %q", got)
+		}
+	})
+
+	t.Run("same file name does not overwrite the earlier image", func(t *testing.T) {
+		workDir := t.TempDir()
+		got := annotateUnsupportedImages("x", workDir, []core.ImageAttachment{
+			{MimeType: "image/png", FileName: "shot.png", Data: []byte("first")},
+			{MimeType: "image/png", FileName: "shot.png", Data: []byte("second")},
+		})
+		first := filepath.Join(workDir, ".heron-connect", "attachments", "shot.png")
+		second := filepath.Join(workDir, ".heron-connect", "attachments", "shot(2).png")
+		if !strings.Contains(got, first) || !strings.Contains(got, second) {
+			t.Errorf("both image paths must be referenced: %q", got)
+		}
+		if data, err := os.ReadFile(first); err != nil || string(data) != "first" {
+			t.Errorf("first image overwritten: %q err=%v", data, err)
 		}
 	})
 }
