@@ -1118,6 +1118,81 @@ Lists connected bridge adapters (external platforms via WebSocket).
 
 ---
 
+### 5.8 Quick Prompts
+
+Saved prompts belong to a **project**, not to a session: every conversation of a
+project shows the same list, and another project's prompts are invisible.
+They are persisted in `<data_dir>/prompts/prompts.json` and do not depend on the
+project's engine running, so a project that failed to start can still be edited.
+
+Limits: 2000 characters per prompt, 50 prompts per project.
+
+#### GET /api/v1/projects/{name}/prompts
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "prompts": [
+      {
+        "id": "qp_1a2b3c4d5e6f7a8b",
+        "project": "my-backend",
+        "content": "review my changes",
+        "created_at": "2026-03-10T09:00:00Z",
+        "updated_at": "2026-03-10T09:00:00Z"
+      }
+    ],
+    "max_content_length": 2000,
+    "max_per_project": 50
+  }
+}
+```
+
+#### POST /api/v1/projects/{name}/prompts
+
+**Request:**
+
+```json
+{ "content": "review my changes" }
+```
+
+**Response:** `200` with the created prompt object in `data`.
+
+#### PATCH /api/v1/projects/{name}/prompts/{id}
+
+**Request:**
+
+```json
+{ "content": "review my changes, focus on edge cases" }
+```
+
+**Response:** `200` with the updated prompt object in `data`.
+
+#### DELETE /api/v1/projects/{name}/prompts/{id}
+
+**Response:**
+
+```json
+{ "ok": true, "data": { "message": "quick prompt deleted" } }
+```
+
+**Errors:**
+
+| Status | Condition                                                     |
+|--------|---------------------------------------------------------------|
+| `400`  | empty content, over 2000 characters, or the 50-prompt cap     |
+| `404`  | unknown `id`, or an `id` belonging to another project         |
+| `405`  | method not allowed on the collection or the item              |
+| `503`  | quick prompts are disabled (no store injected)                |
+
+A prompt whose content starts with `/` would be classified as a command by the
+message path, so the Web UI refuses to save one; the API itself only enforces
+the size limits.
+
+---
+
 ## 6. Error Handling Conventions
 
 ### 6.1 Standard Error Response

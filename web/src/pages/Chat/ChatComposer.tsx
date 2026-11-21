@@ -1,4 +1,5 @@
-import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FileText, Paperclip, Send, Slash, Square, WifiOff, Loader2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -54,6 +55,16 @@ interface Props {
   cmdOpen: boolean;
   onCmdOpenChange: (open: boolean) => void;
   onCmdSelect: (cmd: SlashCommand) => void;
+  /**
+   * Renders the quick-prompt panel above the composer. It is a render prop
+   * rather than a node because the panel needs `close()`: sending a prompt has
+   * to collapse the panel, and only the composer knows whether it is open.
+   *
+   * Omitted entirely when the caller has no prompt feature (no project yet).
+   */
+  promptsSlot?: (controls: { close: () => void }) => ReactNode;
+  /** Notifies the parent so it can hide the "jump to latest" button. */
+  onPromptsOpenChange?: (open: boolean) => void;
 }
 
 // Built from chatHelpers.TEXT_EXTS rather than hand-listed: the picker offered
@@ -65,6 +76,7 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
   onSend, pickedFiles, onRemoveFile, onAddFiles,
   canSend, bridgeCfgLoaded, bridgeStatus, isRunning, interruptible, onStop,
   cmdOpen, onCmdOpenChange, onCmdSelect,
+  promptsSlot, onPromptsOpenChange,
 }, ref) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState('');
@@ -72,6 +84,66 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cmdBtnRef = useRef<HTMLButtonElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Quick-prompt panel visibility.
+  //
+  // The panel is derived from focus, not from a toggle: it appears when the
+  // input area is focused and disappears when focus leaves it. Two details make
+  // that behave rather than flicker:
+  //
+  //   * focusin/focusout on the container, not focus/blur on the textarea —
+  //     clicking the attach or slash button would otherwise blur the textarea
+  //     and unmount the panel before the click lands.
+  //   * a short close delay, so moving the pointer from the textarea to a row
+  //     does not cross a frame with no panel.
+  const [promptsOpen, setPromptsOpen] = useState(false);
+  const promptsCloseTimer = useRef<number | null>(null);
+
+  const cancelPromptsClose = useCallback(() => {
+    if (promptsCloseTimer.current !== null) {
+      window.clearTimeout(promptsCloseTimer.current);
+      promptsCloseTimer.current = null;
+    }
+  }, []);
+
+  const openPrompts = useCallback(() => {
+    if (!promptsSlot || cmdOpen) return; // the command palette owns this space
+    cancelPromptsClose();
+    setPromptsOpen(true);
+  }, [promptsSlot, cmdOpen, cancelPromptsClose]);
+
+  const closePrompts = useCallback(() => {
+    cancelPromptsClose();
+    setPromptsOpen(false);
+  }, [cancelPromptsClose]);
+
+  const schedulePromptsClose = useCallback(() => {
+    cancelPromptsClose();
+    promptsCloseTimer.current = window.setTimeout(() => {
+      promptsCloseTimer.current = null;
+      setPromptsOpen(false);
+    }, 150);
+  }, [cancelPromptsClose]);
+
+  useEffect(() => cancelPromptsClose, [cancelPromptsClose]);
+  useEffect(() => {
+    if (cmdOpen) closePrompts();
+  }, [cmdOpen, closePrompts]);
+  // Losing the bridge unmounts the whole composer row (see the early returns
+  // below), so the panel must collapse too — otherwise the parent keeps hiding
+  // its "jump to latest" button for a panel that is not on screen.
+  useEffect(() => {
+    if (!canSend) closePrompts();
+  }, [canSend, closePrompts]);
+  useEffect(() => {
+    onPromptsOpenChange?.(promptsOpen);
+  }, [promptsOpen, onPromptsOpenChange]);
+
+  const handleContainerBlur = useCallback((e: React.FocusEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget as Node | null;
+    if (next && e.currentTarget.contains(next)) return;
+    schedulePromptsClose();
+  }, [schedulePromptsClose]);
 
   // Auto-grow helper. Kept out of the onChange inline body so the two callers
   // (typing and programmatic insert) behave identically.
@@ -175,7 +247,19 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
   }
 
   return (
-    <div className="relative flex items-end gap-2">
+    <div
+      className="relative flex items-end gap-2"
+      onFocus={openPrompts}
+      onBlur={handleContainerBlur}
+    >
+      {/* Quick prompts drop out of the top edge of the composer. Positioned
+          against the row itself, so it spans the full input width. */}
+      {promptsSlot && promptsOpen && (
+        <div className="absolute bottom-full left-0 right-0 z-40 mb-2">
+          {promptsSlot({ close: closePrompts })}
+        </div>
+      )}
+
       {/* Attachment trigger */}
       <button
         type="button"
@@ -260,6 +344,9 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
           }}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
+          // Clicking a textarea that already has focus fires no focus event, so
+          // the panel would stay closed after it was collapsed by a send.
+          onClick={openPrompts}
           placeholder={t('chat.inputPlaceholder')}
           rows={1}
           // `py-2` (8px) + text-base 16px line-height 24px + border 2px = 42px,

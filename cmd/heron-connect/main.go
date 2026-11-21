@@ -968,6 +968,14 @@ func main() {
 		} else {
 			mgmtSrv.SetShareStore(shareStore)
 		}
+		// Quick prompts persist under <data_dir>/prompts/. Like shares, the
+		// store is optional: without it the endpoints report 503 instead of
+		// accepting prompts that would never be saved.
+		if promptStore, err := management.NewPromptStore(cfg.DataDir); err != nil {
+			slog.Warn("prompt store unavailable; quick prompts disabled", "error", err)
+		} else {
+			mgmtSrv.SetPromptStore(promptStore)
+		}
 		if cfg.Dashboard.IsEnabled() {
 			mgmtSrv.SetDashboardSettings(&management.DashboardSettings{
 				Enabled:               true,

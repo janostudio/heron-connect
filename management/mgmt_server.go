@@ -64,6 +64,10 @@ type ManagementServer struct {
 	// share endpoints then report 503. Injected at startup.
 	shareStore *ShareStore
 
+	// promptStore holds project-level quick prompts. nil = feature disabled;
+	// the prompt endpoints then report 503. Injected at startup.
+	promptStore *PromptStore
+
 	cronScheduler      *core.CronScheduler
 	heartbeatScheduler *core.HeartbeatScheduler
 	bridgeServer       *bridge.BridgeServer
@@ -132,6 +136,11 @@ func (m *ManagementServer) SetBridgeServer(bs *bridge.BridgeServer)             
 // SetShareStore enables public file sharing. Without it the share endpoints
 // return 503 rather than silently accepting links that could never be served.
 func (m *ManagementServer) SetShareStore(s *ShareStore) { m.shareStore = s }
+
+// SetPromptStore enables project-level quick prompts. Without it the prompt
+// endpoints return 503 instead of pretending to save into nowhere.
+func (m *ManagementServer) SetPromptStore(s *PromptStore) { m.promptStore = s }
+
 func (m *ManagementServer) SetSetupFeishuSave(fn func(FeishuSetupSaveRequest) error) {
 	m.setupFeishuSave = fn
 }
@@ -1644,6 +1653,14 @@ func (m *ManagementServer) handleProjectRoutes(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Quick prompts are stored next to the config, not in the engine, so they
+	// stay editable for a project whose engine is not running (a project just
+	// added, or one whose agent failed to start).
+	if sub == "prompts" {
+		m.handleProjectPrompts(w, r, projName, rest)
+		return
+	}
+
 	m.mu.RLock()
 	engine, ok := m.engines[projName]
 	m.mu.RUnlock()
@@ -1675,6 +1692,98 @@ func (m *ManagementServer) handleProjectRoutes(w http.ResponseWriter, r *http.Re
 		m.handleProjectUsers(w, r, engine)
 	default:
 		mgmtError(w, http.StatusNotFound, "not found")
+	}
+}
+
+// handleProjectPrompts serves /api/v1/projects/{name}/prompts[/{id}].
+//
+// Prompts are project-scoped, not conversation-scoped: every conversation of a
+// project sees the same list. Nothing here touches the engine, so a project
+// whose engine is not running can still be edited.
+func (m *ManagementServer) handleProjectPrompts(w http.ResponseWriter, r *http.Request, project, rest string) {
+	if m.promptStore == nil {
+		mgmtError(w, http.StatusServiceUnavailable, "quick prompts are not enabled")
+		return
+	}
+	id := strings.TrimSpace(rest)
+
+	if id == "" {
+		switch r.Method {
+		case http.MethodGet:
+			mgmtJSON(w, http.StatusOK, map[string]any{
+				"prompts": m.promptStore.List(project),
+				// Echoed so the UI can show limits without hard-coding them.
+				"max_content_length": QuickPromptMaxRunes,
+				"max_per_project":    QuickPromptMaxPerProject,
+			})
+			return
+		case http.MethodPost:
+			var body struct {
+				Content string `json:"content"`
+			}
+			if !decodePromptBody(w, r, &body) {
+				return
+			}
+			p, err := m.promptStore.Create(project, body.Content)
+			if err != nil {
+				mgmtError(w, promptErrorStatus(err), err.Error())
+				return
+			}
+			mgmtJSON(w, http.StatusOK, p)
+			return
+		default:
+			mgmtError(w, http.StatusMethodNotAllowed, "GET or POST only")
+			return
+		}
+	}
+
+	switch r.Method {
+	case http.MethodPatch:
+		var body struct {
+			Content string `json:"content"`
+		}
+		if !decodePromptBody(w, r, &body) {
+			return
+		}
+		p, err := m.promptStore.Update(project, id, body.Content)
+		if err != nil {
+			mgmtError(w, promptErrorStatus(err), err.Error())
+			return
+		}
+		mgmtJSON(w, http.StatusOK, p)
+	case http.MethodDelete:
+		if err := m.promptStore.Delete(project, id); err != nil {
+			mgmtError(w, promptErrorStatus(err), err.Error())
+			return
+		}
+		mgmtOK(w, "quick prompt deleted")
+	default:
+		mgmtError(w, http.StatusMethodNotAllowed, "PATCH or DELETE only")
+	}
+}
+
+// decodePromptBody caps the request body and decodes it into dst. It reports
+// false when a response has already been written.
+func decodePromptBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		mgmtError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return false
+	}
+	return true
+}
+
+// promptErrorStatus maps store errors onto HTTP status codes.
+func promptErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, ErrQuickPromptNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, ErrQuickPromptEmpty),
+		errors.Is(err, ErrQuickPromptTooLong),
+		errors.Is(err, ErrQuickPromptLimit):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
 	}
 }
 

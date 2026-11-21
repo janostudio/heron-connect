@@ -92,13 +92,18 @@
     "selectProject": "選擇專案",
     "sessionNameOptional": "工作階段名稱（可選）",
     "openInNewTab": "新分頁開啟",
-    "showCronSessions": "顯示定時任務工作階段",
-    "hiddenCronSessions": "已隱藏 {{count}} 個定時任務工作階段",
+    "showCronSessions": "定時任務工作階段（{{count}} 個）",
+    "showCronSessionsNone": "定時任務工作階段",
     "sortOrder": "排序",
     "sortReading": "閱讀順序",
     "sortReadingHint": "正在讀 → 最近關閉 → 訊息時間",
     "sortActivity": "最近對話",
-    "sortActivityHint": "置頂 → 訊息時間"
+    "sortActivityHint": "置頂 → 訊息時間",
+    "rename": "重新命名",
+    "pin": "置頂",
+    "unpin": "取消置頂",
+    "loadMore": "載入更多（還剩 {{count}}）",
+    "messageCount_other": "{{count}} 則訊息"
   },
   "providers": {
     "title": "模型供應商",
@@ -295,6 +300,22 @@
       "loadMore": "載入更多",
       "failed": "檔案載入失敗"
     },
+    "prompts": {
+      "add": "新增提示詞",
+      "edit": "編輯",
+      "delete": "刪除",
+      "deleteConfirm": "刪除這條提示詞？",
+      "empty": "尚無提示詞",
+      "createTitle": "新增提示詞",
+      "editTitle": "編輯提示詞",
+      "placeholder": "輸入提示詞內容…",
+      "sendBusy": "回覆進行中，暫時無法傳送",
+      "sendOffline": "連線已中斷",
+      "errorEmpty": "提示詞內容不能為空",
+      "errorSlash": "提示詞不能以 / 開頭（會被當作指令執行）",
+      "errorTooLong": "提示詞不能超過 {{max}} 個字元",
+      "errorLimit": "每個專案最多 {{max}} 條提示詞"
+    },
     "stop": "停止",
     "stopInterruptible": "停止目前回覆（新訊息會打斷本輪）",
     "stopQueued": "停止目前回覆（新訊息將排隊等待）",
@@ -302,7 +323,7 @@
     "sendQueued": "傳送（排隊，待本輪結束後處理）",
     "attach": "上傳圖片/檔案",
     "removeAttachment": "移除",
-    "fileTooBig": "檔案過大（>10MB）",
+    "fileTooBig": "檔案過大（>1GB）",
     "defaultSession": "Web 對話",
     "jumpToLatest": "回到最新",
     "time": {
@@ -314,7 +335,17 @@
       "linkCopied": "連結已複製",
       "revoke": "取消分享",
       "warning": "任何人取得此連結都可直接讀取該檔案，無需登入。"
-    }
+    },
+    "browseFiles": "專案檔案",
+    "parentDir": "上一層",
+    "emptyDir": "空目錄",
+    "insertPath": "插入檔案位址到輸入框",
+    "refreshFile": "重新整理（重新取得檔案內容）",
+    "resizePreview": "調整預覽大小",
+    "closePreview": "關閉預覽",
+    "toggleDirList": "展開或收合目錄",
+    "previousFile": "上一個檔案",
+    "nextFile": "下一個檔案"
   },
   "cmd": {
     "search": "搜尋命令...",

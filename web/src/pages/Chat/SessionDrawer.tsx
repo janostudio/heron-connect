@@ -6,18 +6,8 @@ import {
 import { Badge } from '@/components/ui';
 import SessionSortToggle from '@/components/SessionSortToggle';
 import { sessionTitle, sessionSource, type Session, type SessionSortMode } from '@/api/sessions';
+import { timeAgo } from '@/lib/timeAgo';
 import { cn } from '@/lib/utils';
-
-function timeAgo(iso: string): string {
-  if (!iso) return '';
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return '<1m';
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
-}
 
 interface Props {
   open: boolean;
@@ -142,8 +132,9 @@ function SessionDrawer({ open, onClose, sessions, currentSessionId, onSelect, on
                         <button
                           type="button"
                           onClick={() => onRename(s)}
-                          className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.06] opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="重命名"
+                          className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.06] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                          title={t('sessions.rename')}
+                          aria-label={t('sessions.rename')}
                         >
                           <Pencil size={12} />
                         </button>
@@ -154,14 +145,15 @@ function SessionDrawer({ open, onClose, sessions, currentSessionId, onSelect, on
                           onClick={() => onTogglePin(s)}
                           className={cn(
                             'p-1 rounded transition-colors',
-                            s.pinned ? 'text-accent' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100',
+                            s.pinned ? 'text-accent' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-100 md:opacity-0 md:group-hover:opacity-100',
                           )}
-                          title={s.pinned ? '取消置顶' : '置顶'}
+                          title={s.pinned ? t('sessions.unpin') : t('sessions.pin')}
+                          aria-label={s.pinned ? t('sessions.unpin') : t('sessions.pin')}
                         >
                           {s.pinned ? <Pin size={12} /> : <PinOff size={12} />}
                         </button>
                       )}
-                      <span className="text-[10px] text-gray-400">{timeAgo(s.updated_at || s.created_at)}</span>
+                      <span className="text-[10px] text-gray-400">{timeAgo(s.last_user_at || s.updated_at || s.created_at, t)}</span>
                     </div>
                   </div>
 

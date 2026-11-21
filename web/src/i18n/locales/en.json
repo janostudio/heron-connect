@@ -92,13 +92,19 @@
     "selectProject": "Select project",
     "sessionNameOptional": "Session name (optional)",
     "openInNewTab": "Open in new tab",
-    "showCronSessions": "Show scheduled-run sessions",
-    "hiddenCronSessions": "{{count}} scheduled-run sessions hidden",
+    "showCronSessions": "Scheduled runs ({{count}})",
+    "showCronSessionsNone": "Scheduled runs",
     "sortOrder": "Sort",
     "sortReading": "Reading",
     "sortReadingHint": "Being read → recently closed → message time",
     "sortActivity": "Recent",
-    "sortActivityHint": "Pinned → message time"
+    "sortActivityHint": "Pinned → message time",
+    "rename": "Rename",
+    "pin": "Pin",
+    "unpin": "Unpin",
+    "loadMore": "Load more ({{count}} left)",
+    "messageCount_one": "{{count}} msg",
+    "messageCount_other": "{{count}} msgs"
   },
   "providers": {
     "title": "Providers",
@@ -295,6 +301,22 @@
       "loadMore": "Load more",
       "failed": "Failed to load file"
     },
+    "prompts": {
+      "add": "Add prompt",
+      "edit": "Edit",
+      "delete": "Delete",
+      "deleteConfirm": "Delete this prompt?",
+      "empty": "No saved prompts",
+      "createTitle": "Add prompt",
+      "editTitle": "Edit prompt",
+      "placeholder": "Prompt text…",
+      "sendBusy": "A reply is in progress",
+      "sendOffline": "Connection is down",
+      "errorEmpty": "Prompt cannot be empty",
+      "errorSlash": "A prompt cannot start with \"/\" (it would run as a command)",
+      "errorTooLong": "Prompt is limited to {{max}} characters",
+      "errorLimit": "A project holds at most {{max}} prompts"
+    },
     "stop": "Stop",
     "stopInterruptible": "Stop the current turn (a new message would interrupt it)",
     "stopQueued": "Stop the current turn (a new message would be queued)",
@@ -302,7 +324,7 @@
     "sendQueued": "Send (queued until the current turn ends)",
     "attach": "Attach image/file",
     "removeAttachment": "Remove",
-    "fileTooBig": "File too large (>10MB)",
+    "fileTooBig": "File too large (>1GB)",
     "defaultSession": "Web Session",
     "jumpToLatest": "Jump to latest",
     "time": {
@@ -314,7 +336,17 @@
       "linkCopied": "Link copied",
       "revoke": "Stop sharing",
       "warning": "Anyone with this link can read the file — no login required."
-    }
+    },
+    "browseFiles": "Project files",
+    "parentDir": "Up one level",
+    "emptyDir": "Empty directory",
+    "insertPath": "Insert file path into the message",
+    "refreshFile": "Refresh",
+    "resizePreview": "Resize preview",
+    "closePreview": "Close preview",
+    "toggleDirList": "Toggle directory list",
+    "previousFile": "Previous file",
+    "nextFile": "Next file"
   },
   "cmd": {
     "search": "Search commands...",

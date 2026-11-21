@@ -13,7 +13,7 @@
 // subtrees (the stand-in here is the transcript). If the draft state ever moves
 // back up into the parent, this test fails.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import React, { useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
@@ -236,5 +236,108 @@ describe('ChatComposer sending while running', () => {
       expect(send.title).toMatch(re);
       act(() => { typeInto(textarea, ''); });
     }
+  });
+});
+
+// ── Quick-prompt panel ───────────────────────────────────────
+//
+// The panel is driven by focus, not by a toggle. These tests pin the three
+// behaviours that are easy to break by accident: it opens on focus, it survives
+// long enough for a click to land after focus leaves the textarea, and it does
+// not fight the slash-command palette for the same space.
+
+describe('ChatComposer quick-prompt panel', () => {
+  const PANEL = '[data-testid="prompt-panel"]';
+
+  function mountComposer(opts: {
+    canSend?: boolean;
+    cmdOpen?: boolean;
+    onPromptsOpenChange?: Mock<(open: boolean) => void>;
+  } = {}) {
+    const onPromptsOpenChange = opts.onPromptsOpenChange ?? vi.fn();
+    let close = () => {};
+    const promptsSlot = (controls: { close: () => void }) => {
+      close = controls.close;
+      return React.createElement('div', { 'data-testid': 'prompt-panel' }, 'panel');
+    };
+    if (!root) root = createRoot(container);
+    act(() => {
+      root!.render(React.createElement(ChatComposer, {
+        onSend: () => {},
+        pickedFiles: [],
+        onRemoveFile: () => {},
+        onAddFiles: () => {},
+        canSend: opts.canSend ?? true,
+        bridgeCfgLoaded: true,
+        bridgeStatus: opts.canSend === false ? 'disconnected' : 'connected',
+        isRunning: false,
+        interruptible: false,
+        onStop: () => {},
+        cmdOpen: opts.cmdOpen ?? false,
+        onCmdOpenChange: () => {},
+        onCmdSelect: () => {},
+        promptsSlot,
+        onPromptsOpenChange,
+      }));
+    });
+    return { onPromptsOpenChange, close: () => close() };
+  }
+
+  it('opens on focus and closes after focus leaves', async () => {
+    const { onPromptsOpenChange } = mountComposer();
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+
+    act(() => { textarea.focus(); });
+    expect(container.querySelector(PANEL)).not.toBeNull();
+    expect(onPromptsOpenChange).toHaveBeenLastCalledWith(true);
+
+    act(() => { textarea.blur(); });
+    // Still mounted: the close is delayed so a click on a row can land.
+    expect(container.querySelector(PANEL)).not.toBeNull();
+
+    await act(async () => { await new Promise((r) => setTimeout(r, 220)); });
+    expect(container.querySelector(PANEL)).toBeNull();
+    expect(onPromptsOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it('collapses when a prompt is sent and reopens on the next click', () => {
+    const { close } = mountComposer();
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+
+    act(() => { textarea.focus(); });
+    expect(container.querySelector(PANEL)).not.toBeNull();
+
+    act(() => { close(); });
+    expect(container.querySelector(PANEL)).toBeNull();
+
+    // The textarea already has focus, so no new focus event fires — the click
+    // handler is what brings the panel back.
+    act(() => { textarea.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    expect(container.querySelector(PANEL)).not.toBeNull();
+  });
+
+  it('stays closed while the command palette is open', () => {
+    mountComposer({ cmdOpen: true });
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+
+    act(() => { textarea.focus(); });
+    expect(container.querySelector(PANEL)).toBeNull();
+  });
+
+  it('collapses when the bridge goes down', () => {
+    // One probe shared across both renders: the second mount passes a fresh
+    // callback otherwise, and the assertion would read the first render's mock.
+    const probe = vi.fn();
+    mountComposer({ onPromptsOpenChange: probe });
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    act(() => { textarea.focus(); });
+    expect(container.querySelector(PANEL)).not.toBeNull();
+
+    // Re-render the same root with the bridge disconnected: the composer swaps
+    // itself for a warning row, so the panel must be reported closed or the
+    // parent keeps hiding its "jump to latest" button.
+    mountComposer({ canSend: false, onPromptsOpenChange: probe });
+    expect(container.querySelector(PANEL)).toBeNull();
+    expect(probe).toHaveBeenLastCalledWith(false);
   });
 });

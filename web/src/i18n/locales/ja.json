@@ -92,13 +92,18 @@
     "selectProject": "プロジェクトを選択",
     "sessionNameOptional": "セッション名（任意）",
     "openInNewTab": "新しいタブで開く",
-    "showCronSessions": "定期実行セッションを表示",
-    "hiddenCronSessions": "定期実行セッション {{count}} 件を非表示中",
+    "showCronSessions": "定期実行セッション（{{count}}）",
+    "showCronSessionsNone": "定期実行セッション",
     "sortOrder": "並び順",
     "sortReading": "閲覧順",
     "sortReadingHint": "閲覧中 → 最近閉じた → メッセージ時刻",
     "sortActivity": "最新の会話",
-    "sortActivityHint": "ピン留め → メッセージ時刻"
+    "sortActivityHint": "ピン留め → メッセージ時刻",
+    "rename": "名前を変更",
+    "pin": "ピン留め",
+    "unpin": "ピン留めを解除",
+    "loadMore": "さらに読み込む（残り {{count}}）",
+    "messageCount_other": "{{count}} 件"
   },
   "providers": {
     "title": "プロバイダー",
@@ -295,6 +300,22 @@
       "loadMore": "さらに読み込む",
       "failed": "ファイルの読み込みに失敗しました"
     },
+    "prompts": {
+      "add": "プロンプトを追加",
+      "edit": "編集",
+      "delete": "削除",
+      "deleteConfirm": "このプロンプトを削除しますか？",
+      "empty": "プロンプトはまだありません",
+      "createTitle": "プロンプトを追加",
+      "editTitle": "プロンプトを編集",
+      "placeholder": "プロンプトを入力…",
+      "sendBusy": "応答中は送信できません",
+      "sendOffline": "接続が切断されています",
+      "errorEmpty": "プロンプトを入力してください",
+      "errorSlash": "プロンプトは / で始められません（コマンドとして実行されます）",
+      "errorTooLong": "プロンプトは {{max}} 文字までです",
+      "errorLimit": "1 プロジェクトにつき最大 {{max}} 件です"
+    },
     "stop": "停止",
     "stopInterruptible": "現在の応答を停止（新しいメッセージは割り込みます）",
     "stopQueued": "現在の応答を停止（新しいメッセージはキューに入ります）",
@@ -302,7 +323,7 @@
     "sendQueued": "送信（現在の応答の終了後に処理）",
     "attach": "画像/ファイルを添付",
     "removeAttachment": "削除",
-    "fileTooBig": "ファイルが大きすぎます（>10MB）",
+    "fileTooBig": "ファイルが大きすぎます（>1GB）",
     "defaultSession": "Web セッション",
     "jumpToLatest": "最新へ移動",
     "time": {
@@ -314,7 +335,17 @@
       "linkCopied": "リンクをコピーしました",
       "revoke": "共有を停止",
       "warning": "このリンクを知っている人は誰でもログイン不要でファイルを閲覧できます。"
-    }
+    },
+    "browseFiles": "プロジェクトファイル",
+    "parentDir": "一つ上へ",
+    "emptyDir": "空のディレクトリ",
+    "insertPath": "ファイルパスを挿入",
+    "refreshFile": "更新（ファイルを再取得）",
+    "resizePreview": "プレビューのサイズ変更",
+    "closePreview": "プレビューを閉じる",
+    "toggleDirList": "ディレクトリ一覧の表示切替",
+    "previousFile": "前のファイル",
+    "nextFile": "次のファイル"
   },
   "cmd": {
     "search": "コマンドを検索...",

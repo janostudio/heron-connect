@@ -92,13 +92,18 @@
     "selectProject": "选择项目",
     "sessionNameOptional": "会话名称（可选）",
     "openInNewTab": "新标签页打开",
-    "showCronSessions": "显示定时任务会话",
-    "hiddenCronSessions": "已隐藏 {{count}} 条定时任务会话",
+    "showCronSessions": "定时任务会话（{{count}} 个）",
+    "showCronSessionsNone": "定时任务会话",
     "sortOrder": "排序",
     "sortReading": "阅读顺序",
     "sortReadingHint": "正在读 → 最近关闭 → 消息时间",
     "sortActivity": "最近对话",
-    "sortActivityHint": "置顶 → 消息时间"
+    "sortActivityHint": "置顶 → 消息时间",
+    "rename": "重命名",
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "loadMore": "加载更多（还剩 {{count}}）",
+    "messageCount_other": "{{count}} 条消息"
   },
   "providers": {
     "title": "模型提供方",
@@ -295,6 +300,22 @@
       "loadMore": "加载更多",
       "failed": "文件加载失败"
     },
+    "prompts": {
+      "add": "添加提示词",
+      "edit": "编辑",
+      "delete": "删除",
+      "deleteConfirm": "删除这条提示词？",
+      "empty": "暂无提示词",
+      "createTitle": "添加提示词",
+      "editTitle": "编辑提示词",
+      "placeholder": "输入提示词内容…",
+      "sendBusy": "回复进行中，暂时无法发送",
+      "sendOffline": "连接已断开",
+      "errorEmpty": "提示词内容不能为空",
+      "errorSlash": "提示词不能以 / 开头（会被当作命令执行）",
+      "errorTooLong": "提示词不能超过 {{max}} 个字符",
+      "errorLimit": "每个项目最多 {{max}} 条提示词"
+    },
     "stop": "停止",
     "stopInterruptible": "停止当前回复（新消息会打断本轮）",
     "stopQueued": "停止当前回复（新消息将排队等待）",
@@ -302,7 +323,7 @@
     "sendQueued": "发送（排队，待本轮结束后处理）",
     "attach": "上传图片/文件",
     "removeAttachment": "移除",
-    "fileTooBig": "文件过大（>10MB）",
+    "fileTooBig": "文件过大（>1GB）",
     "defaultSession": "Web 会话",
     "jumpToLatest": "回到最新",
     "time": {
@@ -314,7 +335,17 @@
       "linkCopied": "链接已复制",
       "revoke": "取消分享",
       "warning": "任何人拿到此链接都可直接读取该文件，无需登录。"
-    }
+    },
+    "browseFiles": "项目文件",
+    "parentDir": "上一级",
+    "emptyDir": "空目录",
+    "insertPath": "插入文件地址到输入框",
+    "refreshFile": "刷新（重新获取文件内容）",
+    "resizePreview": "调整预览大小",
+    "closePreview": "关闭预览",
+    "toggleDirList": "展开或收起目录",
+    "previousFile": "上一个文件",
+    "nextFile": "下一个文件"
   },
   "cmd": {
     "search": "搜索命令...",
