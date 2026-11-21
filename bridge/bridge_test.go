@@ -518,10 +518,12 @@ func TestBridge_UpdateMessage_FallsBackAfterClientReconnect(t *testing.T) {
 	connB := dialWS(t, wsURL, nil)
 	registerWithClientID(t, connB, "web", "client-b", []string{"text", "preview", "update_message"})
 
-	// The stale replyCtx still references client-a, which is now gone.
-	if got := bs.getAdapterForClient("web", "client-a"); got != nil {
-		t.Fatalf("client-a should be disconnected, got adapter %p", got)
-	}
+	// The stale replyCtx still references client-a, which is now gone. Closing a
+	// socket is asynchronous on the server side: the read loop has to observe the
+	// close before the adapter is dropped from the registry, so wait for it
+	// instead of asserting immediately — asserting straight after Close() raced
+	// on slower CI runners and failed this test intermittently.
+	waitForAdapterGone(t, bs, "web", "client-a")
 
 	// UpdateMessage with the stale ctx must fall back to client-b and deliver.
 	if err := bp.UpdateMessage(context.Background(), staleCtx, "__heron_connect_progress_card_v1__:{}"); err != nil {
@@ -764,6 +766,22 @@ func TestSerializeCard(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // startTestBridgeWithREST creates a bridge server with both WS and REST endpoints.
+// waitForAdapterGone blocks until the server has dropped a client adapter.
+// Closing a socket only signals the peer; the adapter is removed by the reading
+// goroutine, so tests that need "this client is gone" must wait rather than
+// assert right after Close (that raced on slow CI runners).
+func waitForAdapterGone(t *testing.T, bs *BridgeServer, platform, clientID string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if bs.getAdapterForClient(platform, clientID) == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("adapter %s/%s still registered after 3s", platform, clientID)
+}
+
 func startTestBridgeWithREST(t *testing.T, token string) (*BridgeServer, string) {
 	t.Helper()
 	var bs *BridgeServer
