@@ -13,14 +13,22 @@
 // The fix keys the re-seed on the session id. These tests pin both halves: a
 // parent re-render must NOT touch the draft, a different session MUST re-seed.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import React, { useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import RenameSessionModal from './RenameSessionModal';
+import { updateSession } from '@/api/sessions';
 // Side-effect import: registers the i18next instance so `t()` resolves real
 // strings instead of raw keys.
 import '@/i18n';
+
+// The modal saves through this API; mock it so the Enter assertions can observe
+// whether a save was attempted without touching the network.
+vi.mock('@/api/sessions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/sessions')>();
+  return { ...actual, updateSession: vi.fn(async () => ({ id: 'fs_demo_a', name: 'renamed by user' })) };
+});
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -103,5 +111,46 @@ describe('RenameSessionModal draft survival', () => {
     act(() => { pointAtOtherSession(); });
 
     expect(dialogInput().value).toBe('other session');
+  });
+});
+
+describe('RenameSessionModal IME Enter', () => {
+  it('ignores a composing Enter and still saves on a plain Enter', async () => {
+    const onClose = vi.fn();
+    const updateSessionMock = vi.mocked(updateSession);
+    updateSessionMock.mockClear();
+
+    root = createRoot(container);
+    act(() => {
+      root!.render(React.createElement(RenameSessionModal, {
+        open: true,
+        project: 'demo-project',
+        session: { id: 'fs_demo_a', name: 'original name' },
+        onClose,
+      }));
+    });
+    const input = dialogInput();
+    act(() => { typeInto(input, 'renamed by user'); });
+
+    // IME 选词时的回车：isComposing=true，不能保存也不能关闭弹窗。
+    // jsdom 会忽略 KeyboardEventInit.isComposing，显式定义到事件对象上。
+    const composing = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+    Object.defineProperty(composing, 'isComposing', { value: true });
+    act(() => { input.dispatchEvent(composing); });
+    expect(updateSessionMock).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+
+    // 部分输入法只给 keyCode=229 而不置 isComposing，同样必须忽略。
+    const key229 = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+    Object.defineProperty(key229, 'keyCode', { value: 229 });
+    act(() => { input.dispatchEvent(key229); });
+    expect(updateSessionMock).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+
+    // 组合结束后的普通回车（isComposing=false、keyCode 非 229）仍要正常保存。
+    const plain = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+    await act(async () => { input.dispatchEvent(plain); });
+    expect(updateSessionMock).toHaveBeenCalledWith('demo-project', 'fs_demo_a', { name: 'renamed by user' });
+    expect(onClose).toHaveBeenCalled();
   });
 });

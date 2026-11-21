@@ -52,7 +52,14 @@ export default function RenameSessionModal({ open, project, session, onClose, on
         <Input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              // 输入法组合中（中文/日文选词）的回车不保存、不关闭，组合结束后的回车才保存。
+              if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+              e.preventDefault();
+              handleSave();
+            }
+          }}
           placeholder={session?.name || ''}
         />
         {error && <p className="text-sm text-red-500">{error}</p>}
