@@ -23,6 +23,12 @@ import (
 // BridgeServer — global WebSocket server shared across all engines
 // ---------------------------------------------------------------------------
 
+// maxFrameBytes caps one inbound WebSocket message. See handleConnection for
+// why the number is what it is: it must clear the largest frame a real web
+// client can produce (one 1 GiB attachment after base64 + JSON, ~1.33 GiB)
+// while still refusing an unbounded allocation.
+const maxFrameBytes = 1536 << 20 // 1.5 GiB
+
 // BridgeServer exposes a WebSocket endpoint for external platform adapters.
 // A single instance is created globally; each project engine receives a
 // lightweight BridgePlatform handle that delegates to this server.
@@ -950,6 +956,20 @@ func (bs *BridgeServer) handleWS(w http.ResponseWriter, r *http.Request) {
 
 func (bs *BridgeServer) handleConnection(conn *websocket.Conn) {
 	defer conn.Close()
+
+	// Bound a single inbound frame. The web client inlines attachments into the
+	// prompt frame as base64 (see MAX_UPLOAD_BYTES in the chat view: 1 GiB per
+	// file), which inflates by ~4/3 and is then wrapped in JSON — so a
+	// legitimate frame tops out around 1.33 GiB. gorilla/websocket accepts an
+	// unbounded frame by default, which means a buggy or hostile client can make
+	// the process allocate without limit; the cap sits just above what a real
+	// client can produce.
+	//
+	// Cost worth knowing: reading and decoding one large attachment still costs
+	// this process on the order of 2.7 GiB of transient memory. Streaming
+	// attachments over HTTP instead of inlining them is the actual fix; this
+	// limit only keeps a bad frame from taking the process down.
+	conn.SetReadLimit(maxFrameBytes)
 
 	if err := conn.SetReadDeadline(time.Now().Add(90 * time.Second)); err != nil {
 		slog.Debug("bridge: set read deadline failed", "error", err)

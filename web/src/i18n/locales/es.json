@@ -295,6 +295,22 @@
       "loadMore": "Cargar más",
       "failed": "No se pudo cargar el archivo"
     },
+    "prompts": {
+      "add": "Añadir prompt",
+      "edit": "Editar",
+      "delete": "Eliminar",
+      "deleteConfirm": "¿Eliminar este prompt?",
+      "empty": "Sin prompts guardados",
+      "createTitle": "Añadir prompt",
+      "editTitle": "Editar prompt",
+      "placeholder": "Texto del prompt…",
+      "sendBusy": "Hay una respuesta en curso",
+      "sendOffline": "La conexión está caída",
+      "errorEmpty": "El prompt no puede estar vacío",
+      "errorSlash": "El prompt no puede empezar por \"/\" (se ejecutaría como comando)",
+      "errorTooLong": "El prompt se limita a {{max}} caracteres",
+      "errorLimit": "Un proyecto admite como máximo {{max}} prompts"
+    },
     "stop": "Detener",
     "stopInterruptible": "Detener la respuesta actual (un mensaje nuevo la interrumpiría)",
     "stopQueued": "Detener la respuesta actual (un mensaje nuevo se pondría en cola)",
@@ -302,7 +318,7 @@
     "sendQueued": "Enviar (en cola hasta que termine la respuesta actual)",
     "attach": "Adjuntar imagen/archivo",
     "removeAttachment": "Quitar",
-    "fileTooBig": "Archivo demasiado grande (>10MB)",
+    "fileTooBig": "Archivo demasiado grande (>1GB)",
     "defaultSession": "Sesión Web",
     "jumpToLatest": "Ir al final",
     "time": {

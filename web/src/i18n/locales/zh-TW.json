@@ -295,6 +295,22 @@
       "loadMore": "載入更多",
       "failed": "檔案載入失敗"
     },
+    "prompts": {
+      "add": "新增提示詞",
+      "edit": "編輯",
+      "delete": "刪除",
+      "deleteConfirm": "刪除這條提示詞？",
+      "empty": "尚無提示詞",
+      "createTitle": "新增提示詞",
+      "editTitle": "編輯提示詞",
+      "placeholder": "輸入提示詞內容…",
+      "sendBusy": "回覆進行中，暫時無法傳送",
+      "sendOffline": "連線已中斷",
+      "errorEmpty": "提示詞內容不能為空",
+      "errorSlash": "提示詞不能以 / 開頭（會被當作指令執行）",
+      "errorTooLong": "提示詞不能超過 {{max}} 個字元",
+      "errorLimit": "每個專案最多 {{max}} 條提示詞"
+    },
     "stop": "停止",
     "stopInterruptible": "停止目前回覆（新訊息會打斷本輪）",
     "stopQueued": "停止目前回覆（新訊息將排隊等待）",
@@ -302,7 +318,7 @@
     "sendQueued": "傳送（排隊，待本輪結束後處理）",
     "attach": "上傳圖片/檔案",
     "removeAttachment": "移除",
-    "fileTooBig": "檔案過大（>10MB）",
+    "fileTooBig": "檔案過大（>1GB）",
     "defaultSession": "Web 對話",
     "jumpToLatest": "回到最新",
     "time": {

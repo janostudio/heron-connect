@@ -295,6 +295,22 @@
       "loadMore": "さらに読み込む",
       "failed": "ファイルの読み込みに失敗しました"
     },
+    "prompts": {
+      "add": "プロンプトを追加",
+      "edit": "編集",
+      "delete": "削除",
+      "deleteConfirm": "このプロンプトを削除しますか？",
+      "empty": "プロンプトはまだありません",
+      "createTitle": "プロンプトを追加",
+      "editTitle": "プロンプトを編集",
+      "placeholder": "プロンプトを入力…",
+      "sendBusy": "応答中は送信できません",
+      "sendOffline": "接続が切断されています",
+      "errorEmpty": "プロンプトを入力してください",
+      "errorSlash": "プロンプトは / で始められません（コマンドとして実行されます）",
+      "errorTooLong": "プロンプトは {{max}} 文字までです",
+      "errorLimit": "1 プロジェクトにつき最大 {{max}} 件です"
+    },
     "stop": "停止",
     "stopInterruptible": "現在の応答を停止（新しいメッセージは割り込みます）",
     "stopQueued": "現在の応答を停止（新しいメッセージはキューに入ります）",
@@ -302,7 +318,7 @@
     "sendQueued": "送信（現在の応答の終了後に処理）",
     "attach": "画像/ファイルを添付",
     "removeAttachment": "削除",
-    "fileTooBig": "ファイルが大きすぎます（>10MB）",
+    "fileTooBig": "ファイルが大きすぎます（>1GB）",
     "defaultSession": "Web セッション",
     "jumpToLatest": "最新へ移動",
     "time": {

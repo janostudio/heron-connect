@@ -295,6 +295,22 @@
       "loadMore": "Load more",
       "failed": "Failed to load file"
     },
+    "prompts": {
+      "add": "Add prompt",
+      "edit": "Edit",
+      "delete": "Delete",
+      "deleteConfirm": "Delete this prompt?",
+      "empty": "No saved prompts",
+      "createTitle": "Add prompt",
+      "editTitle": "Edit prompt",
+      "placeholder": "Prompt text…",
+      "sendBusy": "A reply is in progress",
+      "sendOffline": "Connection is down",
+      "errorEmpty": "Prompt cannot be empty",
+      "errorSlash": "A prompt cannot start with \"/\" (it would run as a command)",
+      "errorTooLong": "Prompt is limited to {{max}} characters",
+      "errorLimit": "A project holds at most {{max}} prompts"
+    },
     "stop": "Stop",
     "stopInterruptible": "Stop the current turn (a new message would interrupt it)",
     "stopQueued": "Stop the current turn (a new message would be queued)",
@@ -302,7 +318,7 @@
     "sendQueued": "Send (queued until the current turn ends)",
     "attach": "Attach image/file",
     "removeAttachment": "Remove",
-    "fileTooBig": "File too large (>10MB)",
+    "fileTooBig": "File too large (>1GB)",
     "defaultSession": "Web Session",
     "jumpToLatest": "Jump to latest",
     "time": {

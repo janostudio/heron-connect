@@ -295,6 +295,22 @@
       "loadMore": "加载更多",
       "failed": "文件加载失败"
     },
+    "prompts": {
+      "add": "添加提示词",
+      "edit": "编辑",
+      "delete": "删除",
+      "deleteConfirm": "删除这条提示词？",
+      "empty": "暂无提示词",
+      "createTitle": "添加提示词",
+      "editTitle": "编辑提示词",
+      "placeholder": "输入提示词内容…",
+      "sendBusy": "回复进行中，暂时无法发送",
+      "sendOffline": "连接已断开",
+      "errorEmpty": "提示词内容不能为空",
+      "errorSlash": "提示词不能以 / 开头（会被当作命令执行）",
+      "errorTooLong": "提示词不能超过 {{max}} 个字符",
+      "errorLimit": "每个项目最多 {{max}} 条提示词"
+    },
     "stop": "停止",
     "stopInterruptible": "停止当前回复（新消息会打断本轮）",
     "stopQueued": "停止当前回复（新消息将排队等待）",
@@ -302,7 +318,7 @@
     "sendQueued": "发送（排队，待本轮结束后处理）",
     "attach": "上传图片/文件",
     "removeAttachment": "移除",
-    "fileTooBig": "文件过大（>10MB）",
+    "fileTooBig": "文件过大（>1GB）",
     "defaultSession": "Web 会话",
     "jumpToLatest": "回到最新",
     "time": {

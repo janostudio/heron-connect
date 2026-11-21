@@ -24,6 +24,11 @@ import CommandResultPanel, { type CommandResult } from './CommandResultPanel';
 import RenameSessionModal from './RenameSessionModal';
 import MessageRow from './MessageRow';
 import ChatComposer, { type ChatComposerHandle } from './ChatComposer';
+import PromptList from './PromptList';
+import {
+  listQuickPrompts, createQuickPrompt, updateQuickPrompt, deleteQuickPrompt,
+  type QuickPrompt,
+} from '@/api/prompts';
 import { RenderMarkdown } from './markdownBlocks';
 import { useChatSessions, historyToMessages } from './useChatSessions';
 import { shouldRefetchOnReconnect } from './chatSessionsCore';
@@ -1178,6 +1183,77 @@ export default function ChatView() {
   // quickly: only the newest fetch is allowed to publish its result.
   const fetchSeqRef = useRef(new SequenceGuard());
 
+  // ── Quick prompts ────────────────────────────────────────────
+  //
+  // Project-scoped, not conversation-scoped: loaded once per project and shown
+  // in every conversation of that project. Switching projects fast starts
+  // overlapping requests, so publishing is guarded the same way conversation
+  // history is.
+  const [quickPrompts, setQuickPrompts] = useState<QuickPrompt[]>([]);
+  const [promptLimits, setPromptLimits] = useState({ maxContentLength: 2000, maxPerProject: 50 });
+  const [promptsLoading, setPromptsLoading] = useState(false);
+  const [promptsError, setPromptsError] = useState<string | null>(null);
+  const [promptsOpen, setPromptsOpen] = useState(false);
+  const promptSeqRef = useRef(new SequenceGuard());
+
+  const loadQuickPrompts = useCallback(async () => {
+    if (!projectName) {
+      setQuickPrompts([]);
+      setPromptsError(null);
+      return;
+    }
+    const seq = promptSeqRef.current;
+    const ticket = seq.begin();
+    setPromptsLoading(true);
+    setPromptsError(null);
+    try {
+      const data = await listQuickPrompts(projectName);
+      if (!seq.isCurrent(ticket)) return;
+      setQuickPrompts(data.prompts ?? []);
+      setPromptLimits({
+        maxContentLength: data.max_content_length || 2000,
+        maxPerProject: data.max_per_project || 50,
+      });
+    } catch (e) {
+      if (!seq.isCurrent(ticket)) return;
+      setPromptsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (seq.isCurrent(ticket)) setPromptsLoading(false);
+    }
+  }, [projectName]);
+
+  useEffect(() => {
+    void loadQuickPrompts();
+  }, [loadQuickPrompts]);
+
+  // Another tab may have edited the list. Refresh when the window regains focus
+  // instead of polling.
+  useEffect(() => {
+    const onFocus = () => { void loadQuickPrompts(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [loadQuickPrompts]);
+
+  // The three mutators return their promise on purpose: the panel keeps the
+  // editor open and shows the server's message when a save is rejected.
+  const handlePromptCreate = useCallback(async (content: string) => {
+    if (!projectName) return;
+    const created = await createQuickPrompt(projectName, content);
+    setQuickPrompts(prev => [...prev, created]);
+  }, [projectName]);
+
+  const handlePromptUpdate = useCallback(async (id: string, content: string) => {
+    if (!projectName) return;
+    const updated = await updateQuickPrompt(projectName, id, content);
+    setQuickPrompts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+  }, [projectName]);
+
+  const handlePromptDelete = useCallback(async (id: string) => {
+    if (!projectName) return;
+    await deleteQuickPrompt(projectName, id);
+    setQuickPrompts(prev => prev.filter(p => p.id !== id));
+  }, [projectName]);
+
   // Load project sessions and auto-select latest (or the one specified in the URL)
   const fetchData = useCallback(async () => {
     if (!projectName) return;
@@ -1624,8 +1700,10 @@ export default function ChatView() {
   }, [bridgeSend]);
 
   // Per-file size cap before we base64-encode it into the bridge frame.
-  // base64 inflates ~33%, and the WebSocket frame carries it all in memory.
-  const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+  // base64 inflates ~33%, and the WebSocket frame carries it all in memory:
+  // a 1 GiB file becomes a ~1.33 GiB payload, so the browser needs that much
+  // free memory (plus a second copy while encoding) to pick it.
+  const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
 
   const addPickedFiles = useCallback((files: FileList | File[]) => {
     const list = Array.from(files);
@@ -1666,7 +1744,7 @@ export default function ChatView() {
       const ok = items.filter((i): i is PickItem => i !== null);
       if (ok.length > 0) setPickedFiles(prev => [...prev, ...ok]);
       if (tooBig.length > 0) {
-        alert(`${t('chat.fileTooBig', 'File too large (>10MB)')}: ${tooBig.join(', ')}`);
+        alert(`${t('chat.fileTooBig', 'File too large (>1GB)')}: ${tooBig.join(', ')}`);
       }
     });
   }, [t]);
@@ -1686,15 +1764,20 @@ export default function ChatView() {
   // Sending while a turn is running is intentional: the backend interrupts the
   // turn and runs this message first (interruptible agents) or queues it, and
   // replies with a notice either way. Do not gate this on isRunning.
-  const handleSend = useCallback((content: string) => {
-    if (!content.trim() && pickedFiles.length === 0) return;
+  //
+  // `withAttachments` separates the two callers. The composer sends what the
+  // user queued in it; a quick prompt is a self-contained one-click message, so
+  // it must neither ride along with those attachments nor clear them.
+  const sendMessage = useCallback((content: string, withAttachments: boolean) => {
     if (bridgeStatus !== 'connected') return;
     const text = content.trim();
+    const attachments = withAttachments ? pickedFiles : [];
+    if (!text && attachments.length === 0) return;
 
     // Build media payload (only if any attachment is attached).
     const images: { mime_type: string; data: string; file_name?: string }[] = [];
     const files: { mime_type: string; data: string; file_name: string }[] = [];
-    pickedFiles.forEach((p) => {
+    attachments.forEach((p) => {
       const b64 = stripDataUrlPrefix(p.dataUrl);
       if (p.kind === 'image') images.push({ mime_type: p.mime_type, data: b64, file_name: p.name });
       else files.push({ mime_type: p.mime_type, data: b64, file_name: p.name });
@@ -1717,14 +1800,27 @@ export default function ChatView() {
           role: 'user' as const,
           content: text,
           timestamp: nowStamp(),
-          localMedia: pickedFiles.length > 0 ? pickedFiles : undefined,
+          localMedia: attachments.length > 0 ? attachments : undefined,
         }],
       }));
     }
     bridgeSend(text, media, currentSession?.id);
-    setPickedFiles([]);
+    if (withAttachments) setPickedFiles([]);
     reattachToBottom();
   }, [pickedFiles, bridgeStatus, bridgeSend, stripDataUrlPrefix, currentSession?.id, ensureViewedId, ensureSlice, updateSlice, reattachToBottom]);
+
+  const handleSend = useCallback((content: string) => {
+    sendMessage(content, true);
+  }, [sendMessage]);
+
+  // Quick prompts send on click, which makes an accidental click destructive:
+  // while a turn is running the backend would interrupt it. The row is inert in
+  // that state instead of asking for confirmation — the panel is a shortcut, so
+  // it must never cost the user a confirmation dialog to dismiss.
+  const handlePromptSend = useCallback((content: string) => {
+    if (isRunning) return;
+    sendMessage(content, false);
+  }, [isRunning, sendMessage]);
 
   // Stable file-open handler. Must NOT be an inline arrow at the call site:
   // a new function identity on every render would defeat the React.memo on
@@ -1967,7 +2063,9 @@ export default function ChatView() {
           The button itself is icon-only (ArrowDown) and sits in the
           bottom-right, just above the input bar. */}
       <div className="relative border-t border-gray-200 dark:border-gray-800 pt-3 shrink-0">
-        {!atBottom && messages.length > 0 && (
+        {/* The jump button sits on this container's top edge, exactly where the
+            prompt panel opens — hide it while the panel is out. */}
+        {!atBottom && messages.length > 0 && !promptsOpen && (
           <button
             type="button"
             onClick={jumpToBottom}
@@ -2001,6 +2099,23 @@ export default function ChatView() {
           cmdOpen={cmdOpen}
           onCmdOpenChange={setCmdOpen}
           onCmdSelect={handleCmdSelect}
+          onPromptsOpenChange={setPromptsOpen}
+          promptsSlot={projectName ? ({ close }) => (
+            <PromptList
+              prompts={quickPrompts}
+              loading={promptsLoading}
+              loadError={promptsError}
+              canSend={canSend}
+              isRunning={isRunning}
+              maxContentLength={promptLimits.maxContentLength}
+              maxPerProject={promptLimits.maxPerProject}
+              onSend={handlePromptSend}
+              onCreate={handlePromptCreate}
+              onUpdate={handlePromptUpdate}
+              onDelete={handlePromptDelete}
+              onClose={close}
+            />
+          ) : undefined}
         />
       </div>
 
