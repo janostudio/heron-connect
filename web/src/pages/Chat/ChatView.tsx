@@ -241,7 +241,26 @@ async function downloadFile(filePath: string, fileName: string) {
 // refresh button that re-fetches the latest bytes. HTML files additionally
 // toggle between the rendered effect (sandboxed iframe, default) and the raw
 // source text.
-function FileContentView({ filePath, fileName }: { filePath: string; fileName: string }) {
+function FileContentView({ filePath, fileName, onRefreshDirectory, onNavigate, nav }: {
+  filePath: string;
+  fileName: string;
+  /**
+   * Called after the preview itself refreshes. The file browser passes a
+   * callback that reloads the directory listing, because refreshing used to
+   * update the bytes on screen but leave the list stale — a file added or
+   * deleted next to it only showed up after switching directories.
+   */
+  onRefreshDirectory?: () => void;
+  /** Cycle to the previous/next file (touch swipe over the image). */
+  onNavigate?: (direction: 'prev' | 'next') => void;
+  /**
+   * Which neighbours exist. Drives the overlay arrows: a trackpad cannot page
+   * through images in a browser (two-finger horizontal swipe is the browser's
+   * own back/forward gesture, and WebKit refuses to let a page suppress it), so
+   * the arrows stay as the pointer-driven route.
+   */
+  nav?: { canPrev: boolean; canNext: boolean };
+}) {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<'head' | 'ready' | 'error'>('head');
   const [error, setError] = useState('');
@@ -256,6 +275,8 @@ function FileContentView({ filePath, fileName }: { filePath: string; fileName: s
   const [refreshTick, setRefreshTick] = useState(0);
   // HTML files: 'rendered' shows the page effect, 'source' shows the text.
   const [htmlView, setHtmlView] = useState<'rendered' | 'source'>('rendered');
+  // Origin of an in-progress touch, used for the image swipe gesture.
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // Reset the HTML view mode only when switching files — a refresh keeps the
   // mode the user is currently looking at.
@@ -395,7 +416,10 @@ function FileContentView({ filePath, fileName }: { filePath: string; fileName: s
                 )}
                 <button
                   type="button"
-                  onClick={() => setRefreshTick((t) => t + 1)}
+                  onClick={() => {
+                    setRefreshTick((t) => t + 1);
+                    onRefreshDirectory?.();
+                  }}
                   title={t('chat.refreshFile')}
                   aria-label={t('chat.refreshFile')}
                   className="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors"
@@ -475,7 +499,53 @@ function FileContentView({ filePath, fileName }: { filePath: string; fileName: s
             if (effective.kind === 'html') {
               return <iframe src={objectUrl} title={fileName} sandbox="allow-scripts allow-popups allow-forms" className="w-full h-[70vh] rounded-lg border border-gray-200 dark:border-gray-700 bg-white" />;
             }
-            if (effective.kind === 'image') return <img src={objectUrl} alt={fileName} className="max-h-[70vh] max-w-full mx-auto rounded-lg" />;
+            if (effective.kind === 'image') {
+              // Swiping is how people page through images on a phone. A
+              // mostly-vertical drag is left alone: that is a scroll.
+              return (
+                <div
+                  className="relative flex items-center justify-center"
+                  onTouchStart={(e) => {
+                    const touch = e.touches[0];
+                    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+                  }}
+                  onTouchEnd={(e) => {
+                    const start = touchStartRef.current;
+                    touchStartRef.current = null;
+                    if (!start || !onNavigate) return;
+                    const touch = e.changedTouches[0];
+                    const dx = touch.clientX - start.x;
+                    const dy = touch.clientY - start.y;
+                    if (Math.abs(dx) < 50 || Math.abs(dx) <= Math.abs(dy)) return;
+                    // Content follows the finger: dragging right reveals the
+                    // previous file, dragging left the next one.
+                    onNavigate(dx > 0 ? 'prev' : 'next');
+                  }}
+                >
+                  <img src={objectUrl} alt={fileName} className="max-h-[70vh] max-w-full rounded-lg" />
+                  {onNavigate && nav?.canPrev && (
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('prev')}
+                      aria-label={t('chat.previousFile')}
+                      className="absolute left-2 top-1/2 -translate-y-1/2 p-3 rounded-full bg-black/35 hover:bg-black/55 active:bg-black/70 text-white backdrop-blur-sm transition-colors"
+                    >
+                      <ChevronLeft size={20} />
+                    </button>
+                  )}
+                  {onNavigate && nav?.canNext && (
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('next')}
+                      aria-label={t('chat.nextFile')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-3 rounded-full bg-black/35 hover:bg-black/55 active:bg-black/70 text-white backdrop-blur-sm transition-colors"
+                    >
+                      <ChevronRight size={20} />
+                    </button>
+                  )}
+                </div>
+              );
+            }
             if (effective.kind === 'pdf') return <iframe src={objectUrl} title={fileName} className="w-full h-[70vh] rounded-lg border border-gray-200 dark:border-gray-700" />;
             if (effective.kind === 'audio') return <audio controls src={objectUrl} className="w-full" />;
             if (effective.kind === 'video') return <video controls src={objectUrl} className="max-h-[70vh] max-w-full mx-auto rounded-lg" />;
@@ -540,6 +610,8 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
   const [dirNext, setDirNext] = useState(0);
   const [dirLoadingMore, setDirLoadingMore] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(-1);
+  // Bumped by the preview's refresh button so the listing reloads in place.
+  const [dirRefreshTick, setDirRefreshTick] = useState(0);
   // Closed by default: the directory dropdown is opt-in — open the browser
   // and you get the header breadcrumb + current file body, not a long list
   // of every sibling in the directory. Toggling the breadcrumb opens it.
@@ -663,7 +735,7 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
       setLoading(false);
     });
     return () => { alive = false; };
-  }, [open, currentPath, projectName, preferredFileName]);
+  }, [open, currentPath, projectName, preferredFileName, dirRefreshTick]);
 
   // Append the next page of the current directory. Appending cannot disturb
   // currentIndex: existing entries keep their positions.
@@ -698,6 +770,28 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
 
   const goPrev = () => setCurrentIndex((i) => Math.max(0, i - 1));
   const goNext = () => setCurrentIndex((i) => Math.min(fileList.length - 1, i + 1));
+
+  // Arrow keys are the desktop route between files. A trackpad cannot page
+  // through images in a browser — a two-finger horizontal swipe is the
+  // browser's own back/forward gesture and WebKit will not let a page suppress
+  // it — and reaching for the header chevrons for every step is worse than
+  // pressing a key. Ignored while the user is typing.
+  const fileCount = fileList.length;
+  useEffect(() => {
+    if (!open || fileCount === 0) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+      e.preventDefault();
+      setCurrentIndex((i) => (e.key === 'ArrowLeft'
+        ? Math.max(0, i - 1)
+        : Math.min(fileCount - 1, i + 1)));
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [open, fileCount]);
 
   const pickFile = (i: number) => { setCurrentIndex(i); setDropdownOpen(false); };
   const openDir = (dir: string) => { setCurrentPath(dir); setDropdownOpen(true); };
@@ -853,7 +947,21 @@ function ProjectFileBrowser({ open, projectName, sessionId, onClose, onInsertFil
           ) : error ? (
             <div className="py-6 text-center text-sm text-red-500">{error}</div>
           ) : currentFile ? (
-            <FileContentView filePath={`/files/${projectName}/${encodeRelPath(currentFileRel)}`} fileName={currentFile.name} />
+            <FileContentView
+              filePath={`/files/${projectName}/${encodeRelPath(currentFileRel)}`}
+              fileName={currentFile.name}
+              onRefreshDirectory={() => {
+                // Pin the file being viewed before reloading, so a refresh does
+                // not jump the selection to the first file of the directory.
+                setPreferredFileName(currentFile.name);
+                setDirRefreshTick((t) => t + 1);
+              }}
+              onNavigate={(direction) => (direction === 'prev' ? goPrev() : goNext())}
+              nav={{
+                canPrev: currentIndex > 0,
+                canNext: currentIndex >= 0 && currentIndex < fileList.length - 1,
+              }}
+            />
           ) : (
             <div className="py-10 text-center text-sm text-gray-400">该目录没有可预览的文件，点上方目录选择</div>
           )}
