@@ -8,10 +8,11 @@ import {
   Pin, PinOff, Pencil, RefreshCw, Share2, Check, Link2, Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui';
-import { listSessions, getSession, createSession, sessionTitle, updateSession, sortSessions, splitByOrigin, type Session, type SessionDetail } from '@/api/sessions';
+import { listSessions, getSession, createSession, sessionTitle, updateSession, sortSessions, pickLatestActivity, splitByOrigin, type Session, type SessionDetail } from '@/api/sessions';
 import api from '@/api/client';
 import { newConvKey } from '@/lib/webSessionKey';
 import { reserveTab, openReservedTab } from '@/lib/newTab';
+import { setViewedSession } from '@/lib/sessionView';
 import {
   useBridgeSocket, fetchBridgeConfig,
   type BridgeConfig, type BridgeIncoming, type BridgeStatus,
@@ -1153,6 +1154,16 @@ export default function ChatView() {
     });
   }, [currentSession?.id, currentSession?.session_key, draftKey, setSlices]);
 
+  // Tell the server this tab is reading the conversation on screen. Presence is
+  // what orders the session list (a web client open on a conversation == being
+  // read), so it is recorded for auto-selected conversations too — the tab is
+  // showing it either way. The heartbeat itself runs from Layout, which is
+  // mounted whatever page the user navigates to next.
+  useEffect(() => {
+    const id = currentSession?.id;
+    if (projectName && id) setViewedSession(projectName, id);
+  }, [projectName, currentSession?.id]);
+
   // Guards against out-of-order responses when the user switches conversations
   // quickly: only the newest fetch is allowed to publish its result.
   const fetchSeqRef = useRef(new SequenceGuard());
@@ -1181,10 +1192,13 @@ export default function ChatView() {
       const sorted = sortSessions(allSessions || []);
       setSessions(sorted);
 
-      // Auto-select the newest HUMAN conversation: scheduled jobs leave one
-      // isolated session per run and sort to the top by their run time, so
-      // plain sorted[0] would open today's background job instead.
-      const autoTarget = splitByOrigin(sorted).human[0] || sorted[0] || null;
+      // Auto-select the newest HUMAN conversation by activity. It deliberately
+      // ignores the list order: with the list sorted by what is being read,
+      // its first entry is whichever conversation someone has open (possibly
+      // in another tab), not the one with the latest message. Scheduled jobs
+      // are excluded first for the same reason as before — each run leaves an
+      // isolated session behind and would otherwise win on run time.
+      const autoTarget = pickLatestActivity(splitByOrigin(sorted).human) || sorted[0] || null;
 
       const target = routeSessionId
         ? sorted.find(s => s.id === routeSessionId) || null

@@ -1657,6 +1657,8 @@ func (m *ManagementServer) handleProjectRoutes(w http.ResponseWriter, r *http.Re
 		m.handleProjectDetail(w, r, projName, engine)
 	case "sessions":
 		m.handleProjectSessions(w, r, projName, engine, rest)
+	case "session-view":
+		m.handleProjectSessionView(w, r, engine)
 	case "send":
 		m.handleProjectSend(w, r, engine)
 	case "providers":
@@ -1929,6 +1931,39 @@ func (m *ManagementServer) handleProjectUsers(w http.ResponseWriter, r *http.Req
 	}
 }
 
+// handleProjectSessionView records a web client's reading heartbeat.
+//
+// The browser tab that has a conversation open posts its id every few seconds.
+// Scoped to the project because session ids are only unique within one
+// SessionManager: two projects both have an "s3".
+//
+// The payload carries no client identity on purpose: the backend only needs to
+// know that *someone* is still reading, and it is the absence of heartbeats —
+// not a close message — that ends the "viewing" state (see core.ViewPresenceTTL).
+func (m *ManagementServer) handleProjectSessionView(w http.ResponseWriter, r *http.Request, e *core.Engine) {
+	if r.Method != http.MethodPost {
+		mgmtError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var body struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		mgmtError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	id := strings.TrimSpace(body.SessionID)
+	// A tab can outlive the session it was showing (deleted elsewhere). Drop
+	// the heartbeat instead of letting the presence map collect ids that will
+	// never resolve to a record.
+	if id != "" && e.GetSessions().FindByID(id) == nil {
+		mgmtError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	e.GetSessions().HeartbeatView(id, time.Now())
+	mgmtJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // ── Session endpoints ─────────────────────────────────────────
 
 func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.Request, projName string, e *core.Engine, rest string) {
@@ -1955,6 +1990,11 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 		// fast path untouched — the list endpoint is polled every 5s, so we
 		// must never pay the history-scan cost on the hot path.
 		query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+
+		// Reading presence, evaluated once per response: the call also expires
+		// stale heartbeats and persists their close time, so a session that
+		// drops out of this set already carries its final view_closed_at below.
+		viewing := e.GetSessions().ViewingIDs(time.Now())
 
 		idToKey, activeIDs := e.GetSessions().SessionKeyMap()
 		stored := e.GetSessions().AllSessions()
@@ -2022,9 +2062,17 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 				"last_user_at":       lastUserAt,
 			}
 
-			sessionKey := isolateLegacyWebSessionKey(idToKey[snap.ID], snap.ID)
-			_, live := activeKeys[sessionKey]
-			info["live"] = live
+		sessionKey := isolateLegacyWebSessionKey(idToKey[snap.ID], snap.ID)
+		_, live := activeKeys[sessionKey]
+		info["live"] = live
+		// Reading state: `viewing` is a client open on this conversation right
+		// now; `view_closed_at` is when the last reader left (absent when the
+		// session has never been read from the web). The list orders by these
+		// before falling back to last_user_at.
+		info["viewing"] = viewing[snap.ID]
+		if !snap.ViewClosedAt.IsZero() {
+			info["view_closed_at"] = snap.ViewClosedAt
+		}
 			if ts, ok := turnStates[sessionKey]; ok {
 				info["running"] = ts.Running
 				info["waiting_permission"] = ts.WaitingPermission

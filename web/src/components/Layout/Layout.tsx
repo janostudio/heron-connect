@@ -5,6 +5,7 @@ import Header from './Header';
 import Footer from './Footer';
 import { cn } from '@/lib/utils';
 import { rememberReturnPath } from '@/lib/returnTo';
+import { startViewHeartbeat } from '@/lib/sessionView';
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -14,6 +15,12 @@ export default function Layout() {
   useEffect(() => {
     setSidebarOpen(false);
   }, [location.pathname]);
+
+  // Reading presence: keep telling the server which conversation this tab has
+  // open, for as long as the tab lives. Mounted here rather than in the chat
+  // view because leaving the chat page must NOT end the reading — only closing
+  // the tab (or opening another conversation) does. See lib/sessionView.ts.
+  useEffect(() => startViewHeartbeat(), []);
 
   // Remember where the user actually is, so a later login can resume here even
   // when the login URL carries no `next` (see lib/returnTo.ts). Every protected
