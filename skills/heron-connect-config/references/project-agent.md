@@ -17,11 +17,31 @@
 | `kimi` | Kimi |
 | `devin` | Devin |
 | `pi` | Pi |
-| `heron` | Heron 自身 agent |
+| `heron` | Heron 自身 agent（可选 `serve` 模式对接常驻引擎，见下） |
 | `acp` | 任意 ACP 协议实现 |
 
 > 实际可用 agent 取决于编译时的选择性编译（`no_*` build tag，默认全部编译）。
 > 判断方式：查看 `cmd/heron-connect/plugin_agent_*.go` 是否存在对应文件。
+
+## `heron`：per-turn CLI 还是对接常驻 serve
+
+`heron` agent 有两种跑法，由 agent options 里的 `serve` 决定：
+
+```toml
+[projects.agent]
+type = "heron"
+
+[projects.agent.options]
+# 不写 serve：每次会话起一个 `heron --json-rpc` 子进程，随会话存活
+# serve：连到已经在跑的 `heron-ai --serve`（默认监听 8080），本机甚至不需要装 heron 二进制
+serve = "http://127.0.0.1:8080"
+# serve_token = "..."      # 引擎 --serve 要求鉴权时填写
+# serve_manage = true      # 让 heron-connect 自己拉起/停掉引擎；引擎已由别处托管时不要开
+```
+
+什么时候必须用 `serve`：**需要定时唤醒（cron）或后台轮次主动投递**时。serve 模式下引擎比
+单轮活得久、会话的事件流保持打开，引擎自己发起的轮次也能送回用户；per-turn 模式的子进程
+随轮次退出，收不到这类主动产出。
 
 ## [[projects]] 常用字段
 
@@ -172,14 +192,20 @@ mode = "bypassPermissions"      # 不写就退回 default，每个工具调用�
 
 | agent | `interruptible` | 行为 |
 |---|---|---|
-| codebuddy | **恒为 true**（常驻进程模式） | 忙时发消息 → 打断当前轮，新消息前插优先执行 |
+| codebuddy | **默认 false**（每轮起一个 CLI 进程）；写 `interruptible = true` 才常驻 | 默认忙时发消息 → 排队；显式 true 后 → 打断当前轮、新消息前插优先执行 |
 | claudecode | 需显式配置 | 同上 |
 | 其它/未实现 | false（默认） | 忙时发消息 → 排队，等当前轮结束后再处理 |
 
 ```toml
 [projects.agent.options]
-interruptible = true            # 显式开启（codebuddy 已默认开启，无需写）
+interruptible = true            # 显式开启；codebuddy 默认 false，开启后走常驻进程并支持忙时打断
 ```
+
+> **codebuddy 为什么默认不常驻**：常驻进程是 1.1.50 为修权限帧死锁引入的——CLI 要授权时会发
+> `can_use_tool` 并阻塞在 stdin 等 `control_request` 回复，per-turn 没有这条通道。该前提只在会弹
+> 权限的模式下成立（`bypassPermissions` 下工具调用不触发 `can_use_tool`，per-turn 不会死锁）。
+> 常驻的代价是空闲会话一直占着进程，所以默认改成每轮 spawn；需要忙时打断就显式写
+> `interruptible = true`。
 
 > **交互语义提示（v1.3.17 起）**：打断与排队**不再由 heron-connect 发送任何提示气泡**
 > （此前的「⏸️ (已中断)」和「📬 消息已收到，将在当前任务完成后处理。」已移除）——

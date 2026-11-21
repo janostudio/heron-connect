@@ -68,6 +68,22 @@ heron-connect --version
 ls "$(npm root -g)/@qinghuangniao/heron-connect/node_modules/@qinghuangniao"
 ```
 
+## 发版后同步 skill 版本
+
+仓库内的 `skills/heron-connect-config` 与大版本号保持一致。发版完成后运行：
+
+```bash
+skills/heron-connect-config/scripts/sync-version.sh
+```
+
+它读取 `npm/package.json` 的版本，更新 `SKILL.md` frontmatter 的 `metadata.version` 与正文里的
+版本号。**只对齐版本号不足以说明 skill 是新的**：发版前还要比对 `config.example.toml` 与本版本
+改过的代码，确认 skill 是否需要跟着改，重点看这几处容易漏的地方：
+
+- `references/project-agent.md`：agent options、`mode` / `interruptible` 的默认值是否变了
+- `references/chat-commands.md`：斜杠命令的行为、新增或删除的命令
+- `references/gotchas.md`：新踩过的坑、Web 端行为变化
+
 ## 常见问题
 
 ### 1. `npm publish` 时报 `EOTP`

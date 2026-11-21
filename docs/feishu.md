@@ -105,8 +105,8 @@ mode = "default"
 type = "feishu"
 
 [projects.platforms.options]
-app_id = "cli_axxxxxxxxxxxx"
-app_secret = "QhkMpxxxxxxxxxxxxxxxxxxxx"
+app_id = "cli_xxxxxxxxxxxxxxxx"
+app_secret = "your-feishu-app-secret"
 # domain = "https://open.feishu.cn" # 可选：覆盖运行时 API/WebSocket 域名
 # enable_feishu_card = true  # 可选：关闭后统一回退纯文本回复
 # thread_isolation = true    # 可选：按飞书 thread/root 隔离群聊会话
