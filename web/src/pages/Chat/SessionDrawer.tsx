@@ -4,7 +4,8 @@ import {
   X, MessageSquare, Circle, User, Bot, Plus, Loader2, Clock, Pin, PinOff, Pencil, ExternalLink,
 } from 'lucide-react';
 import { Badge } from '@/components/ui';
-import { sessionTitle, sessionSource, type Session } from '@/api/sessions';
+import SessionSortToggle from '@/components/SessionSortToggle';
+import { sessionTitle, sessionSource, type Session, type SessionSortMode } from '@/api/sessions';
 import { cn } from '@/lib/utils';
 
 function timeAgo(iso: string): string {
@@ -28,12 +29,19 @@ interface Props {
   onNewSessionInNewTab?: () => void;
   onRename?: (session: Session) => void;
   onTogglePin?: (session: Session) => void;
+  /**
+   * Which order the list is in. The page owns the value (the preference is
+   * shared with the session management page) and hands the already-sorted list
+   * down; the drawer only renders the selector. Omitted → no selector.
+   */
+  sortMode?: SessionSortMode;
+  onSortModeChange?: (mode: SessionSortMode) => void;
 }
 
 // Memoized: the drawer is always mounted (closed state is CSS-gated via
 // translate-x-full), so without memo it re-rendered on every parent render —
 // including the 5s session poll and every streaming delta.
-function SessionDrawer({ open, onClose, sessions, currentSessionId, onSelect, onNewSession, onNewSessionInNewTab, onRename, onTogglePin }: Props) {
+function SessionDrawer({ open, onClose, sessions, currentSessionId, onSelect, onNewSession, onNewSessionInNewTab, onRename, onTogglePin, sortMode, onSortModeChange }: Props) {
   const { t } = useTranslation();
 
   return (
@@ -85,6 +93,17 @@ function SessionDrawer({ open, onClose, sessions, currentSessionId, onSelect, on
             </button>
           </div>
         </div>
+
+        {/* Sort selector, on its own strip. In the title row the two labels
+            competed with the title and the action buttons for the drawer's
+            320px, and the title lost (truncated to one letter at the narrowest
+            supported width). */}
+        {onSortModeChange && sortMode && (
+          <div className="flex items-center justify-between gap-2 px-4 h-9 border-b border-gray-200/70 dark:border-white/[0.06] shrink-0">
+            <span className="text-[10px] uppercase tracking-wide text-gray-400 truncate">{t('sessions.sortOrder')}</span>
+            <SessionSortToggle value={sortMode} onChange={onSortModeChange} />
+          </div>
+        )}
 
         {/* Session list */}
         <div className="flex-1 overflow-y-auto py-2 px-2">

@@ -4,9 +4,11 @@ import { Link, useNavigate } from 'react-router-dom';
 import { MessageSquare, Circle, Filter, Search, Plus, User, Loader2, Clock, Pin, PinOff, Pencil, ExternalLink } from 'lucide-react';
 import { Badge, Button, EmptyState, Input, Modal } from '@/components/ui';
 import { listProjects, type ProjectSummary } from '@/api/projects';
-import { listSessions, createSession, updateSession, sortSessions, sessionTitle, sessionSource, splitByOrigin, type Session } from '@/api/sessions';
+import { listSessions, createSession, updateSession, sortSessions, sessionTitle, sessionSource, splitByOrigin, type Session, type SessionSortMode } from '@/api/sessions';
 import { newConvKey } from '@/lib/webSessionKey';
 import { reserveTab, openReservedTab } from '@/lib/newTab';
+import { readSortMode, writeSortMode } from '@/lib/sessionSortMode';
+import SessionSortToggle from '@/components/SessionSortToggle';
 import { cn } from '@/lib/utils';
 import RenameSessionModal from '@/pages/Chat/RenameSessionModal';
 
@@ -70,6 +72,9 @@ export default function SessionList() {
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [search, setSearch] = useState('');
   const [showCron, setShowCron] = useState<boolean>(readShowCron);
+  // Same preference as the chat drawer (lib/sessionSortMode.ts): the two lists
+  // show the same sessions, so they must not disagree about the order.
+  const [sortMode, setSortMode] = useState<SessionSortMode>(readSortMode);
   const [loading, setLoading] = useState(true);
 
   // Latest debounced query, read by the poll / refresh paths (which must not
@@ -152,9 +157,14 @@ export default function SessionList() {
   }, [allData, selectedProject]);
 
   const filtered = useMemo<FlatSession[]>(
-    () => sortSessions(showCron ? [...human, ...cron] : human),
-    [human, cron, showCron],
+    () => sortSessions(showCron ? [...human, ...cron] : human, sortMode),
+    [human, cron, showCron, sortMode],
   );
+
+  const changeSortMode = (mode: SessionSortMode) => {
+    writeSortMode(mode);
+    setSortMode(mode);
+  };
 
   // Reported next to the counter so the filter never hides sessions silently.
   const hiddenCronCount = showCron ? 0 : cron.length;
@@ -233,6 +243,8 @@ export default function SessionList() {
             className="w-full pl-9 pr-3 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-accent/50 placeholder:text-gray-400"
           />
         </div>
+
+        <SessionSortToggle value={sortMode} onChange={changeSortMode} />
 
         <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
           <input

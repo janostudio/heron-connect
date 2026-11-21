@@ -209,3 +209,80 @@ describe('pickLatestActivity', () => {
     expect(pickLatestActivity([] as Row[])).toBeUndefined();
   });
 });
+
+// The other mode: the order the lists used before reading state existed —
+// pinned conversations first, then the most recent user message. Reading state
+// is ignored here, which is exactly what makes it a separate mode instead of a
+// tweak of the reading order.
+describe('sortSessions in the activity mode', () => {
+  const activityIds = (rows: Row[]) => sortSessions(rows, 'activity').map((r) => r.id);
+
+  it('puts pinned sessions first regardless of message time', () => {
+    const rows = [
+      row({ id: 'fresh', last_user_at: '2026-06-01T00:00:00Z' }),
+      row({ id: 'pinned', pinned: true, last_user_at: '2026-01-01T00:00:00Z' }),
+    ];
+    expect(activityIds(rows)).toEqual(['pinned', 'fresh']);
+  });
+
+  it('ignores reading state entirely', () => {
+    const rows = [
+      row({ id: 'viewing', viewing: true, last_user_at: '2026-01-01T00:00:00Z' }),
+      row({ id: 'closed', view_closed_at: '2026-08-01T00:00:00Z', last_user_at: '2026-02-01T00:00:00Z' }),
+      row({ id: 'loud', last_user_at: '2026-06-01T00:00:00Z' }),
+    ];
+    expect(activityIds(rows)).toEqual(['loud', 'closed', 'viewing']);
+  });
+
+  it('keeps the pin flag above reading state', () => {
+    const rows = [
+      row({ id: 'viewing', viewing: true, last_user_at: '2026-06-01T00:00:00Z' }),
+      row({ id: 'pinned', pinned: true, last_user_at: '2026-01-01T00:00:00Z' }),
+    ];
+    expect(activityIds(rows)).toEqual(['pinned', 'viewing']);
+  });
+
+  it('does not mutate the input array', () => {
+    const rows = [row({ id: 'a', viewing: true }), row({ id: 'b', pinned: true })];
+    const before = rows.map((r) => r.id);
+    sortSessions(rows, 'activity');
+    expect(rows.map((r) => r.id)).toEqual(before);
+  });
+});
+
+// The server hands the list over in map order, which is not stable between the
+// 5s polls. Two sessions can share every sort key, so the comparator needs a
+// final deterministic tie-break or the tail of the list shuffles on refresh —
+// and switching modes (which re-sorts the array already in state) could
+// disagree with a fresh sort of the raw list.
+describe('sortSessions tie-breaking', () => {
+  it('orders exact ties by id in the reading mode', () => {
+    const a = row({ id: 'fs_a', viewing: true, last_user_at: '2026-05-01T00:00:00Z' });
+    const b = row({ id: 'fs_b', viewing: true, last_user_at: '2026-05-01T00:00:00Z' });
+
+    expect(ids([a, b])).toEqual(['fs_a', 'fs_b']);
+    expect(ids([b, a])).toEqual(['fs_a', 'fs_b']);
+  });
+
+  it('orders exact ties by id in the activity mode', () => {
+    const a = row({ id: 'fs_a', last_user_at: '2026-05-01T00:00:00Z' });
+    const b = row({ id: 'fs_b', last_user_at: '2026-05-01T00:00:00Z' });
+
+    const inOrder = sortSessions([a, b], 'activity').map((r) => r.id);
+    const reversed = sortSessions([b, a], 'activity').map((r) => r.id);
+    expect(inOrder).toEqual(['fs_a', 'fs_b']);
+    expect(reversed).toEqual(inOrder);
+  });
+
+  // Re-sorting an already-sorted list must be a no-op — that is what makes the
+  // in-place mode switch equivalent to sorting the raw list again.
+  it('is idempotent', () => {
+    const rows = [
+      row({ id: 'fs_c', viewing: true, last_user_at: '2026-03-01T00:00:00Z' }),
+      row({ id: 'fs_a', view_closed_at: '2026-06-01T00:00:00Z', last_user_at: '2026-02-01T00:00:00Z' }),
+      row({ id: 'fs_b', last_user_at: '2026-05-01T00:00:00Z' }),
+    ];
+    const once = sortSessions(rows);
+    expect(sortSessions(once).map((r) => r.id)).toEqual(once.map((r) => r.id));
+  });
+});

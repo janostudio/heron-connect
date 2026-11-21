@@ -93,7 +93,12 @@
     "sessionNameOptional": "Nombre de sesión (opcional)",
     "openInNewTab": "Abrir en pestaña nueva",
     "showCronSessions": "Mostrar sesiones de tareas programadas",
-    "hiddenCronSessions": "{{count}} sesiones de tareas programadas ocultas"
+    "hiddenCronSessions": "{{count}} sesiones de tareas programadas ocultas",
+    "sortOrder": "Orden",
+    "sortReading": "Lectura",
+    "sortReadingHint": "En lectura → cerradas hace poco → hora del mensaje",
+    "sortActivity": "Recientes",
+    "sortActivityHint": "Fijadas → hora del mensaje"
   },
   "providers": {
     "title": "Proveedores",
