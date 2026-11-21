@@ -5,6 +5,7 @@
 // conversation in this tab, the other in a new tab. They sit next to each
 // other and look alike, so the wiring has to be pinned: clicking one must not
 // trigger the other, and each button must be distinguishable by its title.
+// The sort selector has its own describe block below.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import React from 'react';
@@ -84,5 +85,47 @@ describe('SessionDrawer create buttons', () => {
     expect(buttonWithTitle(String(i18n.t('cmd.new')))).toBeTruthy();
     const titles = Array.from(document.body.querySelectorAll('button')).map((b) => b.title);
     expect(titles).not.toContain(String(i18n.t('sessions.openInNewTab')));
+  });
+});
+
+// The two orders are both rendered so the active one is visible rather than
+// implied by an icon state; the page owns the value, so the drawer only has to
+// report the click.
+function buttonWithText(text: string): HTMLButtonElement {
+  const button = Array.from(document.body.querySelectorAll('button')).find(
+    (b) => (b.textContent || '').trim() === text,
+  );
+  if (!button) throw new Error(`button with text "${text}" not found`);
+  return button;
+}
+
+describe('SessionDrawer sort selector', () => {
+  it('renders both orders and marks the active one', () => {
+    renderDrawer({ sortMode: 'reading', onSortModeChange: () => {} });
+
+    const reading = buttonWithText(String(i18n.t('sessions.sortReading')));
+    const activity = buttonWithText(String(i18n.t('sessions.sortActivity')));
+    expect(reading.getAttribute('aria-pressed')).toBe('true');
+    expect(activity.getAttribute('aria-pressed')).toBe('false');
+    // Each option explains its rule on hover: the labels alone do not say
+    // whether pinned conversations still come first.
+    expect(reading.title).toBe(String(i18n.t('sessions.sortReadingHint')));
+    expect(activity.title).toBe(String(i18n.t('sessions.sortActivityHint')));
+  });
+
+  it('reports the picked order', () => {
+    const onChange = vi.fn();
+    renderDrawer({ sortMode: 'reading', onSortModeChange: onChange });
+
+    act(() => { buttonWithText(String(i18n.t('sessions.sortActivity'))).click(); });
+
+    expect(onChange).toHaveBeenCalledWith('activity');
+  });
+
+  it('omits the selector when the page provides no handler', () => {
+    renderDrawer();
+
+    const labels = Array.from(document.body.querySelectorAll('button')).map((b) => (b.textContent || '').trim());
+    expect(labels).not.toContain(String(i18n.t('sessions.sortReading')));
   });
 });

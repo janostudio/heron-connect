@@ -8,11 +8,12 @@ import {
   Pin, PinOff, Pencil, RefreshCw, Share2, Check, Link2, Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui';
-import { listSessions, getSession, createSession, sessionTitle, updateSession, sortSessions, pickLatestActivity, splitByOrigin, type Session, type SessionDetail } from '@/api/sessions';
+import { listSessions, getSession, createSession, sessionTitle, updateSession, sortSessions, pickLatestActivity, splitByOrigin, type Session, type SessionDetail, type SessionSortMode } from '@/api/sessions';
 import api from '@/api/client';
 import { newConvKey } from '@/lib/webSessionKey';
 import { reserveTab, openReservedTab } from '@/lib/newTab';
 import { setViewedSession } from '@/lib/sessionView';
+import { readSortMode, writeSortMode } from '@/lib/sessionSortMode';
 import {
   useBridgeSocket, fetchBridgeConfig,
   type BridgeConfig, type BridgeIncoming, type BridgeStatus,
@@ -989,6 +990,9 @@ export default function ChatView() {
   // UI state
   const [cmdOpen, setCmdOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Session list order. The preference is shared with the session management
+  // page (lib/sessionSortMode.ts), so flipping it in one place flips both.
+  const [sortMode, setSortMode] = useState<SessionSortMode>(readSortMode);
   // Local file preview (agent-generated files served via /api/v1/files/...)
   const [previewFile, setPreviewFile] = useState<{ path: string; fileName: string } | null>(null);
   // Project file browser drawer
@@ -1108,6 +1112,12 @@ export default function ChatView() {
   const viewedIdRef = useRef(viewedId);
   viewedIdRef.current = viewedId;
 
+  // The fetch/poll callbacks order the list themselves, and rebuilding them on
+  // a mode flip would re-run the fetch. Read the mode through this ref instead;
+  // the flip re-sorts the array it already has (see changeSortMode).
+  const sortModeRef = useRef(sortMode);
+  sortModeRef.current = sortMode;
+
   // Get (or lazily mint) the routing id for the conversation on screen. Called
   // before sending, so a brand-new conversation has a slice to receive into.
   const ensureViewedId = useCallback((): string => {
@@ -1189,7 +1199,7 @@ export default function ChatView() {
           ? prev
           : cfg
       );
-      const sorted = sortSessions(allSessions || []);
+      const sorted = sortSessions(allSessions || [], sortModeRef.current);
       setSessions(sorted);
 
       // Auto-select the newest HUMAN conversation by activity. It deliberately
@@ -1247,7 +1257,7 @@ export default function ChatView() {
     if (!projectName) return;
     try {
       const { sessions: allSessions } = await listSessions(projectName);
-      const sorted = sortSessions(allSessions || []);
+      const sorted = sortSessions(allSessions || [], sortModeRef.current);
       setSessions(prev => (sessionsSignature(prev) === sessionsSignature(sorted) ? prev : sorted));
 
       // Read the open conversation from the ref, not from a closure: depending
@@ -1816,6 +1826,16 @@ export default function ChatView() {
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
   const openRenameModal = useCallback((s: Session) => setRenameTarget(s), []);
 
+  // Flip the order. Re-sorting the array already in state (instead of refetching)
+  // keeps the switch instant; the returned list is a fresh array, and ordering
+  // is total on the keys the comparator uses, so re-sorting a sorted list is
+  // idempotent.
+  const changeSortMode = useCallback((mode: SessionSortMode) => {
+    writeSortMode(mode);
+    setSortMode(mode);
+    setSessions(prev => sortSessions(prev, mode));
+  }, []);
+
   if (loading && !currentSession && sessions.length === 0) {
     return <div className="flex items-center justify-center h-64 text-gray-400 animate-pulse">Loading...</div>;
   }
@@ -1997,6 +2017,8 @@ export default function ChatView() {
         onNewSessionInNewTab={handleNewSessionInNewTab}
         onRename={openRenameModal}
         onTogglePin={togglePinSession}
+        sortMode={sortMode}
+        onSortModeChange={changeSortMode}
       />
 
       {/* Command result panel */}

@@ -93,7 +93,12 @@
     "sessionNameOptional": "Session name (optional)",
     "openInNewTab": "Open in new tab",
     "showCronSessions": "Show scheduled-run sessions",
-    "hiddenCronSessions": "{{count}} scheduled-run sessions hidden"
+    "hiddenCronSessions": "{{count}} scheduled-run sessions hidden",
+    "sortOrder": "Sort",
+    "sortReading": "Reading",
+    "sortReadingHint": "Being read → recently closed → message time",
+    "sortActivity": "Recent",
+    "sortActivityHint": "Pinned → message time"
   },
   "providers": {
     "title": "Providers",

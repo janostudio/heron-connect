@@ -26,8 +26,9 @@ export interface Session {
    */
   interruptible?: boolean;
   /**
-   * True when the session is user-pinned. Shown and toggled in the UI, but NOT
-   * part of the list order — see sortSessions.
+   * True when the session is user-pinned. Shown and toggled in the UI. It sorts
+   * in the `activity` order (pinned first) and is ignored by the `reading`
+   * order — see sortSessions.
    */
   pinned?: boolean;
   /**
@@ -150,6 +151,20 @@ export const sendMessage = (project: string, body: { session_key: string; messag
   api.post(`/projects/${project}/send`, body);
 
 /**
+ * How the session lists are ordered. Both modes are offered in the UI, and the
+ * choice is remembered per browser — the two answer different questions:
+ *
+ * - `reading`: what is being read right now (see sortSessions).
+ * - `activity`: the long-standing order — pinned first, then most recent user
+ *   message. Kept because it is the better view when the user works through a
+ *   fixed set of conversations they pinned themselves.
+ */
+export type SessionSortMode = 'reading' | 'activity';
+
+/** The mode a fresh browser starts in: the reading order is the newer default. */
+export const DEFAULT_SESSION_SORT_MODE: SessionSortMode = 'reading';
+
+/**
  * Orders sessions by what people are reading, most relevant first:
  *
  *   1. being read right now (`viewing` — a web client is open on it)
@@ -159,10 +174,11 @@ export const sendMessage = (project: string, body: { session_key: string; messag
  * Within each group the order is the user's most recent message, so the list
  * still reads naturally once the reading groups are separated.
  *
- * Pinning is deliberately NOT part of this order: the list answers "what am I
- * (or is anyone) reading", and a pin would push conversations the user has not
- * touched in weeks above the one being read right now. The pin flag still
- * exists — it is shown and toggled in the UI — it just no longer sorts.
+ * In this mode pinning is deliberately NOT part of the order: the list answers
+ * "what am I (or is anyone) reading", and a pin would push conversations the
+ * user has not touched in weeks above the one being read right now. The pin
+ * flag still exists — it is shown and toggled in the UI. The `activity` mode
+ * below is where pinning still sorts.
  *
  * `last_user_at` rather than `updated_at` is the activity key: the latter is
  * stamped when a whole turn finishes (assistant reply + every tool call), so a
@@ -172,21 +188,42 @@ export const sendMessage = (project: string, body: { session_key: string; messag
  * views.
  */
 export function sortSessions<T extends {
+  id: string;
+  pinned?: boolean;
   viewing?: boolean;
   view_closed_at?: string;
   last_user_at?: string;
   updated_at: string;
   created_at: string;
-}>(list: T[]): T[] {
+}>(list: T[], mode: SessionSortMode = DEFAULT_SESSION_SORT_MODE): T[] {
   const activityKey = (s: T) => s.last_user_at || s.updated_at || s.created_at;
   const byActivity = (a: T, b: T) => {
     const aTime = activityKey(a);
     const bTime = activityKey(b);
     return (bTime > aTime ? 1 : bTime < aTime ? -1 : 0);
   };
-  // Group rank: lower sorts first. A closed session without a timestamp is
-  // grouped with the never-read ones, so a malformed payload degrades to the
-  // activity order instead of pinning it to the top.
+  // Final tie-break. Two sessions can share every sort key (same message time,
+  // or two equally fresh heartbeats), and the server hands the list over in map
+  // order — not stable between polls. Without this the tail of the list would
+  // shuffle on every refresh, and re-sorting an already-sorted array (what the
+  // mode switch does) could disagree with a fresh sort of the raw list.
+  const byId = (a: T, b: T) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+  if (mode === 'activity') {
+    // The original order: pinned conversations first, then by the user's most
+    // recent message. Reading state is ignored here — that is the whole
+    // difference between the two modes.
+    return [...list].sort((a, b) => {
+      const aPin = a.pinned ? 1 : 0;
+      const bPin = b.pinned ? 1 : 0;
+      if (aPin !== bPin) return bPin - aPin;
+      return byActivity(a, b) || byId(a, b);
+    });
+  }
+
+  // Reading order. Group rank: lower sorts first. A closed session without a
+  // timestamp is grouped with the never-read ones, so a malformed payload
+  // degrades to the activity order instead of pinning it to the top.
   const rank = (s: T) => (s.viewing ? 0 : s.view_closed_at ? 1 : 2);
 
   return [...list].sort((a, b) => {
@@ -198,7 +235,7 @@ export function sortSessions<T extends {
       const bClosed = b.view_closed_at || '';
       if (aClosed !== bClosed) return aClosed < bClosed ? 1 : -1;
     }
-    return byActivity(a, b);
+    return byActivity(a, b) || byId(a, b);
   });
 }
 

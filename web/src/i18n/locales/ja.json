@@ -93,7 +93,12 @@
     "sessionNameOptional": "セッション名（任意）",
     "openInNewTab": "新しいタブで開く",
     "showCronSessions": "定期実行セッションを表示",
-    "hiddenCronSessions": "定期実行セッション {{count}} 件を非表示中"
+    "hiddenCronSessions": "定期実行セッション {{count}} 件を非表示中",
+    "sortOrder": "並び順",
+    "sortReading": "閲覧順",
+    "sortReadingHint": "閲覧中 → 最近閉じた → メッセージ時刻",
+    "sortActivity": "最新の会話",
+    "sortActivityHint": "ピン留め → メッセージ時刻"
   },
   "providers": {
     "title": "プロバイダー",
