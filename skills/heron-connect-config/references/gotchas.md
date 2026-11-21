@@ -173,6 +173,7 @@ grep "processing queued messages" <log>      # ← 如果只有前者、没有�
 | 本地文件路径不可点 | 普通消息未传 workspaceDir | v1.3.10 修复 |
 | 页面白屏（React #130） | `react-markdown` 的 components 传了 `undefined` | 相关版本已修 |
 | 子 Agent 执行完"只剩结果"、嵌套丢失 | row-merge 致 tool_use 被替换 | v1.3.18 修复 |
+| 会话列表里"会话不见了" | 定时任务产生的会话（`origin=cron`）默认隐藏，列表顶部有「显示定时任务会话」开关 | v1.4.0 起 |
 
 ### 2.5 平台连接问题
 
