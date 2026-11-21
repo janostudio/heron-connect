@@ -16,7 +16,7 @@ import type { Session } from '@/api/sessions';
  */
 export function sessionsSignature(list: Session[]): string {
   return list
-    .map(s => `${s.id}|${s.session_key}|${s.name}|${s.running ? 1 : 0}|${s.waiting_permission ? 1 : 0}|${s.live ? 1 : 0}|${s.pinned ? 1 : 0}|${s.updated_at}|${s.history_count}`)
+    .map(s => `${s.id}|${s.session_key}|${s.name}|${s.running ? 1 : 0}|${s.waiting_permission ? 1 : 0}|${s.live ? 1 : 0}|${s.pinned ? 1 : 0}|${s.viewing ? 1 : 0}|${s.view_closed_at || ''}|${s.updated_at}|${s.history_count}`)
     .join('\n');
 }
 

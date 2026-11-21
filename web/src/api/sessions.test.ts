@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { sortSessions, splitByOrigin, isCronSession, CRON_SESSION_ORIGIN } from './sessions';
+import { sortSessions, pickLatestActivity, splitByOrigin, isCronSession, CRON_SESSION_ORIGIN } from './sessions';
 
 // Minimal shape sortSessions cares about.
 type Row = {
   id: string;
   pinned?: boolean;
+  viewing?: boolean;
+  view_closed_at?: string;
   last_user_at?: string;
   updated_at: string;
   created_at: string;
@@ -19,12 +21,16 @@ const row = (over: Partial<Row> & { id: string }): Row => ({
 const ids = (rows: Row[]) => sortSessions(rows).map((r) => r.id);
 
 describe('sortSessions', () => {
-  it('puts pinned sessions first', () => {
+  // The list answers "what is being read"; a pin says "I care about this" and
+  // used to win over everything. It no longer sorts: a conversation pinned
+  // weeks ago must not outrank the one open in a tab right now. The flag is
+  // still shown and toggled in the UI.
+  it('ignores the pin flag entirely', () => {
     const rows = [
       row({ id: 'fresh', last_user_at: '2026-05-01T00:00:00Z' }),
       row({ id: 'pinned', pinned: true, last_user_at: '2026-01-01T00:00:00Z' }),
     ];
-    expect(ids(rows)).toEqual(['pinned', 'fresh']);
+    expect(ids(rows)).toEqual(['fresh', 'pinned']);
   });
 
   it('orders by last_user_at, newest first', () => {
@@ -118,5 +124,88 @@ describe('isCronSession', () => {
     expect(isCronSession({ origin: CRON_SESSION_ORIGIN })).toBe(true);
     expect(isCronSession({})).toBe(false);
     expect(isCronSession({ origin: '' })).toBe(false);
+  });
+});
+
+// Reading order: what is open now, then what was closed most recently, then
+// everything else by message activity. These three groups are the whole point
+// of the presence tracking in core/views.go + lib/sessionView.ts.
+describe('sortSessions reading order', () => {
+  it('puts conversations being read above closed and unread ones', () => {
+    const rows = [
+      row({ id: 'unread-newest', last_user_at: '2026-06-01T00:00:00Z' }),
+      row({ id: 'viewing-old', viewing: true, last_user_at: '2026-01-01T00:00:00Z' }),
+      row({ id: 'closed', view_closed_at: '2026-05-01T00:00:00Z', last_user_at: '2026-02-01T00:00:00Z' }),
+    ];
+    expect(ids(rows)).toEqual(['viewing-old', 'closed', 'unread-newest']);
+  });
+
+  it('orders the closed group by close time, newest first', () => {
+    const rows = [
+      row({ id: 'closed-long-ago', view_closed_at: '2026-07-01T00:00:00Z' }),
+      row({ id: 'closed-just-now', view_closed_at: '2026-08-01T00:00:00Z' }),
+    ];
+    expect(ids(rows)).toEqual(['closed-just-now', 'closed-long-ago']);
+  });
+
+  // Close time decides before activity: a conversation read a minute ago and
+  // silent for a week still belongs above one that was never read but received
+  // a message yesterday.
+  it('keeps close time above message time for the closed group', () => {
+    const rows = [
+      row({ id: 'never-read-loud', last_user_at: '2026-08-02T00:00:00Z' }),
+      row({ id: 'read-quiet', view_closed_at: '2026-08-01T00:00:00Z', last_user_at: '2026-07-01T00:00:00Z' }),
+    ];
+    expect(ids(rows)).toEqual(['read-quiet', 'never-read-loud']);
+  });
+
+  it('breaks ties inside a group by activity', () => {
+    const rows = [
+      row({ id: 'viewing-older', viewing: true, last_user_at: '2026-01-01T00:00:00Z' }),
+      row({ id: 'viewing-newer', viewing: true, last_user_at: '2026-05-01T00:00:00Z' }),
+    ];
+    expect(ids(rows)).toEqual(['viewing-newer', 'viewing-older']);
+  });
+
+  // First run, or a session store with no presence yet: the order must be the
+  // plain activity order users already know.
+  it('reproduces the activity order when nothing has been read', () => {
+    const rows = [
+      row({ id: 'old', last_user_at: '2026-01-01T00:00:00Z' }),
+      row({ id: 'new', last_user_at: '2026-06-01T00:00:00Z' }),
+    ];
+    expect(ids(rows)).toEqual(['new', 'old']);
+  });
+
+  it('treats an empty close timestamp as unread rather than preferring it', () => {
+    const rows = [
+      row({ id: 'empty-close', view_closed_at: '', last_user_at: '2026-01-01T00:00:00Z' }),
+      row({ id: 'viewing', viewing: true, last_user_at: '2026-01-01T00:00:00Z' }),
+    ];
+    expect(ids(rows)).toEqual(['viewing', 'empty-close']);
+  });
+
+  it('does not mutate the input array', () => {
+    const rows = [row({ id: 'a' }), row({ id: 'b', viewing: true })];
+    const before = rows.map((r) => r.id);
+    sortSessions(rows);
+    expect(rows.map((r) => r.id)).toEqual(before);
+  });
+});
+
+// Auto-select on the chat page: "open the newest conversation" must stay an
+// activity question, because the head of the list is now whatever is open in
+// some tab.
+describe('pickLatestActivity', () => {
+  it('returns the newest conversation regardless of reading state', () => {
+    const rows = [
+      row({ id: 'viewing', viewing: true, last_user_at: '2026-01-01T00:00:00Z' }),
+      row({ id: 'newest', last_user_at: '2026-06-01T00:00:00Z' }),
+    ];
+    expect(pickLatestActivity(rows)?.id).toBe('newest');
+  });
+
+  it('returns undefined for an empty list', () => {
+    expect(pickLatestActivity([] as Row[])).toBeUndefined();
   });
 });

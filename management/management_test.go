@@ -3392,3 +3392,96 @@ func TestMgmt_SessionCookieSecureFollowsForwardedProto(t *testing.T) {
 		t.Error("cookie behind an https proxy must be Secure")
 	}
 }
+
+// ── session list: web reading presence ───────────────────────
+
+// sessionFromList fetches the project's session list and returns one entry.
+func sessionFromList(t *testing.T, baseURL, token, id string) map[string]any {
+	t.Helper()
+	r := mgmtGet(t, baseURL+"/api/v1/projects/test-project/sessions", token)
+	if !r.OK {
+		t.Fatalf("list failed: %s", r.Error)
+	}
+	var data struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	if err := json.Unmarshal(r.Data, &data); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, s := range data.Sessions {
+		if s["id"] == id {
+			return s
+		}
+	}
+	t.Fatalf("session %s not found in list", id)
+	return nil
+}
+
+// A heartbeat from the web is what marks a conversation as being read; the
+// list must expose that as `viewing` so the UI can float it to the top.
+func TestMgmt_SessionView_HeartbeatMarksSessionViewing(t *testing.T) {
+	_, ts, e := testManagementServer(t, "tok")
+	s := e.GetSessions().GetOrCreateActive("user1")
+
+	r := mgmtPost(t, ts.URL+"/api/v1/projects/test-project/session-view", "tok",
+		map[string]any{"session_id": s.ID})
+	if !r.OK {
+		t.Fatalf("heartbeat failed: %s", r.Error)
+	}
+
+	got := sessionFromList(t, ts.URL, "tok", s.ID)
+	if v, _ := got["viewing"].(bool); !v {
+		t.Error("viewing = false right after a heartbeat")
+	}
+	// Still being read → no close time yet.
+	if v, _ := got["view_closed_at"].(string); v != "" {
+		t.Errorf("view_closed_at = %q while the session is still viewing", v)
+	}
+}
+
+// Expiry writes the close time the list ordering needs, derived from the last
+// heartbeat (the TTL boundary), not from when the list happened to be fetched.
+func TestMgmt_SessionView_ExpiredHeartbeatRecordsCloseTime(t *testing.T) {
+	_, ts, e := testManagementServer(t, "tok")
+	s := e.GetSessions().GetOrCreateActive("user1")
+	mgmtPost(t, ts.URL+"/api/v1/projects/test-project/session-view", "tok",
+		map[string]any{"session_id": s.ID})
+
+	// Force the TTL to have passed: the heartbeat above used the real clock, so
+	// evaluating far in the future is equivalent to waiting it out.
+	e.GetSessions().ViewingIDs(time.Now().Add(2 * core.ViewPresenceTTL))
+
+	got := sessionFromList(t, ts.URL, "tok", s.ID)
+	if v, _ := got["viewing"].(bool); v {
+		t.Error("viewing = true after the heartbeat expired")
+	}
+	if v, _ := got["view_closed_at"].(string); v == "" {
+		t.Error("view_closed_at missing after expiry; the list cannot order by it")
+	}
+}
+
+// A tab can outlive its session. The heartbeat must be rejected rather than
+// creating a presence entry that never resolves to a record.
+func TestMgmt_SessionView_UnknownSessionRejected(t *testing.T) {
+	_, ts, _ := testManagementServer(t, "tok")
+
+	r := mgmtPost(t, ts.URL+"/api/v1/projects/test-project/session-view", "tok",
+		map[string]any{"session_id": "s404"})
+
+	if r.OK {
+		t.Error("heartbeat for an unknown session was accepted")
+	}
+}
+
+// An empty id means "no conversation open in this tab" and must be a no-op,
+// not an error: clients send it whenever the chat view is left.
+func TestMgmt_SessionView_EmptyIDIsNoop(t *testing.T) {
+	_, ts, _ := testManagementServer(t, "tok")
+
+	r := mgmtPost(t, ts.URL+"/api/v1/projects/test-project/session-view", "tok",
+		map[string]any{"session_id": ""})
+
+	if !r.OK {
+		t.Fatalf("empty heartbeat failed: %s", r.Error)
+	}
+}

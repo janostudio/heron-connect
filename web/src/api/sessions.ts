@@ -25,8 +25,22 @@ export interface Session {
    * states apart. Absent/false means queueing.
    */
   interruptible?: boolean;
-  /** True when the session is user-pinned (shown first in lists). */
+  /**
+   * True when the session is user-pinned. Shown and toggled in the UI, but NOT
+   * part of the list order — see sortSessions.
+   */
   pinned?: boolean;
+  /**
+   * True while a web client has this conversation open (it heartbeats while
+   * the tab shows it). Server-derived, never set by the client.
+   */
+  viewing?: boolean;
+  /**
+   * When the last web reader left, recorded server-side when the heartbeat
+   * lapses. Absent when the conversation has never been read from the web.
+   * Persisted, so the reading order survives a restart.
+   */
+  view_closed_at?: string;
   /**
    * Who created the session. Absent/empty for ordinary chat sessions;
    * `cron` for a scheduled job's isolated run session (the job runs with
@@ -135,19 +149,73 @@ export const switchSession = (project: string, body: { session_key: string; sess
 export const sendMessage = (project: string, body: { session_key: string; message: string }) =>
   api.post(`/projects/${project}/send`, body);
 
-// sortSessions orders sessions with pinned ones first, then by the user's
-// most recent message (`last_user_at`) — NOT `updated_at`, which is stamped
-// at turn completion and would float long-running sessions to the top even
-// though the user has not said anything new. Both fall back to `created_at`
-// so a session with no user message yet still sorts deterministically. Used
-// consistently across chat and list views.
-export function sortSessions<T extends { pinned?: boolean; last_user_at?: string; updated_at: string; created_at: string }>(list: T[]): T[] {
-  return [...list].sort((a, b) => {
-    const aPin = a.pinned ? 1 : 0;
-    const bPin = b.pinned ? 1 : 0;
-    if (aPin !== bPin) return bPin - aPin;
-    const aTime = a.last_user_at || a.updated_at || a.created_at;
-    const bTime = b.last_user_at || b.updated_at || b.created_at;
+/**
+ * Orders sessions by what people are reading, most relevant first:
+ *
+ *   1. being read right now (`viewing` — a web client is open on it)
+ *   2. read before and since closed, most recently closed first
+ *   3. never read from the web, by the user's most recent message
+ *
+ * Within each group the order is the user's most recent message, so the list
+ * still reads naturally once the reading groups are separated.
+ *
+ * Pinning is deliberately NOT part of this order: the list answers "what am I
+ * (or is anyone) reading", and a pin would push conversations the user has not
+ * touched in weeks above the one being read right now. The pin flag still
+ * exists — it is shown and toggled in the UI — it just no longer sorts.
+ *
+ * `last_user_at` rather than `updated_at` is the activity key: the latter is
+ * stamped when a whole turn finishes (assistant reply + every tool call), so a
+ * long-running turn would make a session look newer than the user's own last
+ * message. Both fall back to `created_at` so a session with no user message
+ * yet still sorts deterministically. Used consistently across chat and list
+ * views.
+ */
+export function sortSessions<T extends {
+  viewing?: boolean;
+  view_closed_at?: string;
+  last_user_at?: string;
+  updated_at: string;
+  created_at: string;
+}>(list: T[]): T[] {
+  const activityKey = (s: T) => s.last_user_at || s.updated_at || s.created_at;
+  const byActivity = (a: T, b: T) => {
+    const aTime = activityKey(a);
+    const bTime = activityKey(b);
     return (bTime > aTime ? 1 : bTime < aTime ? -1 : 0);
+  };
+  // Group rank: lower sorts first. A closed session without a timestamp is
+  // grouped with the never-read ones, so a malformed payload degrades to the
+  // activity order instead of pinning it to the top.
+  const rank = (s: T) => (s.viewing ? 0 : s.view_closed_at ? 1 : 2);
+
+  return [...list].sort((a, b) => {
+    const aRank = rank(a);
+    const bRank = rank(b);
+    if (aRank !== bRank) return aRank - bRank;
+    if (aRank === 1) {
+      const aClosed = a.view_closed_at || '';
+      const bClosed = b.view_closed_at || '';
+      if (aClosed !== bClosed) return aClosed < bClosed ? 1 : -1;
+    }
+    return byActivity(a, b);
   });
+}
+
+/**
+ * The newest conversation by activity, ignoring reading state. Auto-select uses
+ * this: opening the chat page with no session in the URL should land on the
+ * conversation with the latest message, not on whichever one someone happens
+ * to have open in another tab.
+ */
+export function pickLatestActivity<T extends { id: string; viewing?: boolean; view_closed_at?: string; last_user_at?: string; updated_at: string; created_at: string }>(
+  list: T[],
+): T | undefined {
+  let best: T | undefined;
+  for (const s of list) {
+    if (!best || (s.last_user_at || s.updated_at || s.created_at) > (best.last_user_at || best.updated_at || best.created_at)) {
+      best = s;
+    }
+  }
+  return best;
 }

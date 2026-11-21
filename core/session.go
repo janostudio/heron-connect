@@ -66,6 +66,13 @@ type Session struct {
 	History             []HistoryEntry `json:"history"`
 	CreatedAt           time.Time      `json:"created_at"`
 	UpdatedAt           time.Time      `json:"updated_at"`
+	// LastViewClosedAt is when the last web reader of this session went away
+	// (heartbeat expired or the tab closed), persisted so the reading order in
+	// the web session list survives a restart. Zero means nobody has read it
+	// from the web yet. Live presence is deliberately NOT stored here — that
+	// lives in memory (see views.go) because a restart drops every connection
+	// and clients re-report within one heartbeat.
+	LastViewClosedAt time.Time `json:"last_view_closed_at"`
 
 	mu   sync.Mutex `json:"-"`
 	busy bool       `json:"-"`
@@ -293,6 +300,11 @@ type SessionManager struct {
 	userMeta      map[string]*UserMeta // sessionKey → display info
 	counter       int64
 	storePath     string // empty = no persistence
+
+	// views is the in-memory web reading presence (see views.go). Kept next to
+	// the sessions because expiring a heartbeat persists a close time on the
+	// session record.
+	views viewPresence
 
 	// legacyData is true when sessions were loaded from a snapshot that
 	// predates PastAgentSessionIDs tracking. In this state, many sessions
@@ -696,6 +708,7 @@ func (sm *SessionManager) saveLocked() {
 			History:             append([]HistoryEntry(nil), s.History...),
 			CreatedAt:           s.CreatedAt,
 			UpdatedAt:           s.UpdatedAt,
+			LastViewClosedAt:    s.LastViewClosedAt,
 		}
 		s.mu.Unlock()
 	}
@@ -888,6 +901,9 @@ type SessionSnapshot struct {
 	History        []HistoryEntry
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	// ViewClosedAt is the persisted "last web reader left" time; zero means
+	// never read from the web.
+	ViewClosedAt time.Time
 }
 
 // Snapshot returns a consistent, thread-safe copy of the session's fields.
@@ -906,7 +922,16 @@ func (s *Session) Snapshot() SessionSnapshot {
 		History:        hist,
 		CreatedAt:      s.CreatedAt,
 		UpdatedAt:      s.UpdatedAt,
+		ViewClosedAt:   s.LastViewClosedAt,
 	}
+}
+
+// SetViewClosedAt records when the last web reader left. Caller persists via
+// SessionManager; the value alone does not trigger a write.
+func (s *Session) SetViewClosedAt(at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.LastViewClosedAt = at
 }
 
 // SetName sets the session's display name under the session lock.
