@@ -167,8 +167,6 @@ export default function SessionList() {
   };
 
   // Reported next to the counter so the filter never hides sessions silently.
-  const hiddenCronCount = showCron ? 0 : cron.length;
-
   const toggleShowCron = (next: boolean) => {
     setShowCron(next);
     try {
@@ -253,14 +251,18 @@ export default function SessionList() {
             onChange={(e) => toggleShowCron(e.target.checked)}
             className="w-3.5 h-3.5 accent-current cursor-pointer"
           />
-          {t('sessions.showCronSessions')}
+          {/* The count rides on the toggle instead of a separate "N hidden"
+              clause at the end of the row: one short label says both what the
+              checkbox does and how many sessions it covers. The count is the
+              total number of scheduled-run sessions, so it does not flip to
+              zero the moment the box is ticked. */}
+          {cron.length > 0
+            ? t('sessions.showCronSessions', { count: cron.length })
+            : t('sessions.showCronSessionsNone')}
         </label>
 
         <span className="text-xs text-gray-400">
           {filtered.length} {t('nav.sessions').toLowerCase()}
-          {hiddenCronCount > 0 && (
-            <span className="text-gray-400"> · {t('sessions.hiddenCronSessions', { count: hiddenCronCount })}</span>
-          )}
         </span>
 
         <Button size="sm" onClick={openCreateModal} className="ml-auto">
