@@ -279,7 +279,7 @@
 
 ### 5.1 动机与现状
 
-demo-project 的每日复盘（cron job `daily-workreport`，见 `scripts/cc-connect-qhn/crons/jobs.json`）是典型业务：agent 读 issue 库与知识库、跑分析脚本（token-usage-analyzer / session-analyzer）、落地 `reports/YYYYMMDD/token-daily.html`、`daily-summary.md` 等产物，最后把**文档全文粘进企微群**。痛点：HTML 在群里无法展示、全文播报又臭又长、历史报告无入口可回看。
+demo-project 的每日复盘（cron job `daily-report`，见 `scripts/heron-connect/crons/jobs.json`）是典型业务：agent 读 issue 库与知识库、跑分析脚本（token-usage-analyzer / session-analyzer）、落地 `reports/YYYYMMDD/token-daily.html`、`daily-summary.md` 等产物，最后把**文档全文粘进企微群**。痛点：HTML 在群里无法展示、全文播报又臭又长、历史报告无入口可回看。
 
 关键事实：**文件托管已经存在，不需要另起 python http.server**（那只是多一个无鉴权暴露面）。`GET /api/v1/files/<project>/<relpath>`（management/mgmt_server.go:472）已具备：
 
@@ -303,7 +303,7 @@ manifest（可选；无 manifest 也能列出——标题=文件名，日期=从
 {
   "title": "Token 消耗日报",
   "type": "token",                    // 业务自定义分类，报告中心按此过滤
-  "generated_by": "daily-workreport"  // 可选，溯源 cron job
+  "generated_by": "daily-report"  // 可选，溯源 cron job
 }
 ```
 
@@ -365,7 +365,7 @@ SPA（引擎的壳：导航/鉴权/主题，React）
 {
   "version": 1,
   "generated_at": "2026-08-31T18:05:00+08:00",
-  "generated_by": "daily-workreport",          // 溯源
+  "generated_by": "daily-report",          // 溯源
   "period": { "start": "2026-08-30", "end": "2026-08-31" },  // 覆盖窗口（展示标注用，不参与引擎筛选）
   "cards": [                                    // 顶部自由 KPI 卡（可选，复用引擎 StatCard 组件）
     { "label": "修复 PR", "value": 3, "unit": "个", "tone": "good" },
@@ -411,7 +411,7 @@ SPA（引擎的壳：导航/鉴权/主题，React）
 
 **为什么需要两个跳转键**：业务脚本（analyze_v2.py 等）直读 CLI 会话日志，手里只有 CLI 会话 ID（`.jsonl` 文件名）；引擎会话 ID 与之是映射关系。TurnRecord 已同时记录两者（§3.1），双键设计让业务零成本对齐引擎。
 
-### 5.6 业务引入示例（demo-project daily-workreport）
+### 5.6 业务引入示例（demo-project daily-report）
 
 cron job 结构与触发不变，prompt 仅微调第 4/5 步：
 

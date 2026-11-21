@@ -339,7 +339,7 @@ seq  --  turn 响应（JSON-RPC result）
   "session_id":"fs_test_session","flow_turn_id":"ft_test_turn",
   "seq":8,"event_id":"fs_test_session-8","type":"assistant","attempt":1,
   "team_id":"default","call_id":"answer","call_turn_id":"tt_test_turn:answer",
-  "round":0,"model":"hy3-ioa","finish_reason":"tool_calls",
+  "round":0,"model":"hy3","finish_reason":"tool_calls",
   "content":[{"type":"tool_use","id":"chatcmpl-tool-b73df397cb281091",
               "name":"Read","input":{"file":"project/README.md","line_end":20}}],
   "usage":{"prompt_tokens":2203,"completion_tokens":59,"total_tokens":2262}}}
@@ -374,7 +374,7 @@ seq  --  turn 响应（JSON-RPC result）
   "session_id":"fs_test_session","flow_turn_id":"ft_test_turn",
   "seq":11,"event_id":"fs_test_session-11","type":"assistant","attempt":1,
   "team_id":"default","call_id":"answer","call_turn_id":"tt_test_turn:answer",
-  "round":1,"model":"hy3-ioa","finish_reason":"stop",
+  "round":1,"model":"hy3","finish_reason":"stop",
   "content":[{"type":"text","text":"`project/README.md` 头部内容（前 20 行）：\n\n..."}],
   "usage":{"prompt_tokens":2427,"completion_tokens":238,"total_tokens":2665}}}
 ```

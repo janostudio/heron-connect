@@ -783,7 +783,7 @@ func TestLoad_ResolvesEnvPlaceholders(t *testing.T) {
 // cwd. It must now be anchored to the config file's own directory at load time.
 func TestLoad_AnchorsRelativeWorkDirToConfigDir(t *testing.T) {
 	root := t.TempDir()
-	cfgDir := filepath.Join(root, "scripts", "cc-connect-qhn")
+	cfgDir := filepath.Join(root, "scripts", "heron-connect")
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
 	}

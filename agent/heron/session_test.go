@@ -621,7 +621,7 @@ func TestAgentAvailableModels_ReadsModelsJSON(t *testing.T) {
 	modelsJSON := `{"model":"gpt-5.4","models":[
 		{"id":"gpt-5.4","name":"GPT-5.4"},
 		{"id":"claude-sonnet-5","name":"Claude Sonnet 5"},
-		{"id":"glm-5.2-ioa","name":"GLM 5.2 IOA"}
+		{"id":"glm-5.2","name":"GLM 5.2"}
 	]}`
 	if err := os.WriteFile(agentsDir+"/models.json", []byte(modelsJSON), 0o644); err != nil {
 		t.Fatal(err)
@@ -640,7 +640,7 @@ func TestAgentAvailableModels_ReadsModelsJSON(t *testing.T) {
 	if len(models) != 3 {
 		t.Fatalf("AvailableModels len = %d, want 3", len(models))
 	}
-	if models[0].Name != "gpt-5.4" || models[1].Name != "claude-sonnet-5" || models[2].Name != "glm-5.2-ioa" {
+	if models[0].Name != "gpt-5.4" || models[1].Name != "claude-sonnet-5" || models[2].Name != "glm-5.2" {
 		t.Fatalf("model names = %#v", models)
 	}
 	if models[1].Desc != "Claude Sonnet 5" {

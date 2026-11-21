@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_at": "2026-08-31T18:05:00+08:00",
-  "generated_by": "daily-workreport",
+  "generated_by": "daily-report",
   "period": { "start": "2026-08-30", "end": "2026-08-31" },
   "cards": [
     { "label": "修复 PR", "value": 3, "unit": "个", "tone": "good" },

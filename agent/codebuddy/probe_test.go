@@ -54,7 +54,7 @@ func TestProbeCodeBuddyModels_ParsesModelList(t *testing.T) {
 	update := modelUpdateLine("gpt-5.6-terra",
 		[2]string{"claude-sonnet-5", "Claude-Sonnet-5"},
 		[2]string{"gpt-5.6-terra", "GPT-5.6-Terra"},
-		[2]string{"glm-5.3-ioa", "GLM-5.3"},
+		[2]string{"glm-5.3", "GLM-5.3"},
 	)
 	t.Setenv("PATH", writeFakeCLI(t, `
 read -r line
@@ -72,7 +72,7 @@ sleep 0.3
 	want := []core.ModelOption{
 		{Name: "claude-sonnet-5", Desc: "Claude-Sonnet-5"},
 		{Name: "gpt-5.6-terra", Desc: "GPT-5.6-Terra"},
-		{Name: "glm-5.3-ioa", Desc: "GLM-5.3"},
+		{Name: "glm-5.3", Desc: "GLM-5.3"},
 	}
 	if len(models) != len(want) {
 		t.Fatalf("got %d models, want %d: %+v", len(models), len(want), models)

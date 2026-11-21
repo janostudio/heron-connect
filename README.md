@@ -294,7 +294,7 @@ make test-fast
 
 ## 项目渊源
 
-heron-connect 起源于 [cc-connect](https://github.com/chenhg5/cc-connect)（基线 `v1.3.3-beta.2`），先以个人 fork `cc-connect-qhn` 形式迭代，后重构为独立项目并更名为 heron-connect。
+heron-connect 起源于 [cc-connect](https://github.com/chenhg5/cc-connect)（基线 `v1.3.3-beta.2`），先以个人 fork `heron-connect` 形式迭代，后重构为独立项目并更名为 heron-connect。
 
 ## 许可证
 

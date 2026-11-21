@@ -285,7 +285,7 @@ origin == "mailbox" && activator != ""  → Reply 是中间产物，仅作进度
 
 ```bash
 # 连接器侧：后台结果是否被转发
-grep -n "unsolicited" scripts/cc-connect-qhn/logs/heron-connect.log | tail -20
+grep -n "unsolicited" scripts/heron-connect/logs/heron-connect.log | tail -20
 
 # 引擎侧：后台 turn 是否带上了 reply / origin
 jq -c 'select(.type=="flow_turn.completed" or .type=="flow_turn.waiting_input")

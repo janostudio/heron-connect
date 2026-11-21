@@ -1050,7 +1050,7 @@
 
 ### Changed
 
-- **品牌更名为 heron-connect**：项目从 cc-connect-qhn 更名为 heron-connect，npm 包改为 `@qinghuangniao/heron-connect`，二进制/命令、数据目录、GitHub 仓库与 Go module 路径全部同步更新。
+- **品牌更名为 heron-connect**：项目从 heron-connect 更名为 heron-connect，npm 包改为 `@qinghuangniao/heron-connect`，二进制/命令、数据目录、GitHub 仓库与 Go module 路径全部同步更新。
 - **移除 Web 前端**：删除内嵌 React 前端与 `heron-connect web` 命令，保留 HTTP Management API。
 - **修正 CodeBuddy 安装包名**：从错误的 `@anthropic-ai/codebuddy-code` 更正为腾讯官方的 `@tencent-ai/codebuddy-code`。
 
@@ -1069,7 +1069,7 @@
 ### Fixed
 
 - **ACP 子 Agent `_meta` 解析位置**：将 `parentToolCallId` / `parentToolUseId` 的解析优先级改为先读 `params.update._meta`（ACP 协议实际位置），再回退 `params._meta`，修复 `tool_messages = false` 仍展示子 Agent 内容的问题。
-- **启动日志版本号**：`cc-connect-qhn is running` 日志增加 `version` 字段，便于从日志确认实际运行的版本。
+- **启动日志版本号**：`heron-connect is running` 日志增加 `version` 字段，便于从日志确认实际运行的版本。
 
 ## v2.0.4 (2026-08-11)
 
@@ -1103,7 +1103,7 @@
 
 ## v2.0.1 (2026-08-04)
 
-**New agent + model refresh**: Adds `codebuddy` headless CLI driver, completes the `cmd/cc-connect` → `cmd/cc-connect-qhn` directory rename, refreshes stale model lists across all agents and provider presets.
+**New agent + model refresh**: Adds `codebuddy` headless CLI driver, completes the `cmd/cc-connect` → `cmd/heron-connect` directory rename, refreshes stale model lists across all agents and provider presets.
 
 ### Added
 
@@ -1111,7 +1111,7 @@
 
 ### Changed
 
-- **`cmd/cc-connect` → `cmd/cc-connect-qhn`**: Directory renamed to complete the v2.0.0 branding migration.
+- **`cmd/cc-connect` → `cmd/heron-connect`**: Directory renamed to complete the v2.0.0 branding migration.
 - **Model lists refreshed across all agents**: `gemini` adds `gemini-3.5-flash`; `kimi` adds `kimi-k3`; `opencode` updates `gpt-4o` → `gpt-5.4`; `codex` adds `gpt-5.4`/`gpt-5.4-mini`; `cursor` fallback models updated.
 - **`provider-presets.json`**: All Claude presets now default to `claude-sonnet-5`; Gemini presets default to `gemini-3.1-pro-preview` with `gemini-3.5-flash`.
 - **Codex docs**: Added third-party provider examples (DeepSeek, MiniMax) with `wire_api` guidance in `examples/feishu-codex.toml` and `config.example.toml`.
@@ -1123,31 +1123,31 @@
 
 ## v2.0.0 (2026-07-31)
 
-**Breaking branding change**: All user-facing log/output strings renamed from `cc-connect` to `cc-connect-qhn`. Binary filename, GitHub release assets, updater APIs all switched to the fork's own identity.
+**Breaking branding change**: All user-facing log/output strings renamed from `cc-connect` to `heron-connect`. Binary filename, GitHub release assets, updater APIs all switched to the fork's own identity.
 
 ### Breaking
 
-- **Binary renamed**: Go binary output changed from `cc-connect` to `cc-connect-qhn`. Makefile `APP`, npm wrapper scripts (`run.js`, `install.js`, `release-assets.js`), and release asset naming all updated accordingly.
-- **GitHub release assets renamed**: `cc-connect-v2.0.0-darwin-arm64.tar.gz` → `cc-connect-qhn-v2.0.0-darwin-arm64.tar.gz`.
-- **All CLI help/output text renamed**: `Usage: cc-connect [flags]` → `Usage: cc-connect-qhn [flags]`, all examples, error messages, daemon status messages, platform setup prompts updated across ~30 Go files.
-- **Log message renamed**: `"cc-connect is running"` → `"cc-connect-qhn is running"`.
-- **Agent system prompt renamed**: Agent-visible context (system prompt, sender markers, instruction marker) uses `cc-connect-qhn` instead of `cc-connect`.
-- **Daemon service renamed**: Systemd unit description `cc-connect` → `cc-connect-qhn`, launchd label `com.cc-connect.service` → `com.cc-connect-qhn.service`, service name const `cc-connect` → `cc-connect-qhn`.
-- **ACP session names renamed**: ACP `clientInfo.name` and session titles use `cc-connect-qhn`.
+- **Binary renamed**: Go binary output changed from `cc-connect` to `heron-connect`. Makefile `APP`, npm wrapper scripts (`run.js`, `install.js`, `release-assets.js`), and release asset naming all updated accordingly.
+- **GitHub release assets renamed**: `cc-connect-v2.0.0-darwin-arm64.tar.gz` → `heron-connect-v2.0.0-darwin-arm64.tar.gz`.
+- **All CLI help/output text renamed**: `Usage: cc-connect [flags]` → `Usage: heron-connect [flags]`, all examples, error messages, daemon status messages, platform setup prompts updated across ~30 Go files.
+- **Log message renamed**: `"cc-connect is running"` → `"heron-connect is running"`.
+- **Agent system prompt renamed**: Agent-visible context (system prompt, sender markers, instruction marker) uses `heron-connect` instead of `cc-connect`.
+- **Daemon service renamed**: Systemd unit description `cc-connect` → `heron-connect`, launchd label `com.cc-connect.service` → `com.heron-connect.service`, service name const `cc-connect` → `heron-connect`.
+- **ACP session names renamed**: ACP `clientInfo.name` and session titles use `heron-connect`.
 - **i18n strings renamed**: All localized help/status strings across 5 languages updated.
-- **Weixin channel version renamed**: `cc-connect-weixin/1.0` → `cc-connect-qhn-weixin/1.0`.
-- **Windows daemon script renamed**: `cc-connect-daemon.ps1` → `cc-connect-qhn-daemon.ps1`.
+- **Weixin channel version renamed**: `cc-connect-weixin/1.0` → `heron-connect-weixin/1.0`.
+- **Windows daemon script renamed**: `cc-connect-daemon.ps1` → `heron-connect-daemon.ps1`.
 
 ### Changed
 
-- **Updater repo URLs switched from upstream to fork**: `CheckForUpdate` and `SelfUpdate` in `core/updater.go`, plus CLI `update` command in `cmd/cc-connect-qhn/update.go`, now query `janostudio/cc-connect-qhn` instead of `chenhg5/cc-connect` / `cg33/cc-connect`.
-- **npm package version sync fixed**: `syncNpmPackageVersion` now uses `strings.Contains` for scoped package `@qinghuangniao/cc-connect-qhn` name matching.
+- **Updater repo URLs switched from upstream to fork**: `CheckForUpdate` and `SelfUpdate` in `core/updater.go`, plus CLI `update` command in `cmd/heron-connect/update.go`, now query `janostudio/heron-connect` instead of `chenhg5/cc-connect` / `cg33/cc-connect`.
+- **npm package version sync fixed**: `syncNpmPackageVersion` now uses `strings.Contains` for scoped package `@qinghuangniao/heron-connect` name matching.
 
 ### NOT changed (preserved for compatibility)
 
 - **Go import paths**: `github.com/chenhg5/cc-connect/...` unchanged.
-- **`.cc-connect-qhn` data directory**: Already had `-qhn` suffix, unchanged.
-- **npm global command**: `cc-connect-qhn` unchanged (already correct).
+- **`.heron-connect` data directory**: Already had `-qhn` suffix, unchanged.
+- **npm global command**: `heron-connect` unchanged (already correct).
 
 ### Why v2.0.0
 
@@ -1159,7 +1159,7 @@ This is a semver-major bump because:
 ### Files changed (35 files)
 
 `agent/acp/`: list_sessions.go, session.go
-`cmd/cc-connect-qhn/`: main.go, cron.go, send.go, daemon.go, provider.go, feishu.go, weixin.go, sessions.go, update.go, relay.go, session_id.go, config_cmd.go, doctor_runas.go, instance_lock.go, web.go
+`cmd/heron-connect/`: main.go, cron.go, send.go, daemon.go, provider.go, feishu.go, weixin.go, sessions.go, update.go, relay.go, session_id.go, config_cmd.go, doctor_runas.go, instance_lock.go, web.go
 `core/`: engine.go, engine_bind_cmds.go, i18n.go, interfaces.go, runas_check.go, updater.go, web_manager.go
 `daemon/`: manager.go, systemd.go, launchd.go, windows.go
 `platform/weixin/`: client.go
@@ -1169,7 +1169,7 @@ Test files: update_test.go, engine_test.go
 
 ## v1.4.9 (2026-07-29)
 
-Personal fork session idle reaper, WeCom rate-limit tracking, reassurance messages, token usage fix, and log diagnostics hardening for `@qinghuangniao/cc-connect-qhn`.
+Personal fork session idle reaper, WeCom rate-limit tracking, reassurance messages, token usage fix, and log diagnostics hardening for `@qinghuangniao/heron-connect`.
 
 ### Notes
 
@@ -1200,7 +1200,7 @@ Personal fork session idle reaper, WeCom rate-limit tracking, reassurance messag
 
 ## v1.4.8 (2026-07-23)
 
-Personal fork session switch / list fix, error sanitization, and `/list` fallback hardening for `@qinghuangniao/cc-connect-qhn`.
+Personal fork session switch / list fix, error sanitization, and `/list` fallback hardening for `@qinghuangniao/heron-connect`.
 
 ### Notes
 - **Fix `/list` and `/switch` user isolation**: `sessionsFromSessionManager` previously used `AllSessions()` (cross-user). Changed to `ListSessions(userKey)`, scoped to `msg.SessionKey`. Added the same fallback in `cmdSwitch` so `/switch` works after restart when the agent backend reports no sessions (ACP without `session/list`).
@@ -1219,13 +1219,13 @@ Personal fork session switch / list fix, error sanitization, and `/list` fallbac
 
 ## v1.4.7 (2026-07-21)
 
-Personal fork `/model` live switch, ACP refusal error surfacing, and orphaned subprocess cleanup for `@qinghuangniao/cc-connect-qhn`.
+Personal fork `/model` live switch, ACP refusal error surfacing, and orphaned subprocess cleanup for `@qinghuangniao/heron-connect`.
 
 ### Notes
 - Fix `/model` not applying to the current session. Previously `/model` always killed the running agent subprocess and deferred the model change to the next incoming message (which respawned with `--model <new> --resume <id>`). This worked but was not "immediate" — the `/model` reply itself was sent by cc-connect, not the new model, and on ACP backends the running subprocess was torn down even though ACP supports in-process model swaps. Introduced `core.LiveModelSwitcher` interface (mirroring the existing `LiveModeSwitcher` pattern used by `/mode`). `cmdModel` now first attempts `applyLiveModelChange` on the running `state.agentSession`; on success the subprocess is kept alive and the reply appends a localized "Current session updated immediately." notice. On failure (or when the agent doesn't implement the interface) it falls back to the legacy `cleanupInteractiveState` + `--resume` respawn path — non-ACP agents (opencode/codex/claudecode/qoder/pi/kimi/cursor/gemini/iflow) keep their existing behavior since their model is a `--model` CLI flag baked at spawn time.
 - Implement `LiveModelSwitcher` on `*acpSession`. The new `SetLiveModel` method reuses the existing `SetModel` RPC path (`session/set_model` with `session/set_config_option` fallback), which was previously only invoked at session spawn. ACP backends now hot-swap models without restarting the subprocess.
 - Mirror the live-switch branch in both card-action entry points (`handleModelCardAction`, `performModelSwitchAsync`) so `/model` invoked via Feishu/WeCom card buttons behaves identically to the slash command.
-- Fix ACP `refusal` responses being silently sent to the user as "(空响应)". CodeBuddy wraps model-side failures (quota exceeded 429, 500 internal errors) in a JSON-RPC **success** envelope with `stopReason:"refusal"` and the real error in `_meta["codebuddy.ai/errorMessage"]`. `acpSession.Send()` previously discarded the entire `result` and unconditionally emitted `EventResult{Done:true}`, so the engine's empty-response fallback kicked in and the user got "(空响应)" while the real error was buried in logs. `Send()` now parses the `result` and, on refusal/error, emits `EventError` with the parsed `payload.Message` verbatim instead of `EventResult`. The engine's existing `EventError` handler finalizes the progress card as failed and sends the error to the user. Added `MsgModelQuotaExceeded` i18n key (5 languages) wired via the `agentErrorHandlers` substring table so quota errors get a friendly localized notice; any other refusal error passes through unchanged as `"❌ 错误: <原始 message>"` (never empty). Added `extractACPReturnError` helper that returns the full error message verbatim — never an empty string — so unmatched errors always surface to the user instead of looking like a cc-connect-qhn bug.
+- Fix ACP `refusal` responses being silently sent to the user as "(空响应)". CodeBuddy wraps model-side failures (quota exceeded 429, 500 internal errors) in a JSON-RPC **success** envelope with `stopReason:"refusal"` and the real error in `_meta["codebuddy.ai/errorMessage"]`. `acpSession.Send()` previously discarded the entire `result` and unconditionally emitted `EventResult{Done:true}`, so the engine's empty-response fallback kicked in and the user got "(空响应)" while the real error was buried in logs. `Send()` now parses the `result` and, on refusal/error, emits `EventError` with the parsed `payload.Message` verbatim instead of `EventResult`. The engine's existing `EventError` handler finalizes the progress card as failed and sends the error to the user. Added `MsgModelQuotaExceeded` i18n key (5 languages) wired via the `agentErrorHandlers` substring table so quota errors get a friendly localized notice; any other refusal error passes through unchanged as `"❌ 错误: <原始 message>"` (never empty). Added `extractACPReturnError` helper that returns the full error message verbatim — never an empty string — so unmatched errors always surface to the user instead of looking like a heron-connect bug.
 - New i18n keys: `MsgModelChangedLive` ("✅ Current session updated immediately." in 5 languages), `MsgModelQuotaExceeded` ("⚠️ AI 服务暂时不可用：使用额度已耗尽，请稍后再试。" in 5 languages).
 - **Eliminate orphaned CLI subprocesses on session end / restart.** Every `codebuddy --acp` (and other CLI) subprocess that died or was replaced was leaked because `Close()` was never called on it — stdin stayed open, no SIGKILL was sent, and on cc-connect restart via `syscall.Exec` all children became orphans (PPID=1), accumulating over weeks (34 stale `--acp` processes, ~8.9 GB RSS observed). Five root causes fixed:
   - `acpSession.Close()` never closed the events channel — the engine's `channelClosed` cleanup path (which calls `cleanupInteractiveState`) never fired for ACP sessions, leaving dead `interactiveState` entries in the map. Now closes via `sync.Once` (`closeEvents` helper) so the engine observes termination correctly; idempotent and safe against concurrent/Double `Close()`.
@@ -1245,7 +1245,7 @@ Personal fork `/model` live switch, ACP refusal error surfacing, and orphaned su
 
 ## v1.4.6 (2026-07-07)
 
-Personal fork `/cancel` fix for `@qinghuangniao/cc-connect-qhn`. Fixes the bug where output kept streaming to the user after `/cancel` was issued.
+Personal fork `/cancel` fix for `@qinghuangniao/heron-connect`. Fixes the bug where output kept streaming to the user after `/cancel` was issued.
 
 ### Notes
 - Fix `/cancel` continuing to relay output after cancellation. Previously `cmdCancel` only sent `agentSession.CancelTurn()` (a fire-and-forget `session/cancel` notification to the agent backend) without touching any engine-local state, so the foreground event loop in `processInteractiveEvents` kept reading and relaying already-buffered chunks from the events channel (cap 128), plus any chunks the ACP server emitted between receiving the cancel and actually stopping. The loop's `select` only recognized `stopCh` (`/stop`) and `e.ctx.Done()` — there was no cancel path. A second leak: even if the loop returned, without `eventsNeedResync=true` the unsolicited reader would pick up the leftover chunks and relay them as "background" events.
@@ -1258,7 +1258,7 @@ Personal fork `/cancel` fix for `@qinghuangniao/cc-connect-qhn`. Fixes the bug w
 
 ## v1.4.5 (2026-07-01)
 
-Personal fork streaming dedup fix for `@qinghuangniao/cc-connect-qhn`.
+Personal fork streaming dedup fix for `@qinghuangniao/heron-connect`.
 
 ### Notes
 - Fix `mergeStreamDisplayContent` duplicate output bug in `displayModeStream` mode. When `finalResponse` includes metadata (e.g. `*model · usage · path*`) appended after the answer text, the old comparison (`TrimSpace(streamContent) == finalResponse`) always failed, causing `streamContent + "\n\n" + finalResponse` which duplicated the answer. Added prefix-based dedup: if `finalResponse` starts with `streamContent` (the stream was just a prefix), return `finalResponse` as-is; if `streamContent` starts with `finalResponse`, return `streamContent` as-is. Bump `clientInfo.version` to `1.4.5`.
@@ -1268,7 +1268,7 @@ Personal fork streaming dedup fix for `@qinghuangniao/cc-connect-qhn`.
 
 ## v1.4.4 (2026-07-01)
 
-Personal fork ACP protocol alignment for `@qinghuangniao/cc-connect-qhn`. Brings the generic ACP agent adapter in line with the latest [Agent Client Protocol](https://agentclientprotocol.com/) spec so commands like `/list` and `/model` work against ACP servers (e.g. CodeBuddy) that previously returned "未找到此项目的会话" / "当前 Agent 不支持模型切换".
+Personal fork ACP protocol alignment for `@qinghuangniao/heron-connect`. Brings the generic ACP agent adapter in line with the latest [Agent Client Protocol](https://agentclientprotocol.com/) spec so commands like `/list` and `/model` work against ACP servers (e.g. CodeBuddy) that previously returned "未找到此项目的会话" / "当前 Agent 不支持模型切换".
 
 ### Notes
 - Implement local session tracking as a fallback for `/list` when the ACP server does not advertise `sessionCapabilities.list`. Sessions started by cc-connect are recorded locally with their cwd and an auto-extracted title (first `agent_message_chunk`), and surfaced via `ListSessions` whenever the server-side probe is unsupported or fails. This makes `/list` and `/switch` usable against CodeBuddy without any server-side changes.
@@ -1291,7 +1291,7 @@ Personal fork ACP protocol alignment for `@qinghuangniao/cc-connect-qhn`. Brings
 
 ## v1.4.0 (2026-07-01)
 
-Personal fork WeCom streaming display alignment with openclaw progress-draft design for `@qinghuangniao/cc-connect-qhn`.
+Personal fork WeCom streaming display alignment with openclaw progress-draft design for `@qinghuangniao/heron-connect`.
 
 ### Notes
 - Introduce three-region `wecomStreamAssembler` (`visibleText` / `progressLines` / `heldTool`) as the single source of truth for WeCom WebSocket stream preview state, replacing the old two-field `wsStreamAssembler` that mixed tool blocks into visible text.
@@ -1315,7 +1315,7 @@ Personal fork WeCom streaming display alignment with openclaw progress-draft des
 
 ## v1.3.12 (2026-06-05)
 
-Personal fork codebase modularization for `@qinghuangniao/cc-connect-qhn`.
+Personal fork codebase modularization for `@qinghuangniao/heron-connect`.
 
 ### Notes
 - Split the monolithic `core/engine.go` (~13,800 lines) into 14 focused files (`engine_admin_cmds.go`, `engine_alias_cmds.go`, `engine_bind_cmds.go`, `engine_card_actions.go`, `engine_cards.go`, `engine_cron.go`, `engine_info_cmds.go`, `engine_model_cmds.go`, `engine_provider_cmds.go`, `engine_relay.go`, `engine_reply.go`, `engine_session_cmds.go`, `engine_shell_cmds.go`, `engine_turn.go`) for improved maintainability.
@@ -1326,7 +1326,7 @@ Personal fork codebase modularization for `@qinghuangniao/cc-connect-qhn`.
 
 ## v1.3.11 (2026-05-28)
 
-Personal fork WeCom stream dedup regression fix for `@qinghuangniao/cc-connect-qhn`.
+Personal fork WeCom stream dedup regression fix for `@qinghuangniao/heron-connect`.
 
 ### Notes
 - Fix WeCom WebSocket stream aggregation so a finalized answer that extends an already streamed partial line no longer repeats the partial prefix in the closing frame.
@@ -1335,7 +1335,7 @@ Personal fork WeCom stream dedup regression fix for `@qinghuangniao/cc-connect-q
 
 ## v1.3.10 (2026-05-28)
 
-Personal fork WeCom long-finalize delivery fix for `@qinghuangniao/cc-connect-qhn`.
+Personal fork WeCom long-finalize delivery fix for `@qinghuangniao/heron-connect`.
 
 ### Notes
 - Fix WeCom WebSocket preview finalize path so terminal content over 2048 bytes is split into one closing stream frame plus ordered follow-up markdown messages instead of being forced into a single oversized frame.
@@ -1344,7 +1344,7 @@ Personal fork WeCom long-finalize delivery fix for `@qinghuangniao/cc-connect-qh
 
 ## v1.3.9 (2026-05-27)
 
-Personal fork WeCom stream regression hardening for `@qinghuangniao/cc-connect-qhn`.
+Personal fork WeCom stream regression hardening for `@qinghuangniao/heron-connect`.
 
 ### Notes
 - Fix WeCom preview completion so the final answer closes the existing stream message in place instead of creating an additional near-duplicate message.
@@ -1353,7 +1353,7 @@ Personal fork WeCom stream regression hardening for `@qinghuangniao/cc-connect-q
 
 ## v1.3.8 (2026-05-27)
 
-Personal fork WeCom stream visibility and audit fixes for `@qinghuangniao/cc-connect-qhn`.
+Personal fork WeCom stream visibility and audit fixes for `@qinghuangniao/heron-connect`.
 
 ### Notes
 - Fix WeCom `stream` mode with `tool_messages = false` so hidden tool events no longer leak into the final visible stream payload.
@@ -1362,7 +1362,7 @@ Personal fork WeCom stream visibility and audit fixes for `@qinghuangniao/cc-con
 
 ## v1.3.7 (2026-05-27)
 
-Personal fork WeCom delivery and audit fixes for `@qinghuangniao/cc-connect-qhn`.
+Personal fork WeCom delivery and audit fixes for `@qinghuangniao/heron-connect`.
 
 ### Notes
 - Add WeCom access audit logging so inbound users and prompt send time are recorded to local JSONL files, including `allow_from` rejections.
@@ -1371,7 +1371,7 @@ Personal fork WeCom delivery and audit fixes for `@qinghuangniao/cc-connect-qhn`
 
 ## v1.3.4 (2026-05-25)
 
-Personal fork release for `@qinghuangniao/cc-connect-qhn`.
+Personal fork release for `@qinghuangniao/heron-connect`.
 
 ### Notes
 - This is an unofficial personal fork intended for personal practice, experimentation, and self-use.
@@ -1380,7 +1380,7 @@ Personal fork release for `@qinghuangniao/cc-connect-qhn`.
 
 ## v1.3.6 (2026-05-27)
 
-Personal fork WeCom stream/tool display fixes for `@qinghuangniao/cc-connect-qhn`.
+Personal fork WeCom stream/tool display fixes for `@qinghuangniao/heron-connect`.
 
 ### Notes
 - Fix ACP tool result mapping so completed tool updates prefer `rawOutput` over streamed assembly fragments.
@@ -1389,11 +1389,11 @@ Personal fork WeCom stream/tool display fixes for `@qinghuangniao/cc-connect-qhn
 
 ## v1.3.5 (2026-05-26)
 
-Personal fork packaging fix for `@qinghuangniao/cc-connect-qhn`.
+Personal fork packaging fix for `@qinghuangniao/heron-connect`.
 
 ### Notes
 - Fix npm installer release asset lookup so global install downloads from the fork release repository.
-- Intended to resolve `npm install -g @qinghuangniao/cc-connect-qhn` failing with GitHub release asset `404`.
+- Intended to resolve `npm install -g @qinghuangniao/heron-connect` failing with GitHub release asset `404`.
 
 ## v1.3.3-beta.2 (2026-05-09)
 
@@ -1995,7 +1995,7 @@ This is the first stable release of cc-connect 1.2.0, consolidating all beta cha
 - **CLAUDECODE env filter**: Prevent nested Claude Code session crash by filtering CLAUDECODE env var from subprocesses
 
 ### Docs
-- Clarified global config path `~/.cc-connect-qhn/config.toml` in INSTALL.md
+- Clarified global config path `~/.heron-connect/config.toml` in INSTALL.md
 - Fixed markdown image syntax in Chinese README
 
 ## v1.1.0-beta.5 (2026-03-01)
@@ -2022,7 +2022,7 @@ This is the first stable release of cc-connect 1.2.0, consolidating all beta cha
 
 ### New Features
 - **Provider Management**: `/provider` command for runtime API provider switching; CLI `cc-connect provider add/list`
-- **Configurable Data Dir**: Session data stored in `~/.cc-connect-qhn/` by default (configurable via `data_dir`)
+- **Configurable Data Dir**: Session data stored in `~/.heron-connect/` by default (configurable via `data_dir`)
 - **Markdown Stripping**: Plain text fallback for platforms that don't support markdown (e.g. WeChat)
 
 ## v1.1.0-beta.1 (2026-03-01)

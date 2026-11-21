@@ -257,14 +257,14 @@ func TestAgent_GetModel_UsesDiscoveredModel(t *testing.T) {
 	t.Setenv("PATH", writeFakeCLI(t, `
 read -r line
 read -r line
-printf '%s\n' '`+modelUpdateLine("glm-5.3-ioa", [2]string{"glm-5.3-ioa", "GLM-5.3"})+`'
+printf '%s\n' '`+modelUpdateLine("glm-5.3", [2]string{"glm-5.3", "GLM-5.3"})+`'
 sleep 0.3
 `))
 	a := &Agent{workDir: t.TempDir()}
 	a.AvailableModels(context.Background())
 
-	if got := a.GetModel(); got != "glm-5.3-ioa" {
-		t.Errorf("GetModel() = %q, want glm-5.3-ioa", got)
+	if got := a.GetModel(); got != "glm-5.3" {
+		t.Errorf("GetModel() = %q, want glm-5.3", got)
 	}
 }
 
@@ -377,7 +377,7 @@ func TestLaunchArgs_DashPrefixedPromptAfterEndOfOptions(t *testing.T) {
 	// "---". The CLI parser rejects such tokens as unknown options unless
 	// they appear after the "--" end-of-options marker.
 	prompt := "---\ndescription: \"audit\"\n---\n\n# audit body"
-	args := launchArgs(prompt, "sid-123", "bypassPermissions", "glm-5.3-ioa", nil)
+	args := launchArgs(prompt, "sid-123", "bypassPermissions", "glm-5.3", nil)
 
 	sep := -1
 	for i, a := range args {

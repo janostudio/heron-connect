@@ -160,17 +160,17 @@ OpenClaw 的 `chunkMarkdownText` 会：
 
 **飞书（Feishu）：**
 - 支持 Interactive Card（交互式卡片），有按钮、进度、状态等
-- Heron Connect-QHN 已实现 `RichCardSupporter` 接口，但只在部分场景使用
+- Heron Connect 已实现 `RichCardSupporter` 接口，但只在部分场景使用
 - 代码块在飞书 Lark Markdown 中有特殊渲染，但转换不总是正确
 
 **DingTalk：**
 - 支持 AI Card（流式进度卡片），专用于 AI 对话场景
-- Heron Connect-QHN 有 `StreamingCardPlatform` 接口，已实现
+- Heron Connect 有 `StreamingCardPlatform` 接口，已实现
 - 但 tool steps 的展示不如 OpenClaw 丰富
 
 **Slack：**
 - 支持 Block Kit（复杂结构化布局）
-- Heron Connect-QHN 只发普通 Markdown（`markdown_slack.go` 做了方言转换）
+- Heron Connect 只发普通 Markdown（`markdown_slack.go` 做了方言转换）
 - 没有使用 Block Kit 展示工具进度
 
 ### 根因

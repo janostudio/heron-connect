@@ -79,13 +79,13 @@ func TestAgent_localFallback_filteredByCwd(t *testing.T) {
 
 func TestAgent_SetModel_updatesPendingModel(t *testing.T) {
 	a := &Agent{}
-	a.SetModel("glm-5.2-ioa")
-	if got := a.model; got != "glm-5.2-ioa" {
-		t.Fatalf("model = %q, want glm-5.2-ioa", got)
+	a.SetModel("glm-5.2")
+	if got := a.model; got != "glm-5.2" {
+		t.Fatalf("model = %q, want glm-5.2", got)
 	}
 	// GetModel prefers pending over cached.
-	if got := a.GetModel(); got != "glm-5.2-ioa" {
-		t.Fatalf("GetModel() = %q, want glm-5.2-ioa", got)
+	if got := a.GetModel(); got != "glm-5.2" {
+		t.Fatalf("GetModel() = %q, want glm-5.2", got)
 	}
 }
 
@@ -117,12 +117,12 @@ func TestAgent_AvailableModels_emptyBeforeHandshake(t *testing.T) {
 func TestAgent_reportModels_cachesList(t *testing.T) {
 	a := &Agent{}
 	models := []core.ModelOption{
-		{Name: "glm-5.2-ioa", Desc: "GLM 5.2"},
+		{Name: "glm-5.2", Desc: "GLM 5.2"},
 		{Name: "glm-5.2-air", Desc: "GLM 5.2 Air"},
 	}
-	a.reportModels("glm-5.2-ioa", models)
+	a.reportModels("glm-5.2", models)
 	got := a.AvailableModels(context.Background())
-	if len(got) != 2 || got[0].Name != "glm-5.2-ioa" {
+	if len(got) != 2 || got[0].Name != "glm-5.2" {
 		t.Fatalf("AvailableModels = %+v", got)
 	}
 }
@@ -135,22 +135,22 @@ func TestParseModels_fromConfigOptions(t *testing.T) {
 			ID:           "model",
 			Category:     "model",
 			Type:         "select",
-			CurrentValue: "glm-5.2-ioa",
+			CurrentValue: "glm-5.2",
 			Options: []acpConfigOptValue{
-				{Value: "glm-5.2-ioa", Name: "GLM 5.2 IOA"},
+				{Value: "glm-5.2", Name: "GLM 5.2"},
 				{Value: "glm-5.2-air", Name: "GLM 5.2 Air"},
 			},
 		},
 	}
 	current, available := parseModels(opts, nil)
-	if current != "glm-5.2-ioa" {
-		t.Fatalf("current = %q, want glm-5.2-ioa", current)
+	if current != "glm-5.2" {
+		t.Fatalf("current = %q, want glm-5.2", current)
 	}
-	if len(available) != 2 || available[0].Name != "glm-5.2-ioa" {
+	if len(available) != 2 || available[0].Name != "glm-5.2" {
 		t.Fatalf("available = %+v", available)
 	}
-	if available[0].Desc != "GLM 5.2 IOA" {
-		t.Fatalf("Desc = %q, want GLM 5.2 IOA", available[0].Desc)
+	if available[0].Desc != "GLM 5.2" {
+		t.Fatalf("Desc = %q, want GLM 5.2", available[0].Desc)
 	}
 }
 
@@ -234,7 +234,7 @@ func TestACPSession_SetModel_sendsSetModel(t *testing.T) {
 		}
 	}()
 
-	if err := s.SetModel("glm-5.2-ioa"); err != nil {
+	if err := s.SetModel("glm-5.2"); err != nil {
 		t.Fatalf("SetModel failed: %v", err)
 	}
 }
@@ -574,16 +574,16 @@ func TestParseModels_mixedConfigOptions(t *testing.T) {
 		{
 			ID:           "model",
 			Category:     "model",
-			CurrentValue: "glm-5.2-ioa",
+			CurrentValue: "glm-5.2",
 			Options: []acpConfigOptValue{
-				{Value: "glm-5.2-ioa", Name: "GLM 5.2 IOA"},
+				{Value: "glm-5.2", Name: "GLM 5.2"},
 				{Value: "glm-5.2-air", Name: "GLM 5.2 Air"},
 			},
 		},
 	}
 	current, available := parseModels(opts, nil)
-	if current != "glm-5.2-ioa" {
-		t.Fatalf("current = %q, want glm-5.2-ioa", current)
+	if current != "glm-5.2" {
+		t.Fatalf("current = %q, want glm-5.2", current)
 	}
 	if len(available) != 2 {
 		t.Fatalf("available len = %d, want 2", len(available))
@@ -598,7 +598,7 @@ func TestConfigOptionUnmarshal_tolerantCurrentValue(t *testing.T) {
 		json string
 		want string
 	}{
-		{"string", `{"id":"model","category":"model","currentValue":"glm-5.2-ioa"}`, "glm-5.2-ioa"},
+		{"string", `{"id":"model","category":"model","currentValue":"glm-5.2"}`, "glm-5.2"},
 		{"bool true", `{"id":"multitask","type":"boolean","currentValue":true}`, "true"},
 		{"bool false", `{"id":"multitask","type":"boolean","currentValue":false}`, "false"},
 		{"number", `{"id":"x","currentValue":3}`, "3"},
