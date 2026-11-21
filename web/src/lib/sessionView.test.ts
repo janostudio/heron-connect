@@ -2,13 +2,25 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // The api client is the only network dependency here; presence must never
 // surface its failures, so the tests assert on the call, not on responses.
+// ApiError is re-exported from the mock because the module under test narrows
+// on it (a 404 ends the reading; anything else is transient).
 const post = vi.fn((_path: string, _body: unknown) => Promise.resolve({}));
-vi.mock('@/api/client', () => ({ default: { post: (path: string, body: unknown) => post(path, body) } }));
+vi.mock('@/api/client', () => {
+  class ApiError extends Error {
+    constructor(message: string, public status: number) {
+      super(message);
+    }
+  }
+  return { default: { post: (path: string, body: unknown) => post(path, body) }, ApiError };
+});
 
+import { ApiError } from '@/api/client';
 import {
   viewedSession, setViewedSession, clearViewedSession, reportViewHeartbeat, startViewHeartbeat,
   VIEW_HEARTBEAT_MS,
 } from './sessionView';
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
 
 // Minimal sessionStorage stand-in: node has none, and the module must work with
 // whichever storage the tab actually provides.
@@ -35,6 +47,7 @@ class MemoryStorage {
 }
 
 beforeEach(() => {
+  clearViewedSession(); // drop the module-level fallback left by a previous test
   (globalThis as any).sessionStorage = new MemoryStorage();
   post.mockClear();
 });
@@ -115,18 +128,45 @@ describe('view heartbeat', () => {
 
   // Presence is a side channel: a rejected heartbeat (offline, expired token,
   // project deleted) must not become an unhandled rejection.
-  it('swallows a failed heartbeat', async () => {
-    post.mockImplementationOnce(() => Promise.reject(new Error('offline')));
+  it('keeps the record when a heartbeat fails for a transient reason', async () => {
+    post.mockImplementationOnce(() => Promise.reject(new ApiError('upstream down', 500)));
     setViewedSession('proj-a', 's3');
+    await flush();
 
-    await expect(Promise.resolve()).resolves.toBeUndefined();
+    expect(viewedSession()).toEqual({ project: 'proj-a', id: 's3' });
   });
 
-  it('does nothing when the tab storage is unavailable', () => {
+  // A tab can outlive the conversation it was showing. Without this the tab
+  // would retry a deleted session id every 10s for as long as it stays open.
+  it('drops the record when the server says the session is gone', async () => {
+    post.mockImplementationOnce(() => Promise.reject(new ApiError('session not found', 404)));
+    setViewedSession('proj-a', 's3');
+    await flush();
+
+    expect(viewedSession()).toBeNull();
+  });
+
+  // Storage can be absent or reject writes (private mode, quota, policy). The
+  // tab still knows what it is showing, so presence must keep working — it just
+  // does not survive a remount.
+  it('falls back to memory when the storage write fails', () => {
+    (globalThis as any).sessionStorage = {
+      getItem: () => null,
+      setItem: () => { throw new Error('quota'); },
+      removeItem: () => {},
+    };
+
+    setViewedSession('proj-a', 's3');
+
+    expect(viewedSession()).toEqual({ project: 'proj-a', id: 's3' });
+    expect(post).toHaveBeenCalledWith('/projects/proj-a/session-view', { session_id: 's3' });
+  });
+
+  it('falls back to memory when no storage exists at all', () => {
     delete (globalThis as any).sessionStorage;
 
     expect(() => setViewedSession('proj-a', 's3')).not.toThrow();
-    expect(viewedSession()).toBeNull();
-    expect(post).not.toHaveBeenCalled();
+    expect(viewedSession()).toEqual({ project: 'proj-a', id: 's3' });
+    expect(post).toHaveBeenCalledTimes(1);
   });
 });

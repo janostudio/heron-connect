@@ -1,4 +1,4 @@
-import api from '@/api/client';
+import api, { ApiError } from '@/api/client';
 
 // Web reading presence, client half.
 //
@@ -9,9 +9,10 @@ import api from '@/api/client';
 //
 // Consequences worth keeping in mind:
 //
-//   - The record is per TAB (sessionStorage), not per browser: two tabs can
-//     read two conversations at once, and both must count. Closing a tab drops
-//     its record, so its heartbeats stop and the server closes the session.
+//   - The record is per TAB (sessionStorage, with an in-memory fallback when
+//     storage is unusable), not per browser: two tabs can read two
+//     conversations at once, and both must count. Closing a tab drops its
+//     record, so its heartbeats stop and the server closes the session.
 //   - A tab keeps reporting the conversation it opened even after the user
 //     navigates to another page of the app, because closing the tab is what
 //     ends the reading (an accidental click into the session list should not
@@ -49,20 +50,25 @@ function store(): Storage | null {
   }
 }
 
+// Fallback when sessionStorage cannot be read or written (private mode, quota,
+// policy). The record then lives only as long as this page load — heartbeats
+// keep working, they just do not survive a navigation-driven remount.
+let memoryView: ViewedSession | null = null;
+
 /** The conversation this tab currently has open, if any. */
 export function viewedSession(): ViewedSession | null {
   const s = store();
-  if (!s) return null;
+  if (!s) return memoryView;
   try {
     const raw = s.getItem(VIEW_KEY);
-    if (!raw) return null;
+    if (!raw) return memoryView;
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
+    if (!parsed || typeof parsed !== 'object') return memoryView;
     const { project, id } = parsed as Partial<ViewedSession>;
-    if (typeof project !== 'string' || typeof id !== 'string' || !project || !id) return null;
+    if (typeof project !== 'string' || typeof id !== 'string' || !project || !id) return memoryView;
     return { project, id };
   } catch {
-    return null;
+    return memoryView;
   }
 }
 
@@ -71,18 +77,21 @@ export function viewedSession(): ViewedSession | null {
  * session shows up as being read without waiting for the next tick.
  */
 export function setViewedSession(project: string, id: string): void {
+  if (!project || !id) return;
+  memoryView = { project, id };
   const s = store();
-  if (s && project && id) {
+  if (s) {
     try {
-      s.setItem(VIEW_KEY, JSON.stringify({ project, id }));
+      s.setItem(VIEW_KEY, JSON.stringify(memoryView));
     } catch {
-      /* quota / private mode: presence still works through the heartbeat below */
+      /* quota / private mode: the in-memory record keeps heartbeats going */
     }
   }
-  reportViewHeartbeat();
+  sendHeartbeat(memoryView);
 }
 
 export function clearViewedSession(): void {
+  memoryView = null;
   const s = store();
   if (!s) return;
   try {
@@ -92,17 +101,26 @@ export function clearViewedSession(): void {
   }
 }
 
+function sendHeartbeat(viewed: ViewedSession): void {
+  void api
+    .post(`/projects/${encodeURIComponent(viewed.project)}/session-view`, { session_id: viewed.id })
+    .catch((err: unknown) => {
+      // A 404 means the conversation (or its project) is gone — a tab that
+      // outlived what it was showing. Drop the record so the heartbeat stops
+      // retrying an id that can never resolve; any other failure (offline,
+      // expired token, restart mid-flight) is transient and keeps retrying.
+      if (err instanceof ApiError && err.status === 404) clearViewedSession();
+    });
+}
+
 /**
  * Send one heartbeat for the stored conversation. Fire-and-forget: presence is
- * a side channel, so a failure (offline, expired token, project gone) must
- * never surface in the UI or block the caller.
+ * a side channel, so a failure must never surface in the UI or block the
+ * caller.
  */
 export function reportViewHeartbeat(): void {
   const viewed = viewedSession();
-  if (!viewed) return;
-  void api
-    .post(`/projects/${encodeURIComponent(viewed.project)}/session-view`, { session_id: viewed.id })
-    .catch(() => {});
+  if (viewed) sendHeartbeat(viewed);
 }
 
 /**
