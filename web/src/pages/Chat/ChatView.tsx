@@ -14,6 +14,7 @@ import { newConvKey } from '@/lib/webSessionKey';
 import { reserveTab, openReservedTab } from '@/lib/newTab';
 import { setViewedSession } from '@/lib/sessionView';
 import { readSortMode, writeSortMode } from '@/lib/sessionSortMode';
+import { composeTitle, pickTitleIcon, DEFAULT_TITLE } from '@/lib/pageTitle';
 import {
   useBridgeSocket, fetchBridgeConfig,
   type BridgeConfig, type BridgeIncoming, type BridgeStatus,
@@ -1916,6 +1917,61 @@ export default function ChatView() {
   // Execution status of the currently viewed session (from the polled session
   // list). Distinct from isRunning, which tracks this client's live turn.
   const viewedStatus = sessions.find(s => s.session_key === sessionKey);
+
+  // ── Browser tab title ────────────────────────────────────────────
+  //
+  // The tab strip fits roughly a dozen characters, so the title carries the
+  // conversation name plus at most one icon — see lib/pageTitle.ts for why
+  // nothing else fits. The name mirrors the header: a conversation the user
+  // did not pick deliberately keeps the placeholder, because that is what the
+  // header shows too.
+  const [tabUnread, setTabUnread] = useState(false);
+
+  // Content that lands while the tab is in the background counts as unread, and
+  // focusing the tab clears it. Both halves matter: without the hidden check
+  // every reply would flash a dot while the user is watching the stream, and
+  // without the visibility listener the dot would never clear.
+  const messageCountRef = useRef(messages.length);
+  useEffect(() => {
+    const prev = messageCountRef.current;
+    messageCountRef.current = messages.length;
+    if (messages.length > prev && typeof document !== 'undefined' && document.hidden) {
+      setTabUnread(true);
+    }
+  }, [messages.length]);
+
+  // Opening another conversation starts from a clean slate: its history did not
+  // "arrive" while the user was away.
+  useEffect(() => {
+    messageCountRef.current = messages.length;
+    setTabUnread(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- length is read, not tracked
+  }, [currentSession?.id]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (!document.hidden) setTabUnread(false);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
+
+  const tabTitle = composeTitle(
+    userPickedSession && currentSession ? sessionTitle(currentSession) : t('chat.defaultSession'),
+    pickTitleIcon({
+      waiting: !!viewedStatus?.waiting_permission,
+      unread: tabUnread,
+      running: !!viewedStatus?.running,
+    }),
+  );
+
+  useEffect(() => {
+    document.title = tabTitle;
+  }, [tabTitle]);
+
+  // Leaving the chat restores the product title; otherwise the tab keeps naming
+  // a conversation the user has navigated away from.
+  useEffect(() => () => { document.title = DEFAULT_TITLE; }, []);
   const closeCmdPanel = useCallback(() => {
     if (viewedId) updateSlice(viewedId, s => (s.cmdResult ? { ...s, cmdResult: null } : s));
   }, [viewedId, updateSlice]);
