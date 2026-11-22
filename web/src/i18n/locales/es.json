@@ -292,6 +292,7 @@
     "emptyHint": "Inicia una conversación con tu agente",
     "slashHint": "Presiona / para ver los comandos disponibles",
     "inputPlaceholder": "Escribe un mensaje o presiona / para comandos...",
+    "sendBlocked": "Sin conexión: tu borrador se conserva. Envía cuando vuelva la conexión.",
     "commands": "Comandos",
     "preview": {
       "tooLarge": "El archivo ocupa {{size}} y supera el límite de vista previa",

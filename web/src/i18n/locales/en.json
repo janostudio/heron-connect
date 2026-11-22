@@ -292,6 +292,7 @@
     "emptyHint": "Start a conversation with your agent",
     "slashHint": "Press / to see available commands",
     "inputPlaceholder": "Type a message or press / for commands...",
+    "sendBlocked": "Not connected — your draft is kept. Send once the connection is back.",
     "commands": "Commands",
     "preview": {
       "tooLarge": "This file is {{size}} — too large to open in the preview",
