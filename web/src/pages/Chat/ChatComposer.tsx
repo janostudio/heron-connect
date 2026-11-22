@@ -37,7 +37,12 @@ interface Props {
   pickedFiles: PickItem[];
   onRemoveFile: (id: string) => void;
   onAddFiles: (files: FileList | File[]) => void;
-  /** Bridge is connected — the composer replaces itself with a warning if not. */
+  /**
+   * Bridge is connected. A dropped connection is temporary, so the composer
+   * stays mounted and editable — losing the socket must not throw away a draft
+   * — and the send button alone reports the state (amber, spinning, disabled).
+   * A missing bridge config is not temporary; that state still replaces the row.
+   */
   canSend: boolean;
   /** False once the bridge config has loaded but is unusable. */
   bridgeCfgLoaded: boolean;
@@ -129,9 +134,9 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
   useEffect(() => {
     if (cmdOpen) closePrompts();
   }, [cmdOpen, closePrompts]);
-  // Losing the bridge unmounts the whole composer row (see the early returns
-  // below), so the panel must collapse too — otherwise the parent keeps hiding
-  // its "jump to latest" button for a panel that is not on screen.
+  // Losing the bridge collapses the prompt panel: its entries send messages,
+  // and a panel left hovering over a transcript it cannot affect is noise. The
+  // composer row itself stays mounted (see the send button below).
   useEffect(() => {
     if (!canSend) closePrompts();
   }, [canSend, closePrompts]);
@@ -179,6 +184,9 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
   // Sending is NOT blocked while a turn is running: the backend either
   // interrupts the turn and runs this message first, or queues it. Blocking it
   // here would hide the interrupt path that IM platforms already have.
+  //
+  // A disconnected bridge does block the send — but only the send: the guard
+  // returns before `setDraft('')`, so the typed text survives until reconnect.
   const submit = useCallback(() => {
     if (!draft.trim() || !canSend) return;
     onSend(draft.trim());
@@ -221,30 +229,33 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
     }
   };
 
-  if (!canSend) {
-    if (!bridgeCfgLoaded) {
-      return (
-        <div className="flex items-center gap-2 px-4 py-3 text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-xl">
-          <WifiOff size={14} />
-          <span>{t('sessions.bridgeNotAvailable')}</span>
-        </div>
-      );
-    }
-    if (bridgeStatus === 'disconnected' || bridgeStatus === 'error') {
-      return (
-        <div className="flex items-center gap-2 px-4 py-3 text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-xl">
-          <WifiOff size={14} />
-          <span>{t('sessions.bridgeDisconnected')}</span>
-        </div>
-      );
-    }
+  // No bridge config at all is a configuration error, not a flaky connection:
+  // the user has to edit config.toml, and typing in the meantime would only
+  // produce a draft that can never be sent — so this state keeps the warning
+  // row that says where the fix is.
+  if (!bridgeCfgLoaded) {
     return (
-      <div className="flex items-center gap-2 px-4 py-3 text-sm text-gray-400 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
-        <Loader2 size={14} className="animate-spin" />
-        <span>{t('sessions.bridgeConnecting')}</span>
+      <div className="flex items-center gap-2 px-4 py-3 text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-xl">
+        <WifiOff size={14} />
+        <span>{t('sessions.bridgeNotAvailable')}</span>
       </div>
     );
   }
+
+  // A dropped or not-yet-established connection is different: it comes back on
+  // its own. The row stays mounted so the draft survives it, and the send
+  // button alone carries the state.
+  const bridgeBlocked = !canSend;
+  const blockedTitle = bridgeStatus === 'disconnected' || bridgeStatus === 'error'
+    ? t('chat.sendBlocked')
+    : t('sessions.bridgeConnecting');
+  // Also the accessible name: the button is icon-only, and a disabled button's
+  // `title` is not reliably announced.
+  const sendHint = bridgeBlocked
+    ? blockedTitle
+    : isRunning
+      ? t(interruptible ? 'chat.sendInterrupt' : 'chat.sendQueued')
+      : t('sessions.send');
 
   return (
     <div
@@ -358,8 +369,10 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
       </div>
 
       {/* Stop button: only while a turn runs. Stays available even with a draft
-          so the user can cancel without having to clear what they typed. */}
-      {isRunning && (
+          so the user can cancel without having to clear what they typed — but
+          not while the bridge is down: /stop cannot reach the agent then, and a
+          button that silently does nothing is worse than no button. */}
+      {isRunning && !bridgeBlocked && (
         <button
           type="button"
           data-testid="composer-stop"
@@ -371,17 +384,26 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
         </button>
       )}
       {/* Send button: always present when idle; while running it appears only
-          once there is something to send, so an empty composer shows just Stop. */}
-      {(!isRunning || hasContent) && (
+          once there is something to send, so an empty composer shows just Stop.
+          While the bridge is down it is always visible and turns amber with a
+          spinner — the cheapest way to say "not now" without taking the input
+          box away from the user. */}
+      {(!isRunning || hasContent || bridgeBlocked) && (
         <button
           type="button"
           data-testid="composer-send"
           onClick={submit}
-          disabled={!hasContent}
-          title={isRunning ? t(interruptible ? 'chat.sendInterrupt' : 'chat.sendQueued') : undefined}
-          className="p-3 rounded-xl bg-accent text-black hover:bg-accent-dim transition-colors disabled:opacity-50 flex items-center"
+          disabled={!hasContent || bridgeBlocked}
+          title={sendHint}
+          aria-label={sendHint}
+          className={cn(
+            'p-3 rounded-xl transition-colors flex items-center',
+            bridgeBlocked
+              ? 'bg-amber-400 dark:bg-amber-500 text-black cursor-not-allowed'
+              : 'bg-accent text-black hover:bg-accent-dim disabled:opacity-50',
+          )}
         >
-          <Send size={18} />
+          {bridgeBlocked ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
         </button>
       )}
     </div>

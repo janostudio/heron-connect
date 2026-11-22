@@ -291,6 +291,7 @@
     "emptyHint": "開始與 Agent 對話",
     "slashHint": "按 / 查看可用命令",
     "inputPlaceholder": "輸入訊息或按 / 使用命令...",
+    "sendBlocked": "未連線，草稿會保留，恢復連線後可傳送",
     "commands": "命令",
     "preview": {
       "tooLarge": "檔案大小 {{size}}，超出預覽上限",

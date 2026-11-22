@@ -106,7 +106,7 @@ function typeInto(textarea: HTMLTextAreaElement, value: string) {
 }
 
 function clickSend() {
-  // The send button is the last button and carries no title attribute.
+  // The send button is the last button in the row.
   const buttons = Array.from(container.querySelectorAll('button'));
   const send = buttons[buttons.length - 1];
   act(() => { send.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
@@ -183,6 +183,12 @@ describe('ChatComposer stop button', () => {
     renderInto({ onSend: () => {}, interruptible: true });
     expect(container.querySelector('[data-testid="composer-stop"]')).toBeNull();
     expect(container.querySelector('[data-testid="composer-send"]')).not.toBeNull();
+  });
+
+  it('names the send button even when it has no tooltip', () => {
+    renderInto({ onSend: () => {} });
+    const send = container.querySelector('[data-testid="composer-send"]') as HTMLButtonElement;
+    expect(send.getAttribute('aria-label')).toBeTruthy();
   });
 });
 
@@ -333,11 +339,134 @@ describe('ChatComposer quick-prompt panel', () => {
     act(() => { textarea.focus(); });
     expect(container.querySelector(PANEL)).not.toBeNull();
 
-    // Re-render the same root with the bridge disconnected: the composer swaps
-    // itself for a warning row, so the panel must be reported closed or the
-    // parent keeps hiding its "jump to latest" button.
+    // Re-render the same root with the bridge disconnected: the panel's rows
+    // send messages, so it must be reported closed or the parent keeps hiding
+    // its "jump to latest" button for a panel nobody can use.
     mountComposer({ canSend: false, onPromptsOpenChange: probe });
     expect(container.querySelector(PANEL)).toBeNull();
     expect(probe).toHaveBeenLastCalledWith(false);
+  });
+});
+
+// ── Bridge down: keep the draft, degrade only the send button ─
+//
+// A dropped connection used to replace the whole composer row with a warning,
+// which took the textarea away mid-sentence and lost whatever the user was
+// typing. The composer now stays mounted; the send button alone reports the
+// state (amber, spinning, disabled) and the draft survives until reconnect.
+
+describe('ChatComposer while the bridge is down', () => {
+  function renderOffline(opts: {
+    bridgeStatus?: string;
+    bridgeCfgLoaded?: boolean;
+  } = {}) {
+    const onSend = vi.fn();
+    if (!root) root = createRoot(container);
+    act(() => {
+      root!.render(React.createElement(ChatComposer, {
+        onSend,
+        pickedFiles: [],
+        onRemoveFile: () => {},
+        onAddFiles: () => {},
+        canSend: false,
+        bridgeCfgLoaded: opts.bridgeCfgLoaded ?? true,
+        bridgeStatus: opts.bridgeStatus ?? 'disconnected',
+        isRunning: false,
+        interruptible: false,
+        onStop: () => {},
+        cmdOpen: false,
+        onCmdOpenChange: () => {},
+        onCmdSelect: () => {},
+      }));
+    });
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const send = container.querySelector('[data-testid="composer-send"]') as HTMLButtonElement;
+    return { textarea, send, onSend };
+  }
+
+  it('keeps the textarea mounted and editable', () => {
+    const { textarea } = renderOffline();
+    expect(textarea).not.toBeNull();
+    expect(textarea.disabled).toBe(false);
+
+    act(() => { typeInto(textarea, 'queued thought'); });
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('queued thought');
+  });
+
+  it('turns the send button amber with a spinner and disables it', () => {
+    const { send } = renderOffline();
+    expect(send).not.toBeNull();
+    expect(send.disabled).toBe(true);
+    expect(send.className).toMatch(/amber/);
+    expect(send.querySelector('svg')?.getAttribute('class') ?? '').toMatch(/animate-spin/);
+  });
+
+  it('carries the reason as an accessible name, not only as a title', () => {
+    // Icon-only button, and a disabled button's `title` is not reliably read
+    // out by assistive tech.
+    const { send } = renderOffline();
+    expect(send.getAttribute('aria-label')).toMatch(/not connected/i);
+  });
+
+  it('refuses to send — by click or Enter — and keeps the draft', () => {
+    const { textarea, send, onSend } = renderOffline();
+    act(() => { typeInto(textarea, 'hold this'); });
+
+    act(() => { send.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    });
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('hold this');
+  });
+
+  it('says why in the tooltip, per bridge state', () => {
+    const cases: Array<[string, RegExp]> = [
+      ['disconnected', /not connected/i],
+      ['error', /not connected/i],
+      ['connecting', /connecting/i],
+      ['registering', /connecting/i],
+    ];
+    for (const [bridgeStatus, re] of cases) {
+      const { send } = renderOffline({ bridgeStatus });
+      expect(send.title).toMatch(re);
+    }
+  });
+
+  it('keeps the config warning — and no composer — when no bridge is configured', () => {
+    // Not a flaky connection but a setting the user has to change, so this one
+    // must not be softened into a spinner.
+    renderOffline({ bridgeCfgLoaded: false });
+    expect(container.querySelector('textarea')).toBeNull();
+    expect(container.textContent ?? '').toMatch(/not available/i);
+  });
+
+  it('drops the Stop button instead of offering a /stop that cannot be delivered', () => {
+    // The parent still knows the turn is running (that flag is REST-sourced),
+    // so without this guard a red Stop would sit there doing nothing.
+    const onStop = vi.fn();
+    if (!root) root = createRoot(container);
+    act(() => {
+      root!.render(React.createElement(ChatComposer, {
+        onSend: () => {},
+        pickedFiles: [],
+        onRemoveFile: () => {},
+        onAddFiles: () => {},
+        canSend: false,
+        bridgeCfgLoaded: true,
+        bridgeStatus: 'disconnected',
+        isRunning: true,
+        interruptible: true,
+        onStop,
+        cmdOpen: false,
+        onCmdOpenChange: () => {},
+        onCmdSelect: () => {},
+      }));
+    });
+
+    expect(container.querySelector('[data-testid="composer-stop"]')).toBeNull();
+    expect(container.querySelector('[data-testid="composer-send"]')).not.toBeNull();
+    expect(onStop).not.toHaveBeenCalled();
   });
 });
