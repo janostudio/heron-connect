@@ -854,15 +854,17 @@ func (m *ManagementServer) resolveProjectFile(project, rel string) (string, erro
 //
 // Sharing turns one file into a capability URL that needs no management token:
 //   GET    /api/v1/share/<token>   -> serve the file      (PUBLIC)
+//   HEAD   /api/v1/share/<token>   -> its size and type   (PUBLIC)
 //   POST   /api/v1/share           -> create a share      (auth)
 //   GET    /api/v1/share?project=X -> list shares         (auth)
 //   DELETE /api/v1/share/<token>   -> revoke a share      (auth)
 //
-// Only the first is public. The handler is reached without going through
-// m.wrap (so a share recipient needs no token), which means the management
-// operations must authenticate themselves — see the guard in handleShareRoutes.
-// Keep that boundary exact: widening it would let an anonymous caller mint or
-// enumerate links.
+// Only the two token-bearing read verbs are public: HEAD exposes nothing GET
+// does not already return, and the viewer page needs it to size the file. The
+// handler is reached without going through m.wrap (so a share recipient needs
+// no token), which means the management operations must authenticate
+// themselves — see the guard in handleShareRoutes. Keep that boundary exact:
+// widening it would let an anonymous caller mint or enumerate links.
 
 func (m *ManagementServer) handleShareRoutes(w http.ResponseWriter, r *http.Request) {
 	if m.shareStore == nil {
@@ -875,7 +877,14 @@ func (m *ManagementServer) handleShareRoutes(w http.ResponseWriter, r *http.Requ
 
 	// The one public action. Everything else below requires the management
 	// token, so authenticate before dispatching to it.
-	if r.Method == http.MethodGet && token != "" {
+	//
+	// HEAD belongs here with GET: the viewer page probes the file with a HEAD
+	// request to learn its size before deciding how to render it, and
+	// http.ServeContent answers HEAD with the same headers minus the body.
+	// Leaving HEAD out sent that probe into the authenticated branch below, so
+	// every link opened in a browser came back 401 on its first request and the
+	// page could never load the file.
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && token != "" {
 		m.serveShare(w, r, token)
 		return
 	}
