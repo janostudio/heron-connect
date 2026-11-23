@@ -149,6 +149,54 @@ func TestShare_PublicDownloadWithoutToken(t *testing.T) {
 	}
 }
 
+// TestShare_HeadProbeWithoutToken pins the viewer's very first request. The
+// share page sizes the file with `fetch(url, { method: 'HEAD' })` before it
+// decides how to render it; while HEAD was routed into the admin-token branch,
+// that probe came back 401 and every shared link showed "Failed to load file
+// (401)" instead of the file.
+func TestShare_HeadProbeWithoutToken(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "notes.md", "BODY-TEXT")
+	ts, _ := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
+	token := createShareViaAPI(t, ts, "tok", "proj", "notes.md")
+
+	// Exactly what the viewer sends: anonymous, ?raw=1, HEAD.
+	resp, body := doReq(t, http.MethodHead, ts.URL+"/api/v1/share/"+token+"?raw=1", "", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("anonymous HEAD probe must be 200, got %d: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get("Content-Length"); got != "9" {
+		t.Fatalf("HEAD must report the file size, got Content-Length %q", got)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
+		t.Fatalf("HEAD must report the file content-type, got %q", ct)
+	}
+	if len(body) != 0 {
+		t.Fatalf("HEAD must not carry a body, got %q", body)
+	}
+}
+
+// TestShare_HeadKeepsTheTokenContract: HEAD is public for a known token and 404
+// for an unknown one, so a prober still cannot tell "never existed" from
+// "revoked".
+func TestShare_HeadKeepsTheTokenContract(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "notes.md", "x")
+	ts, _ := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
+	token := createShareViaAPI(t, ts, "tok", "proj", "notes.md")
+
+	if resp, _ := doReq(t, http.MethodHead, ts.URL+"/api/v1/share/"+token, "", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("known token: expected 200, got %d", resp.StatusCode)
+	}
+	if resp, _ := doReq(t, http.MethodHead, ts.URL+"/api/v1/share/deadbeef", "", nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown token: expected 404, got %d", resp.StatusCode)
+	}
+	// The token-less path stays an authenticated operation for HEAD as well.
+	if resp, _ := doReq(t, http.MethodHead, ts.URL+"/api/v1/share", "", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("HEAD on the collection: expected 401, got %d", resp.StatusCode)
+	}
+}
+
 func TestShare_DownloadForcedAttachment(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "notes.md", "x")
@@ -285,18 +333,21 @@ func TestShare_ManagementOpsRequireAuth(t *testing.T) {
 
 // TestShare_PublicReadIsTheOnlyPublicAction pins the public surface to exactly
 // one verb+path. Broadening it silently is the main risk of this design.
+//
+// The public verbs are GET and HEAD on a token-bearing path — HEAD is how the
+// viewer sizes the file, and it exposes only the headers GET already returns.
 func TestShare_PublicReadIsTheOnlyPublicAction(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "a.md", "x")
 	ts, _ := newShareMgmtServer(t, "tok", map[string]string{"proj": dir})
 	token := createShareViaAPI(t, ts, "tok", "proj", "a.md")
 
-	// A token-bearing path with a non-GET verb must NOT be public.
+	// A token-bearing path with a non-GET/HEAD verb must NOT be public.
 	resp, _ := doReq(t, http.MethodDelete, ts.URL+"/api/v1/share/"+token, "", nil)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("anonymous DELETE must be 401, got %d", resp.StatusCode)
 	}
-	// HEAD/POST on the token path is not part of the public contract either.
+	// POST on the token path is not part of the public contract either.
 	resp, _ = doReq(t, http.MethodPost, ts.URL+"/api/v1/share/"+token, "", nil)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("anonymous POST on token path must be 401, got %d", resp.StatusCode)
