@@ -29,6 +29,13 @@ import (
 // while still refusing an unbounded allocation.
 const maxFrameBytes = 1536 << 20 // 1.5 GiB
 
+// bridgeCloseReplaced is the WebSocket close code sent to a connection that a
+// newer connection with the same client_id has superseded. Clients must treat
+// it as terminal instead of reconnecting: an unconditional retry immediately
+// kicks the newer connection, which then reconnects again, turning a single
+// overlap into an endless replacement loop.
+const bridgeCloseReplaced = 4001
+
 // BridgeServer exposes a WebSocket endpoint for external platform adapters.
 // A single instance is created globally; each project engine receives a
 // lightweight BridgePlatform handle that delegates to this server.
@@ -1024,23 +1031,32 @@ func (bs *BridgeServer) handleConnection(conn *websocket.Conn) {
 
 	bs.mu.Lock()
 	clients := bs.adapters[reg.Platform]
-	replaced := false
+	var replacedAdapter *bridgeAdapter
 	for i, old := range clients {
 		if old.clientID == clientID {
-			// Same client reconnected: drop the stale connection, keep one entry.
-			old.conn.Close()
+			// Same client reconnected: keep one entry and retire the old
+			// connection with an explicit close code. A bare Close() is
+			// indistinguishable from a network drop on the client side, so
+			// the client reconnects, kicks this connection, and the two
+			// ping-pong forever.
 			clients[i] = adapter
-			replaced = true
+			replacedAdapter = old
 			slog.Info("bridge: replaced existing adapter (reconnect)", "platform", reg.Platform, "client_id", clientID)
 			break
 		}
 	}
-	if !replaced {
+	if replacedAdapter == nil {
 		clients = append(clients, adapter)
 		bs.adapters[reg.Platform] = clients
 		slog.Info("bridge: adapter registered", "platform", reg.Platform, "client_id", clientID, "total", len(clients))
 	}
 	bs.mu.Unlock()
+
+	// Close the superseded connection outside the lock: finishing its close
+	// handshake writes to the socket and must not stall other registrations.
+	if replacedAdapter != nil {
+		closeSupersededAdapter(replacedAdapter)
+	}
 
 	if err := writeJSON(conn, &adapter.writeMu, map[string]any{"type": "register_ack", "ok": true}); err != nil {
 		slog.Debug("bridge: write register ack failed", "error", err)
@@ -1105,6 +1121,20 @@ func (bs *BridgeServer) handleConnection(conn *websocket.Conn) {
 			slog.Debug("bridge: unknown message type", "platform", reg.Platform, "type", base.Type)
 		}
 	}
+}
+
+// closeSupersededAdapter tells a replaced adapter why it is being dropped and
+// then closes it. WriteControl may run concurrently with other writes and with
+// Close (see gorilla/websocket docs), and the deadline keeps a dead peer from
+// stalling the registration path.
+func closeSupersededAdapter(a *bridgeAdapter) {
+	deadline := time.Now().Add(time.Second)
+	_ = a.conn.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(bridgeCloseReplaced, "replaced by a newer connection"),
+		deadline,
+	)
+	_ = a.conn.Close()
 }
 
 // ---------------------------------------------------------------------------

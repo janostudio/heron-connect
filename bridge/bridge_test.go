@@ -662,6 +662,30 @@ func TestBridge_AdapterReplace(t *testing.T) {
 	}
 }
 
+// A superseded connection must learn why it was dropped. Without the explicit
+// close code, a client cannot tell a takeover from a network drop, reconnects,
+// and kicks the newer connection — which reconnects and kicks it back, so one
+// overlap turns into an endless replacement loop.
+func TestBridge_AdapterReplaceSendsCloseCode(t *testing.T) {
+	_, wsURL := startTestBridge(t, "")
+
+	const clientID = "same-client"
+	conn1 := dialWS(t, wsURL, nil)
+	registerWithClientID(t, conn1, "replaceme", clientID, []string{"text"})
+
+	conn2 := dialWS(t, wsURL, nil)
+	registerWithClientID(t, conn2, "replaceme", clientID, []string{"text"})
+
+	if err := conn1.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	if _, _, err := conn1.ReadMessage(); err == nil {
+		t.Fatal("expected the superseded connection to be closed")
+	} else if !websocket.IsCloseError(err, bridgeCloseReplaced) {
+		t.Fatalf("expected close code %d, got %v", bridgeCloseReplaced, err)
+	}
+}
+
 func TestBridge_MultipleWebClientsCoexist(t *testing.T) {
 	bs, wsURL := startTestBridge(t, "")
 

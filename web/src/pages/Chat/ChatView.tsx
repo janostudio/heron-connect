@@ -1075,6 +1075,19 @@ function StatusBadge({ status }: { status: BridgeStatus }) {
       </span>
     );
   }
+  // The bridge replaced this connection because another connection registered
+  // the same client_id. Retrying would kick that one back, so the socket stays
+  // closed until the page is reloaded.
+  if (status === 'replaced') {
+    return (
+      <span
+        title={t('sessions.bridgeReplacedHint')}
+        className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 rounded-full"
+      >
+        <WifiOff size={9} /> {t('sessions.bridgeReplaced')}
+      </span>
+    );
+  }
   return (
     <span className="flex items-center gap-1 text-[10px] text-gray-400 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded-full">
       <WifiOff size={9} /> {t('sessions.bridgeDisconnected')}

@@ -18,6 +18,7 @@ import React, { useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import ChatComposer from './ChatComposer';
+import type { BridgeStatus } from '@/hooks/useBridgeSocket';
 // Side-effect import: registers the i18next instance so `t()` resolves real
 // strings. Without it react-i18next warns NO_I18NEXT_INSTANCE and returns the
 // raw keys, which would make the title assertions below meaningless.
@@ -357,7 +358,7 @@ describe('ChatComposer quick-prompt panel', () => {
 
 describe('ChatComposer while the bridge is down', () => {
   function renderOffline(opts: {
-    bridgeStatus?: string;
+    bridgeStatus?: BridgeStatus;
     bridgeCfgLoaded?: boolean;
   } = {}) {
     const onSend = vi.fn();
@@ -422,11 +423,14 @@ describe('ChatComposer while the bridge is down', () => {
   });
 
   it('says why in the tooltip, per bridge state', () => {
-    const cases: Array<[string, RegExp]> = [
+    const cases: Array<[BridgeStatus, RegExp]> = [
       ['disconnected', /not connected/i],
       ['error', /not connected/i],
       ['connecting', /connecting/i],
       ['registering', /connecting/i],
+      // Replaced is terminal: another tab owns the connection, so waiting will
+      // not help — the wording must tell the user to reload, not to wait.
+      ['replaced', /another tab/i],
     ];
     for (const [bridgeStatus, re] of cases) {
       const { send } = renderOffline({ bridgeStatus });

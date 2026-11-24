@@ -84,6 +84,8 @@
     "bridgeConnected": "connected",
     "bridgeConnecting": "connecting...",
     "bridgeDisconnected": "disconnected",
+    "bridgeReplaced": "opened in another tab",
+    "bridgeReplacedHint": "Another tab holds this connection. Reload this page to take it back.",
     "running": "running",
     "waitingPermission": "awaiting approval",
     "bridgeNotAvailable": "Bridge not available. Enable [bridge] in config.toml to chat from web.",

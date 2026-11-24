@@ -84,6 +84,8 @@
     "bridgeConnected": "已連線",
     "bridgeConnecting": "連線中...",
     "bridgeDisconnected": "未連線",
+    "bridgeReplaced": "已在其他分頁開啟",
+    "bridgeReplacedHint": "另一個分頁佔用了連線。重新整理本頁可重新連線。",
     "running": "執行中",
     "waitingPermission": "等待授權",
     "bridgeNotAvailable": "Bridge 未啟用。請在 config.toml 中啟用 [bridge] 以支援網頁聊天。",
