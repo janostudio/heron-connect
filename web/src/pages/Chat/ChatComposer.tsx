@@ -5,6 +5,7 @@ import { FileText, Paperclip, Send, Slash, Square, WifiOff, Loader2, X } from 'l
 import { cn } from '@/lib/utils';
 import CommandPalette, { type SlashCommand } from './CommandPalette';
 import type { PickItem } from './chatMessage';
+import type { BridgeStatus } from '@/hooks/useBridgeSocket';
 import { attachmentAccept } from './chatHelpers';
 
 // The chat composer owns the in-progress text.
@@ -46,7 +47,7 @@ interface Props {
   canSend: boolean;
   /** False once the bridge config has loaded but is unusable. */
   bridgeCfgLoaded: boolean;
-  bridgeStatus: string;
+  bridgeStatus: BridgeStatus;
   isRunning: boolean;
   /**
    * Whether a message sent mid-turn interrupts the running turn (true) or is
@@ -246,9 +247,14 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
   // its own. The row stays mounted so the draft survives it, and the send
   // button alone carries the state.
   const bridgeBlocked = !canSend;
-  const blockedTitle = bridgeStatus === 'disconnected' || bridgeStatus === 'error'
-    ? t('chat.sendBlocked')
-    : t('sessions.bridgeConnecting');
+  // A replaced connection is terminal, not "still connecting": another tab owns
+  // the client_id, so waiting will not bring it back — the page must be
+  // reloaded. Say that instead of showing the connecting wording.
+  const blockedTitle = bridgeStatus === 'replaced'
+    ? t('sessions.bridgeReplacedHint')
+    : bridgeStatus === 'disconnected' || bridgeStatus === 'error'
+      ? t('chat.sendBlocked')
+      : t('sessions.bridgeConnecting');
   // Also the accessible name: the button is icon-only, and a disabled button's
   // `title` is not reliably announced.
   const sendHint = bridgeBlocked

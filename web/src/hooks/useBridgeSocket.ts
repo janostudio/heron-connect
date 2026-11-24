@@ -28,7 +28,39 @@ export interface BridgeMedia {
   files?: { mime_type: string; data: string; file_name: string }[];
 }
 
-export type BridgeStatus = 'connecting' | 'registering' | 'connected' | 'disconnected' | 'error';
+export type BridgeStatus = 'connecting' | 'registering' | 'connected' | 'disconnected' | 'error' | 'replaced';
+
+/**
+ * Close code the bridge sends when a newer connection registered the same
+ * client_id (mirror of the server-side constant in bridge/bridge.go).
+ */
+export const BRIDGE_CLOSE_REPLACED = 4001;
+
+const RECONNECT_BASE_DELAY_MS = 1000;
+const RECONNECT_MAX_DELAY_MS = 30000;
+
+/**
+ * Whether a closed socket should be reopened.
+ *
+ * A replaced connection must stay closed. Reconnecting would kick the newer
+ * connection that superseded it, whose own close handler would then reconnect
+ * and kick us back — a single overlap would turn into an endless replacement
+ * loop instead of settling on one connection.
+ */
+export function shouldReconnect(closeCode: number): boolean {
+  return closeCode !== BRIDGE_CLOSE_REPLACED;
+}
+
+/**
+ * Delay before the n-th consecutive reconnect attempt (0-based): exponential
+ * backoff with jitter, capped so a long outage still retries periodically.
+ * `random` is injectable so the schedule can be asserted in tests.
+ */
+export function reconnectDelayMs(attempt: number, random: () => number = Math.random): number {
+  const exp = Math.max(0, attempt);
+  const base = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * 2 ** exp);
+  return base + Math.floor(random() * 250);
+}
 
 export interface UseBridgeSocketOptions {
   bridgeCfg: BridgeConfig | null;
@@ -113,19 +145,44 @@ export function useBridgeSocket({ bridgeCfg, platformName = 'web', sessionKey, p
 
     const wsUrl = bridgeSocketUrl(bridgeCfgRef.current!, window.location);
 
-    let ws: WebSocket;
-    let reconnectTimer: ReturnType<typeof setTimeout>;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let alive = true;
+    // Consecutive reconnect attempts since the last successful registration.
+    // Only register_ack resets it: a socket that opens and closes immediately
+    // must still back off, otherwise a half-broken path retries at full speed.
+    let attempt = 0;
 
-    const connect = () => {
+    const clearPing = () => {
+      if (pingRef.current) {
+        clearInterval(pingRef.current);
+        pingRef.current = null;
+      }
+    };
+
+    function scheduleReconnect() {
       if (!alive) return;
-      setStatus('connecting');
-      ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      const delay = reconnectDelayMs(attempt);
+      attempt += 1;
+      reconnectTimer = setTimeout(connect, delay);
+    }
 
-      ws.onopen = () => {
+    function connect() {
+      if (!alive) return;
+      // Retire a leftover socket first. Without this, its close handler can
+      // clear wsRef and schedule a second reconnect on top of this one.
+      if (ws && ws.readyState !== WebSocket.CLOSED) {
+        ws.onclose = null;
+        ws.close();
+      }
+      setStatus('connecting');
+      const sock = new WebSocket(wsUrl);
+      ws = sock;
+      wsRef.current = sock;
+
+      sock.onopen = () => {
         setStatus('registering');
-        ws.send(JSON.stringify({
+        sock.send(JSON.stringify({
           type: 'register',
           platform: platformName,
           client_id: clientID,
@@ -141,12 +198,14 @@ export function useBridgeSocket({ bridgeCfg, platformName = 'web', sessionKey, p
         }));
       };
 
-      ws.onmessage = (evt) => {
+      sock.onmessage = (evt) => {
         try {
           const msg = JSON.parse(evt.data) as BridgeIncoming;
           if (msg.type === 'register_ack') {
             if (msg.ok) {
+              attempt = 0;
               setStatus('connected');
+              clearPing();
               pingRef.current = setInterval(() => {
                 send({ type: 'ping', ts: Date.now() });
               }, 25000);
@@ -158,28 +217,39 @@ export function useBridgeSocket({ bridgeCfg, platformName = 'web', sessionKey, p
         } catch { /* ignore parse errors */ }
       };
 
-      ws.onclose = () => {
+      sock.onclose = (evt) => {
+        // Only drop the ref if it still points at this socket: a newer
+        // connection may already own it.
+        if (wsRef.current === sock) wsRef.current = null;
+        clearPing();
+        if (!alive) return;
+        if (!shouldReconnect(evt.code)) {
+          // Another connection holds this client_id. Reconnecting would kick
+          // it and start the replacement loop this code exists to break.
+          setStatus('replaced');
+          return;
+        }
         setStatus('disconnected');
-        wsRef.current = null;
-        if (pingRef.current) clearInterval(pingRef.current);
-        if (alive) reconnectTimer = setTimeout(connect, 3000);
+        scheduleReconnect();
       };
 
-      ws.onerror = () => {
+      sock.onerror = () => {
         setStatus('error');
       };
-    };
+    }
 
     connect();
 
     return () => {
       alive = false;
-      clearTimeout(reconnectTimer);
-      if (pingRef.current) clearInterval(pingRef.current);
-      if (wsRef.current) {
-        wsRef.current.onclose = null;
-        wsRef.current.close();
-        wsRef.current = null;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      clearPing();
+      const sock = wsRef.current;
+      wsRef.current = null;
+      ws = null;
+      if (sock) {
+        sock.onclose = null;
+        sock.close();
       }
       setStatus('disconnected');
     };

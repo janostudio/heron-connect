@@ -84,6 +84,8 @@
     "bridgeConnected": "接続済み",
     "bridgeConnecting": "接続中...",
     "bridgeDisconnected": "未接続",
+    "bridgeReplaced": "別タブで開いています",
+    "bridgeReplacedHint": "別タブが接続を使用中です。このページを再読み込みすると再接続します。",
     "running": "実行中",
     "waitingPermission": "承認待ち",
     "bridgeNotAvailable": "ブリッジが利用できません。config.toml で [bridge] を有効にしてください。",

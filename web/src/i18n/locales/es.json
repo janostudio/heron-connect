@@ -84,6 +84,8 @@
     "bridgeConnected": "conectado",
     "bridgeConnecting": "conectando...",
     "bridgeDisconnected": "desconectado",
+    "bridgeReplaced": "abierto en otra pestaña",
+    "bridgeReplacedHint": "Otra pestaña tiene la conexión. Recarga esta página para recuperarla.",
     "running": "en ejecución",
     "waitingPermission": "esperando aprobación",
     "bridgeNotAvailable": "Bridge no disponible. Habilite [bridge] en config.toml para chatear desde la web.",
