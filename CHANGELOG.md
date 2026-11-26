@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.9.6 (2026-11-26)
+
+### Fixed
+
+- **Duplicated tabs no longer fight over one bridge connection.** The web client
+  kept its `bridge_client_id` in `sessionStorage`, and browsers copy
+  `sessionStorage` into a duplicated tab: both tabs registered the same id, the
+  bridge keeps exactly one connection per `client_id`, so each reload replaced
+  the other tab's connection and pushed it into "opened in another tab".
+  Observed as the same id being replaced repeatedly while other tabs stayed
+  stable. The id is now minted once per page load and kept in memory, so a
+  duplicated tab is an independent client; reconnects inside one page still
+  reuse it, and a reload no longer needs to (the old socket dies with the page
+  and is reclaimed on peer-close).
+
 ## v1.9.5 (2026-11-26)
 
 ### Changed (breaking — bridge protocol 2.0.0)
