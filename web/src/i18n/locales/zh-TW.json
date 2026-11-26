@@ -305,6 +305,7 @@
     },
     "prompts": {
       "add": "新增提示詞",
+      "open": "快捷提示詞",
       "edit": "編輯",
       "delete": "刪除",
       "deleteConfirm": "刪除這條提示詞？",

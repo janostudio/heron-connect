@@ -306,6 +306,7 @@
     },
     "prompts": {
       "add": "Add prompt",
+      "open": "Quick prompts",
       "edit": "Edit",
       "delete": "Delete",
       "deleteConfirm": "Delete this prompt?",

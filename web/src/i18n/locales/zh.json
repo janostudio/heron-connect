@@ -305,6 +305,7 @@
     },
     "prompts": {
       "add": "添加提示词",
+      "open": "快捷提示词",
       "edit": "编辑",
       "delete": "删除",
       "deleteConfirm": "删除这条提示词？",

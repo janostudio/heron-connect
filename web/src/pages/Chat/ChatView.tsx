@@ -2304,6 +2304,9 @@ export default function ChatView() {
           onCmdOpenChange={setCmdOpen}
           onCmdSelect={handleCmdSelect}
           onPromptsOpenChange={setPromptsOpen}
+          // An empty list only opens from the prompt button: a focus-triggered
+          // card that says "no prompts yet" covers the composer for nothing.
+          promptsAvailable={quickPrompts.length > 0}
           promptsSlot={projectName ? ({ close }) => (
             <PromptList
               prompts={quickPrompts}
