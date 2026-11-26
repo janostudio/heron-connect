@@ -1,7 +1,8 @@
-import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import api from '@/api/client';
 import { bridgeConfigKey, bridgeSocketUrl, type BridgeConfig } from './bridgeConfig';
 import { BridgeConnection, type BridgeIncoming, type BridgeStatus } from './bridgeConnection';
+import { newClientID } from '@/lib/webClientId';
 
 // Re-exported so existing importers keep working.
 export type { BridgeConfig, BridgeIncoming, BridgeStatus };
@@ -23,34 +24,16 @@ export interface UseBridgeSocketOptions {
   onMessage: (msg: BridgeIncoming) => void;
 }
 
+// One id per page load. Stored here (not in sessionStorage) because browsers
+// copy sessionStorage into a duplicated tab, which made two tabs fight over
+// the same connection slot. See lib/webClientId.ts.
+const CLIENT_ID = newClientID();
+
 export function useBridgeSocket({ bridgeCfg, platformName = 'web', sessionKey, projectName, onMessage }: UseBridgeSocketOptions) {
   const connRef = useRef<BridgeConnection | null>(null);
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
   const [status, setStatus] = useState<BridgeStatus>('disconnected');
-
-  // Per-tab client id: each browser tab/window is an independent bridge client
-  // so multiple Web dashboards can connect simultaneously without kicking each
-  // other off. sessionStorage scopes the id to the tab; a fallback random uuid
-  // is used if storage is unavailable.
-  //
-  // It must stay stable across reconnects: the server retires the previous
-  // connection by client_id, so a regenerated id would leave the old adapter
-  // registered and reintroduce cross-client interference.
-  const clientID = useMemo(() => {
-    try {
-      const key = 'bridge_client_id';
-      const existing = sessionStorage.getItem(key);
-      if (existing) return existing;
-      const id = (crypto as any).randomUUID
-        ? (crypto as any).randomUUID()
-        : `web-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      sessionStorage.setItem(key, id);
-      return id;
-    } catch {
-      return `web-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    }
-  }, []);
 
   const send = useCallback((data: Record<string, any>) => {
     connRef.current?.send(data);
@@ -100,7 +83,7 @@ export function useBridgeSocket({ bridgeCfg, platformName = 'web', sessionKey, p
     const conn = new BridgeConnection({
       url: bridgeSocketUrl(bridgeCfgRef.current!, window.location),
       platformName,
-      clientID,
+      clientID: CLIENT_ID,
       onStatus: setStatus,
       onMessage: (msg) => onMessageRef.current(msg),
     });
@@ -119,7 +102,7 @@ export function useBridgeSocket({ bridgeCfg, platformName = 'web', sessionKey, p
       if (connRef.current === conn) connRef.current = null;
       setStatus('disconnected');
     };
-  }, [cfgKey, platformName, clientID]);
+  }, [cfgKey, platformName]);
 
   return { status, send, sendMessage, sendCardAction, sendPreviewAck };
 }
