@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.9.7 (2026-11-26)
+
+### Fixed
+
+- **The quick-prompt panel no longer covers the composer.** It opened on every
+  focus of the input, and a project with no saved prompts only ever saw an empty
+  card ("no prompts yet" plus an add row) sitting above the input; once a message
+  was being written the panel stayed on top of the text. Focus now opens it only
+  when the project has prompts and the composer is empty, typing or attaching
+  collapses it, and a new prompt button in the composer row is the explicit way
+  in — the only one for a project that has no prompts yet.
+- **Adding a prompt used to lose the editor.** The editor renders in a portal,
+  so its `autoFocus` blurred the composer and the delayed close unmounted the
+  panel with the editor still open. Focus inside the editor now keeps the panel
+  mounted.
+
 ## v1.9.6 (2026-11-26)
 
 ### Fixed
