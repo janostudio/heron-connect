@@ -180,6 +180,13 @@ func TestBridge_RegisterSendsCapabilitiesSnapshotWhenAdapterSupportsIt(t *testin
 	bs.RegisterEngine("test-proj", e, bp)
 
 	conn := dialWS(t, wsURL, nil)
+	// Teardown runs before the version restore below (defers are LIFO): the
+	// handler goroutine reads these globals while building the snapshot, so it
+	// has to be finished with them before the test writes them back.
+	defer func() {
+		_ = conn.Close()
+		waitForNoAdapters(t, bs)
+	}()
 	registerWithMetadata(t, conn, "bridge", []string{"text"}, map[string]any{
 		"control_plane": []string{bridgeCapabilitiesSnapshotProto},
 	})

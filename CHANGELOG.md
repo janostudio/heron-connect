@@ -1,5 +1,61 @@
 # Changelog
 
+## Unreleased
+
+### Changed (breaking — bridge protocol 2.0.0)
+
+- **Keepalive moves to the server; background tabs are no longer disconnected**.
+  Connection liveness used to depend entirely on the adapter sending an
+  application-level `ping`: the protocol asked for one every 30 seconds and the
+  server closed a connection after 90 seconds without a frame. Browser tabs
+  throttle — and eventually freeze — their JavaScript timers, so a page that
+  was switched away from stopped pinging and the server dropped it; the client's
+  reconnect was then delayed by the same throttled `setTimeout`.
+  Now:
+  - The server sends a WebSocket control-frame `ping` every 20 seconds and
+    closes a connection after 60 seconds without any inbound frame. Browsers
+    answer control pings from their protocol stack, so a hidden page stays
+    connected without running any JavaScript.
+  - Clients no longer need a keepalive timer. `ping`/`pong` remain as a
+    foreground probe: on becoming visible the web client sends one, and treats
+    8 seconds without `pong` as a dead socket.
+  - A hidden page never reconnects (the server keeps the socket alive); a page
+    that becomes visible reconnects immediately instead of waiting out a
+    throttled timer. Everything else backs off exponentially (1s → 30s with
+    jitter).
+  - Protocol version in `register.metadata` is now `2.0.0`;
+    `docs/bridge-protocol.md` Timeouts and Reconnection sections are updated.
+
+### Fixed
+
+- **Single-writer connection model.** Each connection now has a bounded frame
+  queue and one write goroutine with a 10 second write deadline. Broadcasting
+  used to write to every client synchronously, so a peer that stopped reading
+  (a frozen background tab) could stall delivery for every other client. Such a
+  peer is now disconnected as `slow-consumer`; the rest keep receiving.
+- **Disconnect reasons are observable.** `adapter disconnected` now logs
+  `reason` (`peer-close`, `pong-timeout`, `ping-failed`, `write-timeout`,
+  `slow-consumer`, `replaced`, `server-shutdown`) and the connection's age. A
+  read-deadline expiry used to be silent, so the most common disconnect could
+  only be inferred from a 90-second interval with no log line.
+- **Error semantics.** A broadcast that reaches zero clients (all gone or all
+  queues full) returns `ErrNotConnected` so callers retry on the next event; a
+  single client's write failure no longer propagates to the engine.
+- **Connection teardown no longer runs under the registry lock.**
+  `BridgeServer.Stop()` and the replacement path close connections outside the
+  lock, and `addAdapter`/`removeAdapter` are idempotent.
+
+### Tests
+
+- bridge: idle client kept alive by the server ping, client reclaimed when it
+  stops answering, application `ping` answered with `pong`, slow consumer
+  dropped at queue depth, write timeout drops a stalled peer, same `client_id`
+  leaves exactly one adapter and closes the old one with code 4001, broadcast
+  after `Stop()` reports `ErrNotConnected` — all under `-race`.
+- web: reconnect only when visible, no reconnect while hidden, probe timeout
+  reconnects, periodic probing, close code 4001 stays closed, register frame
+  carries protocol 2.0.0 and a stable client id.
+
 ## v1.3.31 (2026-10-21)
 
 ### Fixed

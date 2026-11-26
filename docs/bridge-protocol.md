@@ -83,7 +83,10 @@ Adapter                          heron-connect
   │                                  │
   │←──→ message / reply exchange ──→│  (bidirectional)
   │                                  │
-  │──── ping ──────────────────────→│  (keepalive, every 30s recommended)
+  │←─── WebSocket ping (control) ───│  (server keepalive, every 20s)
+  │──── WebSocket pong (control) ──→│  (answered by the client's protocol stack)
+  │                                  │
+  │──── ping ──────────────────────→│  (foreground probe: is this socket really alive?)
   │←─── pong ──────────────────────│
   │                                  │
   │──── close ─────────────────────→│  (graceful disconnect)
@@ -107,7 +110,7 @@ Must be the first message after connection. Declares the adapter identity and ca
   "platform": "wechat",
   "capabilities": ["text", "image", "file", "audio", "card", "buttons", "typing", "update_message", "preview"],
   "metadata": {
-    "version": "1.0.0",
+    "version": "2.0.0",
     "description": "WeChat Official Account adapter"
   }
 }
@@ -192,7 +195,15 @@ Acknowledges a preview start and returns a handle for subsequent updates.
 
 #### `ping`
 
-Keepalive. heron-connect responds with `pong`.
+Application-level probe. It is not what keeps the connection alive: heron-connect
+sends WebSocket control-frame pings itself, and a client answers those from its
+protocol stack without running application code. Adapters therefore do not need
+a keepalive timer.
+
+Send `ping` when you need to know whether a socket that still reports `OPEN` is
+actually alive — for example when a browser page returns to the foreground
+after the machine slept. No `pong` within 8 seconds means the socket is dead:
+close it and reconnect.
 
 ```json
 {
@@ -437,7 +448,7 @@ Send a file to the user. Only sent if the adapter declared `"file"` capability.
 
 #### `pong`
 
-Response to `ping`.
+Response to the application-level `ping` probe. WebSocket control-frame pings are answered by the peer's protocol stack and never produce this frame.
 
 ```json
 {
@@ -797,9 +808,15 @@ Switches the active session for a session key.
 
 If the WebSocket connection drops, the adapter should:
 
-1. Wait with exponential backoff (starting at 1s, max 60s).
-2. Reconnect and send a new `register` message.
-3. Resume normal operation — heron-connect maintains session state independently of the connection.
+1. Reconnect immediately when the client becomes interactive again — for a
+   browser that means the page became visible. While a page is hidden there is
+   nothing to retry: heron-connect keeps the socket alive on its own.
+2. Otherwise back off exponentially with jitter (1s, 2s, 4s, ... capped at 30s).
+3. Send a new `register` message with the same `client_id`.
+4. Treat close code `4001` as terminal. It means a newer connection registered
+   the same `client_id` and replaced this one; reconnecting would kick that
+   connection back and start an endless replacement loop.
+5. Resume normal operation — heron-connect maintains session state independently of the connection.
 
 ### Message Ordering
 
@@ -807,8 +824,10 @@ Messages within a single WebSocket connection are ordered. heron-connect process
 
 ### Timeouts
 
-- **Ping interval**: Adapters should send `ping` at least every 30 seconds.
-- **Connection timeout**: heron-connect closes idle connections after 90 seconds without a ping.
+- **Server keepalive**: heron-connect sends a WebSocket control-frame `ping` every 20 seconds. The peer answers with a `pong` from its protocol stack, so a throttled or frozen browser page still counts as alive.
+- **Connection timeout**: heron-connect closes a connection after 60 seconds without any inbound frame. The control-frame `pong` alone is enough to keep it open; adapters do not need a keepalive timer.
+- **Foreground probe**: after returning to the foreground, send `ping` and treat 8 seconds without `pong` as a dead socket. The web client does this automatically.
+- **Write deadline**: a frame that cannot be written within 10 seconds closes the connection. A client that stops reading is disconnected rather than holding up delivery to the other clients.
 - **Reply timeout**: If an agent takes too long, heron-connect may send an error reply. The adapter does not need to handle this specially.
 
 ---
@@ -835,7 +854,7 @@ No per-adapter project configuration is needed — adapters are associated with 
 When building an adapter, follow these guidelines:
 
 1. **Keep it stateless** — the adapter should be a thin translation layer. All session state lives in heron-connect.
-2. **Handle reconnection** — network failures are normal. Implement exponential backoff.
+2. **Handle reconnection** — network failures are normal. Back off exponentially, and reconnect immediately when the client becomes interactive again.
 3. **Declare capabilities honestly** — only declare capabilities your platform actually supports.
 4. **Use `reply_ctx` faithfully** — always echo back the `reply_ctx` from the original message.
 5. **Base64 for binary data** — images, files, and audio are transferred as base64-encoded strings.
