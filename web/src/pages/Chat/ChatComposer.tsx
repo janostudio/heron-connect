@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FileText, Paperclip, Send, Slash, Square, WifiOff, Loader2, X } from 'lucide-react';
+import { FileText, Paperclip, Send, Slash, Square, WifiOff, Loader2, X, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import CommandPalette, { type SlashCommand } from './CommandPalette';
 import type { PickItem } from './chatMessage';
@@ -69,6 +69,15 @@ interface Props {
    * Omitted entirely when the caller has no prompt feature (no project yet).
    */
   promptsSlot?: (controls: { close: () => void }) => ReactNode;
+  /**
+   * The project has at least one saved prompt. With none, focus does not open
+   * the panel: an empty "no prompts yet" card over the composer is noise for
+   * someone who only wants to type. The prompt button still opens it, which is
+   * where the first prompt gets added.
+   *
+   * Defaults to true so a caller that omits it keeps the focus behaviour.
+   */
+  promptsAvailable?: boolean;
   /** Notifies the parent so it can hide the "jump to latest" button. */
   onPromptsOpenChange?: (open: boolean) => void;
 }
@@ -82,7 +91,7 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
   onSend, pickedFiles, onRemoveFile, onAddFiles,
   canSend, bridgeCfgLoaded, bridgeStatus, isRunning, interruptible, onStop,
   cmdOpen, onCmdOpenChange, onCmdSelect,
-  promptsSlot, onPromptsOpenChange,
+  promptsSlot, promptsAvailable = true, onPromptsOpenChange,
 }, ref) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState('');
@@ -93,9 +102,16 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
 
   // Quick-prompt panel visibility.
   //
-  // The panel is derived from focus, not from a toggle: it appears when the
-  // input area is focused and disappears when focus leaves it. Two details make
-  // that behave rather than flicker:
+  // Two ways in, one rule for staying out of the way:
+  //
+  //   * focus (or a click in the input) opens it, but only when there is a list
+  //     to show and nothing has been typed or attached yet;
+  //   * the prompt button opens it unconditionally, which is the only way in
+  //     for a project with no prompts (adding the first one lives in there).
+  //
+  // It closes when focus leaves the composer, when the draft or the attachment
+  // queue stops being empty, when the command palette takes the space, and when
+  // the bridge drops. Two details keep focus handling from flickering:
   //
   //   * focusin/focusout on the container, not focus/blur on the textarea —
   //     clicking the attach or slash button would otherwise blur the textarea
@@ -112,16 +128,32 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
     }
   }, []);
 
+  // Opening from focus (or from a click in the input) is a convenience, so it
+  // stays out of the way: no prompt list to show, or a message already being
+  // written, and the panel would only cover the composer.
   const openPrompts = useCallback(() => {
     if (!promptsSlot || cmdOpen) return; // the command palette owns this space
+    if (!promptsAvailable || hasContent) return;
     cancelPromptsClose();
     setPromptsOpen(true);
-  }, [promptsSlot, cmdOpen, cancelPromptsClose]);
+  }, [promptsSlot, cmdOpen, promptsAvailable, hasContent, cancelPromptsClose]);
 
   const closePrompts = useCallback(() => {
     cancelPromptsClose();
     setPromptsOpen(false);
   }, [cancelPromptsClose]);
+
+  // The prompt button is the explicit way in, and the only one when the project
+  // has no prompts yet — that empty panel is where the first one gets added.
+  const togglePrompts = useCallback(() => {
+    if (!promptsSlot || cmdOpen) return;
+    if (promptsOpen) {
+      closePrompts();
+      return;
+    }
+    cancelPromptsClose();
+    setPromptsOpen(true);
+  }, [promptsSlot, cmdOpen, promptsOpen, closePrompts, cancelPromptsClose]);
 
   const schedulePromptsClose = useCallback(() => {
     cancelPromptsClose();
@@ -141,15 +173,31 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
   useEffect(() => {
     if (!canSend) closePrompts();
   }, [canSend, closePrompts]);
+  // Typing or attaching collapses the panel: shortcuts are for an empty
+  // composer, and once the message has content they sit on top of it.
+  useEffect(() => {
+    if (hasContent) closePrompts();
+  }, [hasContent, closePrompts]);
   useEffect(() => {
     onPromptsOpenChange?.(promptsOpen);
   }, [promptsOpen, onPromptsOpenChange]);
 
   const handleContainerBlur = useCallback((e: React.FocusEvent<HTMLDivElement>) => {
-    const next = e.relatedTarget as Node | null;
+    const next = e.relatedTarget as HTMLElement | null;
     if (next && e.currentTarget.contains(next)) return;
+    // The prompt editor renders in a portal, so editing a prompt moves focus
+    // out of this subtree; collapsing the panel would unmount the editor with
+    // it. The panel stays mounted for as long as the edit lasts.
+    if (next && next.closest('[data-prompt-editor]')) return;
     schedulePromptsClose();
   }, [schedulePromptsClose]);
+
+  const handleContainerFocus = useCallback((e: React.FocusEvent<HTMLDivElement>) => {
+    // The prompt button runs its own toggle: letting the focus handler open the
+    // panel first would make the click that follows close it again.
+    if ((e.target as HTMLElement).closest('[data-prompts-trigger]')) return;
+    openPrompts();
+  }, [openPrompts]);
 
   // Auto-grow helper. Kept out of the onChange inline body so the two callers
   // (typing and programmatic insert) behave identically.
@@ -266,7 +314,7 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
   return (
     <div
       className="relative flex items-end gap-2"
-      onFocus={openPrompts}
+      onFocus={handleContainerFocus}
       onBlur={handleContainerBlur}
     >
       {/* Quick prompts drop out of the top edge of the composer. Positioned
@@ -320,6 +368,28 @@ const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatComposer
           anchorRef={cmdBtnRef}
         />
       </div>
+
+      {/* Prompt list trigger. Focus opens the panel on its own once the project
+          has prompts; this button is the way in for an empty list, which is
+          where the first prompt gets added. */}
+      {promptsSlot && (
+        <button
+          type="button"
+          data-testid="composer-prompts"
+          data-prompts-trigger="1"
+          onClick={togglePrompts}
+          aria-expanded={promptsOpen}
+          className={cn(
+            'p-3 rounded-xl transition-all duration-200',
+            promptsOpen
+              ? 'bg-accent/15 text-accent ring-1 ring-accent/30'
+              : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.06]',
+          )}
+          title={t('chat.prompts.open', 'Quick prompts')}
+        >
+          <Zap size={18} />
+        </button>
+      )}
 
       {/* Text input */}
       {/* `min-w-0` lets the row shrink below the button + textarea intrinsic

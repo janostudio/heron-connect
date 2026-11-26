@@ -18,6 +18,7 @@ import React, { useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import ChatComposer from './ChatComposer';
+import PromptList from './PromptList';
 import type { BridgeStatus } from '@/hooks/useBridgeSocket';
 // Side-effect import: registers the i18next instance so `t()` resolves real
 // strings. Without it react-i18next warns NO_I18NEXT_INSTANCE and returns the
@@ -248,10 +249,12 @@ describe('ChatComposer sending while running', () => {
 
 // ── Quick-prompt panel ───────────────────────────────────────
 //
-// The panel is driven by focus, not by a toggle. These tests pin the three
-// behaviours that are easy to break by accident: it opens on focus, it survives
-// long enough for a click to land after focus leaves the textarea, and it does
-// not fight the slash-command palette for the same space.
+// The panel has two ways in: focus (only while the project has prompts and the
+// composer is empty) and the prompt button (always). These tests pin the
+// behaviours that are easy to break by accident: it opens on focus, it stays
+// out of the way when there is nothing to show or something is being typed, it
+// survives long enough for a click to land after focus leaves the textarea, and
+// it does not fight the slash-command palette for the same space.
 
 describe('ChatComposer quick-prompt panel', () => {
   const PANEL = '[data-testid="prompt-panel"]';
@@ -259,14 +262,16 @@ describe('ChatComposer quick-prompt panel', () => {
   function mountComposer(opts: {
     canSend?: boolean;
     cmdOpen?: boolean;
+    promptsAvailable?: boolean;
+    promptsSlot?: (controls: { close: () => void }) => React.ReactNode;
     onPromptsOpenChange?: Mock<(open: boolean) => void>;
   } = {}) {
     const onPromptsOpenChange = opts.onPromptsOpenChange ?? vi.fn();
     let close = () => {};
-    const promptsSlot = (controls: { close: () => void }) => {
+    const promptsSlot = opts.promptsSlot ?? ((controls: { close: () => void }) => {
       close = controls.close;
       return React.createElement('div', { 'data-testid': 'prompt-panel' }, 'panel');
-    };
+    });
     if (!root) root = createRoot(container);
     act(() => {
       root!.render(React.createElement(ChatComposer, {
@@ -284,6 +289,7 @@ describe('ChatComposer quick-prompt panel', () => {
         onCmdOpenChange: () => {},
         onCmdSelect: () => {},
         promptsSlot,
+        promptsAvailable: opts.promptsAvailable ?? true,
         onPromptsOpenChange,
       }));
     });
@@ -321,6 +327,102 @@ describe('ChatComposer quick-prompt panel', () => {
     // handler is what brings the panel back.
     act(() => { textarea.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
     expect(container.querySelector(PANEL)).not.toBeNull();
+  });
+
+  it('stays closed on focus while the project has no prompts', () => {
+    // An empty panel says "no prompts yet" and nothing else; opening it on
+    // every focus covered the composer for someone who only wanted to type.
+    mountComposer({ promptsAvailable: false });
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+
+    act(() => { textarea.focus(); });
+
+    expect(container.querySelector(PANEL)).toBeNull();
+  });
+
+  it('opens from the prompt button even when the list is empty', () => {
+    // The button has to work with no prompts: that empty panel is where the
+    // first one is added.
+    mountComposer({ promptsAvailable: false });
+    const button = container.querySelector('[data-testid="composer-prompts"]') as HTMLButtonElement;
+    expect(button).not.toBeNull();
+
+    act(() => { button.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    expect(container.querySelector(PANEL)).not.toBeNull();
+
+    act(() => { button.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    expect(container.querySelector(PANEL)).toBeNull();
+  });
+
+  it('collapses as soon as the draft has text', () => {
+    mountComposer();
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+
+    act(() => { textarea.focus(); });
+    expect(container.querySelector(PANEL)).not.toBeNull();
+
+    act(() => { typeInto(textarea, 'ship it'); });
+
+    expect(container.querySelector(PANEL)).toBeNull();
+  });
+
+  it('does not reopen on focus while the draft has text', () => {
+    mountComposer();
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+
+    act(() => { typeInto(textarea, 'ship it'); });
+    act(() => { textarea.focus(); });
+
+    expect(container.querySelector(PANEL)).toBeNull();
+  });
+
+  it('survives the focus move into the prompt editor', async () => {
+    // The editor is a portal outside the composer, so opening it blurs the
+    // composer. Without the `data-prompt-editor` exemption the delayed close
+    // would unmount the panel and take the editor with it mid-edit.
+    mountComposer({
+      promptsSlot: (controls) => React.createElement(PromptList, {
+        prompts: [],
+        loading: false,
+        loadError: null,
+        canSend: true,
+        isRunning: false,
+        maxContentLength: 500,
+        maxPerProject: 5,
+        onSend: () => {},
+        onCreate: async () => {},
+        onUpdate: async () => {},
+        onDelete: async () => {},
+        onClose: controls.close,
+      }),
+    });
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    // The real PromptList has no test panel id; its add row marks the panel.
+    const mounted = () => container.querySelector('[data-testid="prompt-add"]');
+
+    act(() => { textarea.focus(); });
+    expect(mounted()).not.toBeNull();
+
+    const add = mounted() as HTMLButtonElement;
+    act(() => { add.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    const editor = document.querySelector('[data-testid="prompt-input"]') as HTMLTextAreaElement;
+    expect(editor).not.toBeNull();
+
+    // jsdom does not run React's autoFocus or the focusout that follows it, so
+    // drive the same transition by hand: focus leaves the composer for the
+    // portal that holds the editor.
+    act(() => {
+      textarea.dispatchEvent(new FocusEvent('focusout', {
+        bubbles: true,
+        relatedTarget: editor,
+      }));
+    });
+
+    // Past the 150ms close delay a real blur would have scheduled.
+    await act(async () => { await new Promise((r) => setTimeout(r, 220)); });
+
+    expect(mounted()).not.toBeNull();
+    expect(document.querySelector('[data-testid="prompt-input"]')).not.toBeNull();
   });
 
   it('stays closed while the command palette is open', () => {

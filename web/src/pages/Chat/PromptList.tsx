@@ -267,35 +267,40 @@ export default function PromptList({
           ? t('chat.prompts.editTitle', 'Edit prompt')
           : t('chat.prompts.createTitle', 'Add prompt')}
       >
-        <textarea
-          autoFocus
-          data-testid="prompt-input"
-          rows={5}
-          value={form}
-          onChange={(e) => {
-            setForm(e.target.value);
-            setFormError(null);
-          }}
-          placeholder={t('chat.prompts.placeholder', 'Prompt text…')}
-          className="w-full resize-none rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/50 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-        />
-        <div className="mt-2 flex items-center justify-between gap-3">
-          <span className={cn(
-            'text-xs',
-            charCount(form) > maxContentLength ? 'text-red-500' : 'text-gray-400',
-          )}>
-            {charCount(form)}/{maxContentLength}
-          </span>
-          <div className="flex gap-2">
-            <Button variant="secondary" size="sm" disabled={saving} onClick={closeEditor}>
-              {t('common.cancel')}
-            </Button>
-            <Button size="sm" data-testid="prompt-save" loading={saving} onClick={() => void save()}>
-              {t('common.save')}
-            </Button>
+        {/* The editor lives in a portal, outside the composer that owns this
+            panel. `data-prompt-editor` is how the composer knows focus is in
+            the editor and must not collapse the panel under it. */}
+        <div data-prompt-editor="1">
+          <textarea
+            autoFocus
+            data-testid="prompt-input"
+            rows={5}
+            value={form}
+            onChange={(e) => {
+              setForm(e.target.value);
+              setFormError(null);
+            }}
+            placeholder={t('chat.prompts.placeholder', 'Prompt text…')}
+            className="w-full resize-none rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/50 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+          />
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <span className={cn(
+              'text-xs',
+              charCount(form) > maxContentLength ? 'text-red-500' : 'text-gray-400',
+            )}>
+              {charCount(form)}/{maxContentLength}
+            </span>
+            <div className="flex gap-2">
+              <Button variant="secondary" size="sm" disabled={saving} onClick={closeEditor}>
+                {t('common.cancel')}
+              </Button>
+              <Button size="sm" data-testid="prompt-save" loading={saving} onClick={() => void save()}>
+                {t('common.save')}
+              </Button>
+            </div>
           </div>
+          {formError && <p className="mt-2 text-xs text-red-500">{formError}</p>}
         </div>
-        {formError && <p className="mt-2 text-xs text-red-500">{formError}</p>}
       </Modal>
     </>
   );
