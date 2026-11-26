@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.9.5 (2026-11-26)
 
 ### Changed (breaking — bridge protocol 2.0.0)
 
