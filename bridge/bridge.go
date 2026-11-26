@@ -50,6 +50,12 @@ type BridgeServer struct {
 	mu       sync.RWMutex
 	adapters map[string][]*bridgeAdapter // platform name → all connected web clients (multicast)
 
+	// Connection timing. Defaults are set in newBridgeServer; tests lower them
+	// so a full keepalive cycle runs in milliseconds.
+	pingInterval time.Duration
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+
 	enginesMu sync.RWMutex
 	engines   map[string]*bridgeEngineRef // project name → engine ref
 }
@@ -65,11 +71,50 @@ type bridgeAdapter struct {
 	capabilities map[string]bool
 	metadata     map[string]any
 	conn         *websocket.Conn
-	writeMu      sync.Mutex
+	writer       *connWriter
 	server       *BridgeServer
 
 	previewMu       sync.Mutex
 	previewRequests map[string]chan string // ref_id → channel receiving preview_handle
+}
+
+// enqueue sends one frame to this client without blocking the caller. False
+// means the frame was rejected because the connection is already gone or the
+// client is too far behind; either way it is no longer a delivery target.
+func (a *bridgeAdapter) enqueue(frame []byte) bool {
+	if a.writer == nil {
+		return false
+	}
+	return a.writer.enqueue(frame)
+}
+
+func (a *bridgeAdapter) enqueueJSON(v any) bool {
+	frame, err := json.Marshal(v)
+	if err != nil {
+		slog.Debug("bridge: marshal frame failed", "platform", a.platform, "error", err)
+		return false
+	}
+	return a.enqueue(frame)
+}
+
+// stop tears the connection down and reports why. Safe to call from any
+// goroutine and any number of times.
+func (a *bridgeAdapter) stop(reason string) {
+	if a.writer != nil {
+		a.writer.stop(reason)
+		return
+	}
+	_ = a.conn.Close()
+}
+
+// stopWithCloseCode closes with an explicit WebSocket close code so the peer
+// knows this is terminal rather than a network drop.
+func (a *bridgeAdapter) stopWithCloseCode(code int, reason string) {
+	if a.writer != nil {
+		a.writer.stopWithCloseCode(code, reason)
+		return
+	}
+	_ = a.conn.Close()
 }
 
 // bridgeReplyCtx carries the information needed to route replies back to the adapter.
@@ -217,13 +262,16 @@ func newBridgeServer(port int, token, path string, corsOrigins []string, insecur
 	}
 
 	return &BridgeServer{
-		port:        port,
-		token:       token,
-		path:        path,
-		corsOrigins: corsOrigins,
-		insecure:    insecure,
-		adapters:    make(map[string][]*bridgeAdapter),
-		engines:     make(map[string]*bridgeEngineRef),
+		port:         port,
+		token:        token,
+		path:         path,
+		corsOrigins:  corsOrigins,
+		insecure:     insecure,
+		adapters:     make(map[string][]*bridgeAdapter),
+		engines:      make(map[string]*bridgeEngineRef),
+		pingInterval: defaultPingInterval,
+		readTimeout:  defaultReadTimeout,
+		writeTimeout: defaultWriteTimeout,
 	}
 }
 
@@ -344,13 +392,18 @@ func (bs *BridgeServer) setCORS(w http.ResponseWriter, r *http.Request) {
 // Stop shuts down the server and closes all adapter connections.
 func (bs *BridgeServer) Stop() {
 	bs.mu.Lock()
+	var all []*bridgeAdapter
 	for _, clients := range bs.adapters {
-		for _, a := range clients {
-			a.conn.Close()
-		}
+		all = append(all, clients...)
 	}
 	bs.adapters = make(map[string][]*bridgeAdapter)
 	bs.mu.Unlock()
+
+	// Closed outside the lock: stop() runs the adapter's onStop hook, which
+	// takes the same lock to unregister the adapter.
+	for _, a := range all {
+		a.stop(disconnectShutdown)
+	}
 
 	if bs.server != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -962,6 +1015,7 @@ func (bs *BridgeServer) handleWS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (bs *BridgeServer) handleConnection(conn *websocket.Conn) {
+	connectedAt := time.Now()
 	defer conn.Close()
 
 	// Bound a single inbound frame. The web client inlines attachments into the
@@ -978,12 +1032,12 @@ func (bs *BridgeServer) handleConnection(conn *websocket.Conn) {
 	// limit only keeps a bad frame from taking the process down.
 	conn.SetReadLimit(maxFrameBytes)
 
-	if err := conn.SetReadDeadline(time.Now().Add(90 * time.Second)); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(bs.readTimeout)); err != nil {
 		slog.Debug("bridge: set read deadline failed", "error", err)
 		return
 	}
 	conn.SetPongHandler(func(string) error {
-		return conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+		return conn.SetReadDeadline(time.Now().Add(bs.readTimeout))
 	})
 
 	// First message must be "register"
@@ -995,14 +1049,14 @@ func (bs *BridgeServer) handleConnection(conn *websocket.Conn) {
 
 	var reg bridgeRegister
 	if err := json.Unmarshal(raw, &reg); err != nil || reg.Type != "register" {
-		if err := writeJSON(conn, nil, map[string]any{"type": "register_ack", "ok": false, "error": "first message must be register"}); err != nil {
+		if err := writeJSON(conn, bs.writeTimeout, map[string]any{"type": "register_ack", "ok": false, "error": "first message must be register"}); err != nil {
 			slog.Debug("bridge: write register ack failed", "error", err)
 		}
 		return
 	}
 
 	if reg.Platform == "" {
-		if err := writeJSON(conn, nil, map[string]any{"type": "register_ack", "ok": false, "error": "platform name is required"}); err != nil {
+		if err := writeJSON(conn, bs.writeTimeout, map[string]any{"type": "register_ack", "ok": false, "error": "platform name is required"}); err != nil {
 			slog.Debug("bridge: write register ack failed", "error", err)
 		}
 		return
@@ -1028,74 +1082,45 @@ func (bs *BridgeServer) handleConnection(conn *websocket.Conn) {
 		server:          bs,
 		previewRequests: make(map[string]chan string),
 	}
-
-	bs.mu.Lock()
-	clients := bs.adapters[reg.Platform]
-	var replacedAdapter *bridgeAdapter
-	for i, old := range clients {
-		if old.clientID == clientID {
-			// Same client reconnected: keep one entry and retire the old
-			// connection with an explicit close code. A bare Close() is
-			// indistinguishable from a network drop on the client side, so
-			// the client reconnects, kicks this connection, and the two
-			// ping-pong forever.
-			clients[i] = adapter
-			replacedAdapter = old
-			slog.Info("bridge: replaced existing adapter (reconnect)", "platform", reg.Platform, "client_id", clientID)
-			break
-		}
+	adapter.writer = newConnWriter(conn, bs.writeTimeout, bs.pingInterval)
+	adapter.writer.onStop = func(reason string) {
+		bs.removeAdapter(adapter)
+		slog.Info("bridge: adapter disconnected",
+			"platform", reg.Platform, "client_id", clientID,
+			"reason", reason, "age", time.Since(connectedAt).Round(time.Second))
 	}
-	if replacedAdapter == nil {
-		clients = append(clients, adapter)
-		bs.adapters[reg.Platform] = clients
-		slog.Info("bridge: adapter registered", "platform", reg.Platform, "client_id", clientID, "total", len(clients))
-	}
-	bs.mu.Unlock()
+	adapter.writer.start()
 
-	// Close the superseded connection outside the lock: finishing its close
-	// handshake writes to the socket and must not stall other registrations.
-	if replacedAdapter != nil {
-		closeSupersededAdapter(replacedAdapter)
+	// Register before acknowledging: the client may start sending frames as
+	// soon as the ack lands, so replies must already be routable by then.
+	if replaced := bs.addAdapter(adapter); replaced != nil {
+		// Same client reconnected: retire the old connection with an explicit
+		// close code. A bare Close() is indistinguishable from a network drop
+		// on the client side, so the client reconnects, kicks this connection,
+		// and the two ping-pong forever.
+		slog.Info("bridge: replaced existing adapter (reconnect)",
+			"platform", reg.Platform, "client_id", clientID)
+		go replaced.stopWithCloseCode(bridgeCloseReplaced, disconnectReplaced)
 	}
 
-	if err := writeJSON(conn, &adapter.writeMu, map[string]any{"type": "register_ack", "ok": true}); err != nil {
-		slog.Debug("bridge: write register ack failed", "error", err)
-		return
-	}
+	adapter.enqueueJSON(map[string]any{"type": "register_ack", "ok": true})
 
 	if bridgeMetadataStringListContains(reg.Metadata, "control_plane", bridgeCapabilitiesSnapshotProto) {
-		if err := writeJSON(conn, &adapter.writeMu, bs.buildCapabilitiesSnapshot()); err != nil {
-			slog.Debug("bridge: write capabilities snapshot failed", "platform", reg.Platform, "error", err)
-			return
-		}
+		adapter.enqueueJSON(bs.buildCapabilitiesSnapshot())
 	}
 
-	defer func() {
-		bs.mu.Lock()
-		clients := bs.adapters[reg.Platform]
-		for i, a := range clients {
-			if a == adapter {
-				bs.adapters[reg.Platform] = append(clients[:i], clients[i+1:]...)
-				break
-			}
-		}
-		if len(bs.adapters[reg.Platform]) == 0 {
-			delete(bs.adapters, reg.Platform)
-		}
-		bs.mu.Unlock()
-		slog.Info("bridge: adapter disconnected", "platform", reg.Platform, "client_id", clientID)
-	}()
+	// Belt and braces: every read-loop exit sets a precise reason above, so
+	// this only fires if the loop is left some other way.
+	defer adapter.stop(disconnectPeerClose)
 
 	for {
-		if err := conn.SetReadDeadline(time.Now().Add(90 * time.Second)); err != nil {
+		if err := conn.SetReadDeadline(time.Now().Add(bs.readTimeout)); err != nil {
 			slog.Debug("bridge: set read deadline failed", "platform", reg.Platform, "error", err)
 			return
 		}
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-				slog.Debug("bridge: read error", "platform", reg.Platform, "error", err)
-			}
+			adapter.stop(classifyReadError(err))
 			return
 		}
 
@@ -1113,28 +1138,14 @@ func (bs *BridgeServer) handleConnection(conn *websocket.Conn) {
 		case "preview_ack":
 			adapter.handlePreviewAck(raw)
 		case "ping":
-			if err := writeJSON(conn, &adapter.writeMu, map[string]any{"type": "pong", "ts": time.Now().UnixMilli()}); err != nil {
-				slog.Debug("bridge: write pong failed", "platform", reg.Platform, "error", err)
-				return
-			}
+			// Application-level probe. The browser cannot observe control-frame
+			// pings, so it sends this on returning to the foreground to check
+			// whether a connection that looks open is still real.
+			adapter.enqueueJSON(map[string]any{"type": "pong", "ts": time.Now().UnixMilli()})
 		default:
 			slog.Debug("bridge: unknown message type", "platform", reg.Platform, "type", base.Type)
 		}
 	}
-}
-
-// closeSupersededAdapter tells a replaced adapter why it is being dropped and
-// then closes it. WriteControl may run concurrently with other writes and with
-// Close (see gorilla/websocket docs), and the deadline keeps a dead peer from
-// stalling the registration path.
-func closeSupersededAdapter(a *bridgeAdapter) {
-	deadline := time.Now().Add(time.Second)
-	_ = a.conn.WriteControl(
-		websocket.CloseMessage,
-		websocket.FormatCloseMessage(bridgeCloseReplaced, "replaced by a newer connection"),
-		deadline,
-	)
-	_ = a.conn.Close()
 }
 
 // ---------------------------------------------------------------------------
@@ -1567,9 +1578,49 @@ func (bs *BridgeServer) getFirstAdapter(platform string) *bridgeAdapter {
 	return clients[0]
 }
 
+// addAdapter registers a client. If another connection already holds the same
+// client_id, the new one takes its place in the slice and the old one is
+// returned so the caller can retire it outside the lock.
+func (bs *BridgeServer) addAdapter(a *bridgeAdapter) (replaced *bridgeAdapter) {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+	clients := bs.adapters[a.platform]
+	for i, old := range clients {
+		if old.clientID == a.clientID {
+			clients[i] = a
+			return old
+		}
+	}
+	bs.adapters[a.platform] = append(clients, a)
+	slog.Info("bridge: adapter registered",
+		"platform", a.platform, "client_id", a.clientID, "total", len(clients)+1)
+	return nil
+}
+
+// removeAdapter unregisters a client. Idempotent by design: it is called from
+// the writer's stop hook, from Stop(), and from nothing else, and the same
+// adapter may be removed twice when a superseded connection finishes closing.
+func (bs *BridgeServer) removeAdapter(a *bridgeAdapter) {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+	clients := bs.adapters[a.platform]
+	for i, old := range clients {
+		if old == a {
+			bs.adapters[a.platform] = append(clients[:i], clients[i+1:]...)
+			break
+		}
+	}
+	if len(bs.adapters[a.platform]) == 0 {
+		delete(bs.adapters, a.platform)
+	}
+}
+
 // sendToAdapter broadcasts a message to ALL connected web clients of a platform
-// (multicast). Individual client send failures are logged but do not abort the
-// others. Returns an error only if there are no connected clients at all.
+// (multicast). Frames are marshalled once and enqueued per client, so a client
+// that has stopped reading is dropped instead of blocking the rest.
+//
+// A frame that reached no client returns ErrNotConnected: the caller should
+// retry on the next event, and must not treat this as "platform unsupported".
 func (bs *BridgeServer) sendToAdapter(platform string, msg map[string]any) error {
 	bs.mu.RLock()
 	clients := append([]*bridgeAdapter(nil), bs.adapters[platform]...)
@@ -1577,19 +1628,27 @@ func (bs *BridgeServer) sendToAdapter(platform string, msg map[string]any) error
 	if len(clients) == 0 {
 		return fmt.Errorf("bridge: adapter %q: %w", platform, core.ErrNotConnected)
 	}
-	var lastErr error
+	frame, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("bridge: marshal frame: %w", err)
+	}
+	delivered := 0
 	for _, a := range clients {
-		if err := writeJSON(a.conn, &a.writeMu, msg); err != nil {
-			slog.Debug("bridge: send to client failed", "platform", platform, "client_id", a.clientID, "error", err)
-			lastErr = err
+		if a.enqueue(frame) {
+			delivered++
 		}
 	}
 	// One line per outbound frame: when a user says "I got nothing", the first
 	// question is whether anything was written and to how many adapters. At
 	// info level this fires for every reply; debug keeps it available without
 	// spamming a busy deployment.
-	slog.Debug("bridge: sendToAdapter", "platform", platform, "clients", len(clients), "type", msg["type"], "session_key", msg["session_key"])
-	return lastErr
+	slog.Debug("bridge: sendToAdapter", "platform", platform,
+		"clients", len(clients), "delivered", delivered,
+		"type", msg["type"], "session_key", msg["session_key"])
+	if delivered == 0 {
+		return fmt.Errorf("bridge: adapter %q: %w", platform, core.ErrNotConnected)
+	}
+	return nil
 }
 
 // sendToClient sends a message to a single web client (unicast), used for
@@ -1599,7 +1658,14 @@ func (bs *BridgeServer) sendToClient(platform, clientID string, msg map[string]a
 	if a == nil {
 		return fmt.Errorf("bridge: client %q/%q: %w", platform, clientID, core.ErrNotConnected)
 	}
-	return writeJSON(a.conn, &a.writeMu, msg)
+	frame, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("bridge: marshal frame: %w", err)
+	}
+	if !a.enqueue(frame) {
+		return fmt.Errorf("bridge: client %q/%q: %w", platform, clientID, core.ErrNotConnected)
+	}
+	return nil
 }
 
 func bridgeMetadataStringListContains(metadata map[string]any, key, want string) bool {
@@ -1671,10 +1737,15 @@ func (bs *BridgeServer) resolveEngine(sessionKey, project string) *bridgeEngineR
 	return nil
 }
 
-func writeJSON(conn *websocket.Conn, mu *sync.Mutex, v any) error {
-	if mu != nil {
-		mu.Lock()
-		defer mu.Unlock()
+// writeJSON writes one frame under a bounded deadline. Only the pre-writer
+// path uses it (registration rejections): once a connection is registered,
+// every write goes through its connWriter so a peer that stops reading cannot
+// block the caller.
+func writeJSON(conn *websocket.Conn, timeout time.Duration, v any) error {
+	if timeout > 0 {
+		if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+			return err
+		}
 	}
 	return conn.WriteJSON(v)
 }
